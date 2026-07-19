@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="text_title">24sp</dimen>
+    <dimen name="text_status">16sp</dimen>
+    <dimen name="text_body">15sp</dimen>
+    <dimen name="text_label">13sp</dimen>
+    <dimen name="card_pad">16dp</dimen>
+    <dimen name="screen_pad">20dp</dimen>
+    <dimen name="gap">14dp</dimen>
+    <dimen name="radius">16dp</dimen>
+    <dimen name="touch_min">56dp</dimen>
+</resources>

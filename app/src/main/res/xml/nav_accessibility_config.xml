@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Booster đọc UI GMaps trên màn. Chỉ lắng nghe 2 package GMaps (zin + ReVanced), không đụng app khác.
+     canRetrieveWindowContent: bắt buộc để đọc node text. flagRetrieveInteractiveWindows: thấy cửa sổ GMaps
+     ngay cả khi có overlay. Không cần flagRequestTouchExploration (không chạm hộ người dùng). -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagReportViewIds"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="100"
+    android:packageNames="com.google.android.apps.maps,app.revanced.android.apps.maps"
+    android:description="@string/acc_desc" />

@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="@dimen/screen_pad">
+
+        <!-- ══ CARD 1 — CHỈ DẪN LÊN CỤM (cluster nav) ══ -->
+        <LinearLayout
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:background="@drawable/card_bg" android:padding="@dimen/card_pad">
+
+            <LinearLayout
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <LinearLayout
+                    android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:orientation="vertical">
+                    <TextView
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="@string/app_name" android:textColor="@color/text_primary"
+                        android:textSize="@dimen/text_title" android:fontFamily="sans-serif-medium" />
+                    <TextView
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" android:text="@string/tagline"
+                        android:textColor="@color/text_secondary" android:textSize="@dimen/text_label" android:lineSpacingExtra="3dp" />
+                </LinearLayout>
+                <Switch
+                    android:id="@+id/switch_enabled"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp" android:text="@string/enabled_label"
+                    android:textColor="@color/text_secondary" android:textSize="@dimen/text_label" />
+            </LinearLayout>
+
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:layout_marginTop="@dimen/card_pad" android:layout_marginBottom="@dimen/card_pad" android:background="@color/divider" />
+
+            <LinearLayout
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <View android:id="@+id/dot_status" android:layout_width="12dp" android:layout_height="12dp"
+                    android:layout_marginEnd="10dp" android:background="@drawable/status_dot" />
+                <TextView android:id="@+id/txt_status" android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:textColor="@color/text_primary" android:textSize="@dimen/text_status" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_reconnect_nav"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:minHeight="@dimen/touch_min" android:visibility="gone"
+                android:background="@drawable/btn_outline" android:text="Kết nối lại nav"
+                android:textColor="@color/brand" android:textAllCaps="false" android:textSize="@dimen/text_body" />
+
+            <TextView
+                android:id="@+id/btn_troubleshoot"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:padding="4dp"
+                android:text="▸ Khắc phục sự cố" android:textColor="@color/text_secondary" android:textSize="@dimen/text_label" />
+
+            <LinearLayout
+                android:id="@+id/ll_troubleshoot"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:visibility="gone">
+                <Button
+                    android:id="@+id/btn_clear"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min"
+                    android:background="@drawable/btn_warning_outline" android:text="Xoá chỉ dẫn khỏi cụm"
+                    android:textColor="@color/warn_amber" android:textAllCaps="false" android:textSize="@dimen/text_body" />
+                <Button
+                    android:id="@+id/btn_reset"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min"
+                    android:background="@drawable/btn_warning_outline" android:text="Reset cờ kẹt cụm"
+                    android:textColor="@color/warn_amber" android:textAllCaps="false" android:textSize="@dimen/text_body" />
+
+                <CheckBox
+                    android:id="@+id/cb_interpolate"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min"
+                    android:text="Nội suy cự ly (TẮT = mượt, gửi số thô như DashCast)"
+                    android:textColor="@color/text_secondary" android:textAllCaps="false" android:textSize="@dimen/text_body" />
+
+                <CheckBox
+                    android:id="@+id/cb_hud"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_min"
+                    android:text="Đẩy nav lên HUD kính lái (thử nghiệm — cần xe có HUD)"
+                    android:textColor="@color/text_secondary" android:textAllCaps="false" android:textSize="@dimen/text_body" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ══ CARD 2 — GPS TRONG HẦM (dead-reckoning) ══ -->
+        <LinearLayout
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/gap" android:orientation="vertical"
+            android:background="@drawable/card_bg" android:padding="@dimen/card_pad">
+
+            <TextView
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="GPS trong hầm" android:textColor="@color/text_secondary"
+                android:textSize="@dimen/text_label" android:fontFamily="sans-serif-medium" />
+
+            <LinearLayout
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                <View android:id="@+id/dot_gps" android:layout_width="12dp" android:layout_height="12dp"
+                    android:layout_marginEnd="10dp" android:background="@drawable/status_dot" />
+                <TextView android:id="@+id/txt_gps_status" android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:text="Chưa bật" android:textColor="@color/text_secondary" android:textSize="@dimen/text_body" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_gps_toggle"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="10dp" android:minHeight="@dimen/touch_min"
+                android:background="@drawable/btn_primary" android:text="Bật GPS hầm"
+                android:textColor="@color/white" android:textAllCaps="false" android:textSize="@dimen/text_body" />
+        </LinearLayout>
+
+        <!-- ══ CARD 3 — CHIẾU APP LÊN CỤM (projection) ══ -->
+        <LinearLayout
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/gap" android:orientation="vertical"
+            android:background="@drawable/card_bg" android:padding="@dimen/card_pad">
+
+            <TextView
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Chiếu app lên cụm" android:textColor="@color/text_secondary"
+                android:textSize="@dimen/text_label" android:fontFamily="sans-serif-medium" />
+
+            <LinearLayout
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                <View android:id="@+id/dot_cast" android:layout_width="12dp" android:layout_height="12dp"
+                    android:layout_marginEnd="10dp" android:background="@drawable/status_dot" />
+                <TextView android:id="@+id/txt_cast_status" android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:text="Chưa chiếu" android:textColor="@color/text_secondary" android:textSize="@dimen/text_body" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_cast_toggle"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="10dp" android:minHeight="@dimen/touch_min"
+                android:background="@drawable/btn_primary" android:text="Chiếu lên cụm"
+                android:textColor="@color/white" android:textAllCaps="false" android:textSize="@dimen/text_body" />
+
+            <LinearLayout
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:layout_marginTop="10dp">
+                <Button
+                    android:id="@+id/btn_bubble"
+                    android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
+                    android:text="Hiện nút nổi" android:textColor="@color/brand" android:textAllCaps="false" android:textSize="@dimen/text_body" />
+                <Button
+                    android:id="@+id/btn_cluster_map"
+                    android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:layout_marginStart="10dp" android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
+                    android:text="Cài đặt chiếu" android:textColor="@color/brand" android:textAllCaps="false" android:textSize="@dimen/text_body" />
+            </LinearLayout>
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>
