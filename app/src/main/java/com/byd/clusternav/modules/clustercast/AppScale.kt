@@ -49,11 +49,31 @@ data class AppScale(
     /** Đổi DPI ± [d] nấc, GIỮ nguyên rect. Clamp [DPI_MIN,DPI_MAX]. */
     fun nudgeDpi(d: Int): AppScale = copy(dpi = (dpi + d).coerceIn(DPI_MIN, DPI_MAX))
 
+    /**
+     * Chỉnh 1 CẠNH độc lập: dời cạnh [edge] đi [delta] px, TỰ TÍNH LẠI kích thước (không căn giữa).
+     * delta<0 = cạnh dịch sang TRÁI/LÊN · delta>0 = sang PHẢI/XUỐNG. AUTO/full → materialize [0,0,w,h] trước.
+     * Clamp trong [0,w]/[0,h], không để 2 cạnh đối vượt nhau (giữ tối thiểu [MIN_PX]).
+     */
+    fun nudgeEdge(w: Int, h: Int, edge: Edge, delta: Int): AppScale {
+        val b = boundsOn(w, h)
+        var l = b[0]; var t = b[1]; var r = b[2]; var bot = b[3]
+        when (edge) {
+            Edge.LEFT   -> l = (l + delta).coerceIn(0, r - MIN_PX)
+            Edge.RIGHT  -> r = (r + delta).coerceIn(l + MIN_PX, w)
+            Edge.TOP    -> t = (t + delta).coerceIn(0, bot - MIN_PX)
+            Edge.BOTTOM -> bot = (bot + delta).coerceIn(t + MIN_PX, h)
+        }
+        return copy(rectL = l, rectT = t, rectR = r, rectB = bot)
+    }
+
+    /** 4 cạnh khung để chỉnh độc lập. */
+    enum class Edge { LEFT, TOP, RIGHT, BOTTOM }
+
     companion object {
         const val DPI_MIN = 120
         const val DPI_MAX = 320
         const val MIN_PX = 160   // khung tối thiểu (không co về 0)
-        const val STEP_WH = 16   // 1 nấc mũi tên Cao/Ngang (px)
+        const val STEP_WH = 16   // 1 nấc mũi tên chỉnh cạnh Trái/Phải/Trên/Dưới (px)
         const val STEP_DPI = 10  // 1 nấc mũi tên DPI
 
         /** parse "dpi,l,t,r,b". null nếu sai định dạng (số phần ≠ 5 hoặc không phải số). */

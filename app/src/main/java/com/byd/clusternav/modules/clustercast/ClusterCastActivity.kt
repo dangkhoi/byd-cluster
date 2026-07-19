@@ -97,7 +97,7 @@ class ClusterCastActivity : Activity() {
 
         // ── SCALE PER-APP (T-C): panel nút mũi tên cho từng app đã tick ──
         root.addView(sectionTitle("Kích thước từng app (đang chiếu app nào = áp ngay lên cụm)"))
-        root.addView(TextView(this).apply { text = "Cao ▲▼ = cao/thấp · Ngang ◀▶ = hẹp/rộng (căn giữa) · DPI −＋ = độ lớn nội dung · Reset = auto. Mỗi nhấn 1 nấc, tự lưu."; textSize = 12f; setTextColor(0xFF5B6470.toInt()); setPadding(0, 0, 0, dp(6)) })
+        root.addView(TextView(this).apply { text = "Chỉnh TỪNG CẠNH: Trái/Phải ◀▶ · Trên/Dưới ▲▼ (đẩy cạnh ra/vào — size TỰ TÍNH lại, chỉnh lệch được, không bắt căn giữa) · DPI −＋ = độ lớn · Reset = auto. Mỗi nhấn 1 nấc, tự lưu."; textSize = 12f; setTextColor(0xFF5B6470.toInt()); setPadding(0, 0, 0, dp(6)) })
         scaleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(scaleBox)
         rebuildScalePanels()
@@ -206,25 +206,38 @@ class ClusterCastActivity : Activity() {
         val info = TextView(this).apply { textSize = 12f; setTextColor(0xFF5B6470.toInt()); text = scaleSummary(pkg) }
         col.addView(info)
 
-        fun applyNudge(dW: Int, dH: Int, dDpi: Int) {
+        fun applyEdge(edge: AppScale.Edge, delta: Int) {
             val (w, h) = clusterRef()
-            val cur = ClusterCast.scaleOf(pkg)
-            val next = if (dDpi != 0) cur.nudgeDpi(dDpi) else cur.nudgeRect(w, h, dW, dH)
-            ClusterCast.setScale(applicationContext, pkg, next)
+            ClusterCast.setScale(applicationContext, pkg, ClusterCast.scaleOf(pkg).nudgeEdge(w, h, edge, delta))
             info.text = scaleSummary(pkg)
             ClusterCast.applyScaleLive(applicationContext, pkg) { s -> runOnUiThread { logln(s) } }
         }
+        fun applyDpi(d: Int) {
+            ClusterCast.setScale(applicationContext, pkg, ClusterCast.scaleOf(pkg).nudgeDpi(d))
+            info.text = scaleSummary(pkg)
+            ClusterCast.applyScaleLive(applicationContext, pkg) { s -> runOnUiThread { logln(s) } }
+        }
+        val S = AppScale.STEP_WH
 
-        val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        // hàng chỉnh cạnh NGANG: cạnh Trái + cạnh Phải (mỗi cạnh đẩy ◀ trái / ▶ phải)
+        val rowLR = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         for ((lbl, act) in listOf<Pair<String, () -> Unit>>(
-            "Cao ▲" to { applyNudge(0, AppScale.STEP_WH, 0) }, "Cao ▼" to { applyNudge(0, -AppScale.STEP_WH, 0) },
-            "Ngang ◀" to { applyNudge(-AppScale.STEP_WH, 0, 0) }, "Ngang ▶" to { applyNudge(AppScale.STEP_WH, 0, 0) }))
-            row1.addView(smallBtn(lbl, act).apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
-        col.addView(row1)
+            "Trái ◀" to { applyEdge(AppScale.Edge.LEFT, -S) }, "Trái ▶" to { applyEdge(AppScale.Edge.LEFT, S) },
+            "Phải ◀" to { applyEdge(AppScale.Edge.RIGHT, -S) }, "Phải ▶" to { applyEdge(AppScale.Edge.RIGHT, S) }))
+            rowLR.addView(smallBtn(lbl, act).apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
+        col.addView(rowLR)
+
+        // hàng chỉnh cạnh DỌC: cạnh Trên + cạnh Dưới (mỗi cạnh đẩy ▲ lên / ▼ xuống)
+        val rowTB = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((lbl, act) in listOf<Pair<String, () -> Unit>>(
+            "Trên ▲" to { applyEdge(AppScale.Edge.TOP, -S) }, "Trên ▼" to { applyEdge(AppScale.Edge.TOP, S) },
+            "Dưới ▲" to { applyEdge(AppScale.Edge.BOTTOM, -S) }, "Dưới ▼" to { applyEdge(AppScale.Edge.BOTTOM, S) }))
+            rowTB.addView(smallBtn(lbl, act).apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
+        col.addView(rowTB)
 
         val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         for ((lbl, act) in listOf<Pair<String, () -> Unit>>(
-            "DPI −" to { applyNudge(0, 0, -AppScale.STEP_DPI) }, "DPI ＋" to { applyNudge(0, 0, AppScale.STEP_DPI) },
+            "DPI −" to { applyDpi(-AppScale.STEP_DPI) }, "DPI ＋" to { applyDpi(AppScale.STEP_DPI) },
             "Reset (auto)" to {
                 ClusterCast.setScale(applicationContext, pkg, AppScale()); info.text = scaleSummary(pkg)
                 ClusterCast.applyScaleLive(applicationContext, pkg) { s -> runOnUiThread { logln(s) } }

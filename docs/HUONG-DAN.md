@@ -4,9 +4,9 @@
 
 ## 1. Cài đặt
 
-1. Tải APK: [`apk/ClusterNav-0.28-release.apk`](../apk/ClusterNav-0.28-release.apk) → cài:
+1. Tải APK: [`apk/ClusterNav-0.29-release.apk`](../apk/ClusterNav-0.29-release.apk) → cài:
    ```bash
-   adb install -r ClusterNav-0.28-release.apk
+   adb install -r ClusterNav-0.29-release.apk
    ```
    (hoặc copy vào máy bấm cài — cho phép "cài từ nguồn không xác định").
 2. Trên xe bật một lần: **Developer options → USB debugging** + **adb tcp 5555**.
@@ -50,14 +50,18 @@ Khi muốn xem **nguyên bản đồ** (Google Maps / VietMap / Waze / Apple Car
 
 ## 5. Chỉnh kích thước từng app (scale)
 
-Mỗi app một tỷ lệ khác nhau → chỉnh riêng bằng **nút mũi tên**, nhấn tới khi vừa mắt (tự lưu, áp ngay lên cụm nếu đang chiếu):
+Mỗi app một tỷ lệ khác nhau → chỉnh riêng bằng **nút mũi tên theo TỪNG CẠNH**, nhấn tới khi vừa mắt (tự lưu, áp ngay lên cụm nếu đang chiếu). **Chỉnh lệch được — không bắt căn giữa:**
 
 ![Chỉnh scale](images/chinh-scale.png)
 
-- **Cao ▲ / ▼** — cao / thấp (căn giữa dọc)
-- **Ngang ◀ / ▶** — hẹp / rộng (căn giữa) → CarPlay/GMaps bị kéo ngang thì bấm ◀ cho gọn vào giữa
+- **Trái ◀ / ▶** — đẩy cạnh trái ra / vào
+- **Phải ◀ / ▶** — đẩy cạnh phải ra / vào
+- **Trên ▲ / ▼** — đẩy cạnh trên lên / xuống
+- **Dưới ▲ / ▼** — đẩy cạnh dưới lên / xuống
 - **DPI − / ＋** — nội dung to / nhỏ
 - **Reset (auto)** — về full cụm
+
+> Mỗi cạnh chỉnh **độc lập**, kích thước **tự tính lại**. Ví dụ CarPlay bị rộng → đẩy **Phải ◀** thu cạnh phải vào; muốn khung lệch sang trái thì chỉ chỉnh cạnh trái/phải theo ý.
 
 ## 6. GPS trong hầm (dead-reckon)
 
