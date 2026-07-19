@@ -111,4 +111,38 @@ class AppScaleTest {
         val s = AppScale(200, 10, 20, 30, 40).nudgeDpi(10)
         assertEquals(10, s.rectL); assertEquals(40, s.rectB)
     }
+
+    @Test fun `nudgeEdge left edge moves independently and recalculates size`() {
+        val s = AppScale(200, 100, 100, 1000, 600).nudgeEdge(1920, 720, AppScale.Edge.LEFT, -16)
+        assertEquals(84, s.rectL)        // 100 - 16 (rộng ra)
+        assertEquals(1000, s.rectR)      // phải GIỮ
+        assertEquals(100, s.rectT); assertEquals(600, s.rectB)  // dọc GIỮ
+    }
+
+    @Test fun `nudgeEdge right edge inward shrinks width, left kept`() {
+        val s = AppScale(200, 100, 100, 1000, 600).nudgeEdge(1920, 720, AppScale.Edge.RIGHT, -16)
+        assertEquals(984, s.rectR); assertEquals(100, s.rectL)
+    }
+
+    @Test fun `nudgeEdge bottom edge down grows height, top kept`() {
+        val s = AppScale(200, 100, 100, 1000, 600).nudgeEdge(1920, 720, AppScale.Edge.BOTTOM, 16)
+        assertEquals(616, s.rectB); assertEquals(100, s.rectT)
+    }
+
+    @Test fun `nudgeEdge clamps within VD bounds`() {
+        assertEquals(0, AppScale(200, 10, 100, 1000, 600).nudgeEdge(1920, 720, AppScale.Edge.LEFT, -999).rectL)
+        assertEquals(1920, AppScale(200, 100, 100, 1900, 600).nudgeEdge(1920, 720, AppScale.Edge.RIGHT, 999).rectR)
+    }
+
+    @Test fun `nudgeEdge keeps MIN_PX between opposite edges`() {
+        val s = AppScale(200, 100, 100, 100 + AppScale.MIN_PX, 600).nudgeEdge(1920, 720, AppScale.Edge.LEFT, 999)
+        assertTrue(s.rectR - s.rectL >= AppScale.MIN_PX)
+    }
+
+    @Test fun `nudgeEdge from auto materializes full then adjusts one edge`() {
+        val s = AppScale().nudgeEdge(1920, 720, AppScale.Edge.RIGHT, -100)
+        assertFalse(s.isAuto)
+        assertEquals(0, s.rectL); assertEquals(0, s.rectT); assertEquals(720, s.rectB)
+        assertEquals(1820, s.rectR)      // full 1920 → 1820
+    }
 }
