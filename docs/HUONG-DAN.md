@@ -56,7 +56,7 @@ Mở **Cài đặt chiếu** → kéo xuống phần **"App được chiếu"** 
 ### 4.3. Nút nổi (bubble) — chiếu nhanh, không cần mở app
 Bật bằng nút **"Hiện nút nổi"** ở màn chính (cần quyền **Hiển thị trên ứng dụng khác**). Nút lơ lửng trên mọi màn:
 
-![Bật nút nổi](images/nut-noi.png)
+![Nút nổi (bubble) ▢ lơ lửng trên màn hình](images/nut-noi.png)
 
 - **Chạm** = bật/tắt chiếu app gần nhất. Biểu tượng đổi theo trạng thái: **▢** = chưa chiếu · **▣** = đang chiếu.
 - **Giữ (long-press)** = hiện **menu các app đã tick** → chọn 1 app để chiếu (tiện khi đang lái, khỏi mở app to).
