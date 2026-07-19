@@ -2,6 +2,7 @@
 build/
 .gradle/
 *.apk
+!apk/ClusterNav-*-release.apk    # bản phát hành cho nhóm tải (release-signed, cùng chữ ký)
 *.aab
 *.ap_
 *.dex
