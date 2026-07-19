@@ -16,6 +16,8 @@ adb install -r ClusterNav-0.28-release.apk
 Hoặc copy APK vào máy/điện thoại rồi bấm cài (cho phép "cài từ nguồn không xác định").
 > Mọi bản release **cùng chữ ký** → lần sau update chỉ cần `install -r`, KHÔNG phải gỡ (giữ nguyên cấu hình).
 
+📖 **[Hướng dẫn sử dụng đầy đủ (có ảnh) →](docs/HUONG-DAN.md)**
+
 ## Xe hỗ trợ
 Kiểm chứng trên **BYD Seal EU** (DiLink 3.0). Kiến trúc generic (auto-detect + override) cho các dòng DiLink 3 cùng cụm XDJA — **SL6 / Han / Tang** dự kiến chạy được nhưng **cần cộng đồng test** (báo bug + screenshot). Chưa xác nhận = chưa đảm bảo.
 
