@@ -1,0 +1,73 @@
+package com.byd.clusternav.modules.clustercast
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+
+/** Unit test (off-device, JUnit5) cho ClusterProfile — export/parse + detect + seed integrity. T-F verify. */
+class ClusterProfileTest {
+
+    @Test fun `seed seal_dl3 tái tạo chính xác sequence hiện tại`() {
+        val p = ClusterProfile.SEAL_DL3
+        assertEquals("seal_dl3", p.id)
+        assertEquals(3, p.diLink)
+        assertEquals(listOf(30, 16, 35), p.castSeq)      // 30->16->35 (hành vi cũ)
+        assertEquals(listOf(18, 0), p.teardownSeq)       // 18->0
+        assertEquals(1920, p.clusterW)
+        assertEquals(720, p.clusterH)
+        assertTrue(p.vdNameHint.contains("xdja") || p.vdNameHint.contains("fission"))
+    }
+
+    @Test fun `generic fallback dùng recipe seal-like + dò fission`() {
+        val p = ClusterProfile.GENERIC_FALLBACK
+        assertEquals(listOf(30, 16, 35), p.castSeq)
+        assertEquals(listOf(18, 0), p.teardownSeq)
+        assertTrue(p.vdNameHint.contains("xdja") || p.vdNameHint.contains("fission"))
+    }
+
+    @Test fun `export then parse round-trips seeds`() {
+        for (p in listOf(ClusterProfile.SEAL_DL3, ClusterProfile.GENERIC_FALLBACK)) {
+            assertEquals(p, ClusterProfile.parse(p.export()))
+        }
+    }
+
+    @Test fun `export format is stable`() {
+        assertEquals("seal_dl3;3;1920;720;30-16-35;18-0;xdja", ClusterProfile.SEAL_DL3.export())
+    }
+
+    @Test fun `parse custom override with empty teardown`() {
+        val p = ClusterProfile.parse("sl6_dl3;3;1600;600;16-35;;fission")
+        assertEquals("sl6_dl3", p?.id)
+        assertEquals(1600, p?.clusterW)
+        assertEquals(listOf(16, 35), p?.castSeq)
+        assertEquals(emptyList<Int>(), p?.teardownSeq)
+        assertEquals("fission", p?.vdNameHint)
+    }
+
+    @Test fun `parse rejects malformed`() {
+        assertNull(ClusterProfile.parse(""))
+        assertNull(ClusterProfile.parse("id;3;1920;720;30-16-35;18-0"))     // 6 field
+        assertNull(ClusterProfile.parse("id;x;1920;720;30-16-35;18-0;xdja")) // diLink không phải số
+        assertNull(ClusterProfile.parse("id;3;W;720;30-16-35;18-0;xdja"))    // W không phải số
+        assertNull(ClusterProfile.parse("id;3;1920;720;30-x-35;18-0;xdja"))  // castSeq có phần không phải số
+        assertNull(ClusterProfile.parse(";3;1920;720;30-16-35;18-0;xdja"))   // id rỗng
+    }
+
+    @Test fun `detectSeed maps BYD AUTO to seal_dl3`() {
+        // Head-unit BYD báo Build.MODEL = "BYD AUTO"
+        assertEquals(ClusterProfile.SEAL_DL3, ClusterProfile.detectSeed("BYD AUTO", "", "", ""))
+        assertEquals(ClusterProfile.SEAL_DL3, ClusterProfile.detectSeed("", "byd", "BYD", ""))
+        assertEquals(ClusterProfile.SEAL_DL3, ClusterProfile.detectSeed("", "", "", "ro.product.model=byd_seal"))
+    }
+
+    @Test fun `detectSeed non-byd falls back to generic`() {
+        assertEquals(ClusterProfile.GENERIC_FALLBACK, ClusterProfile.detectSeed("Pixel 6", "Google", "Google", ""))
+        assertEquals(ClusterProfile.GENERIC_FALLBACK, ClusterProfile.detectSeed("", "", "", ""))
+    }
+
+    @Test fun `summary is human readable`() {
+        assertTrue(ClusterProfile.SEAL_DL3.summary().contains("seal_dl3"))
+        assertTrue(ClusterProfile.SEAL_DL3.summary().contains("1920×720"))
+    }
+}

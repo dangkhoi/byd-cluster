@@ -1,0 +1,36 @@
+# ─── Android / Gradle build ───────────────────────────────
+build/
+.gradle/
+*.apk
+*.aab
+*.ap_
+*.dex
+local.properties
+.cxx/
+app/.jqwik-database
+
+# ─── Signing keys (KHÔNG commit — giữ local, share riêng) ──
+keystore.properties
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+
+# ─── IDE / OS ─────────────────────────────────────────────
+.idea/
+*.iml
+.DS_Store
+*.swp
+
+# ─── Logs & dữ liệu xe (PII: GPS/nhà/email/token — TUYỆT ĐỐI không public) ──
+dr_logs/
+*.log
+docs/diagnostics/carlog/
+docs/diagnostics/carlog2/
+docs/diagnostics/log-nav-debug.txt
+
+# ─── Không thuộc ClusterNav (PoSound / tooling / audio / bên thứ 3) ──
+tools/
+*.wav
+apks/

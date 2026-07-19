@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#1565C0</color>
+    <color name="brand_pressed">#0D47A1</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="screen_bg">#F4F6F8</color>
+    <color name="text_primary">#1A1F24</color>
+    <color name="text_secondary">#5B6470</color>
+    <color name="divider">#E3E6EB</color>
+    <color name="ok_green">#2E7D32</color>
+    <color name="warn_amber">#E08600</color>
+    <color name="err_red">#C62828</color>
+    <color name="off_gray">#9AA1A8</color>
+    <color name="white">#FFFFFF</color>
+</resources>
