@@ -6,6 +6,16 @@
 
 ⚠️ **Thử nghiệm — dùng tự chịu rủi ro.** Đây là dự án hobby, KHÔNG liên kết với BYD. Chỉ can thiệp kiểu no-root (qua ADB nội bộ) và đảo ngược được, nhưng bạn tự chịu trách nhiệm khi cài lên xe thật.
 
+## Tải & cài nhanh (không cần build)
+Tải APK: **[`apk/ClusterNav-0.28-release.apk`](apk/ClusterNav-0.28-release.apk)** — bấm vào file rồi chọn **Download**.
+
+Cài qua ADB (khuyến nghị — giữ quyền + cấu hình khi update):
+```bash
+adb install -r ClusterNav-0.28-release.apk
+```
+Hoặc copy APK vào máy/điện thoại rồi bấm cài (cho phép "cài từ nguồn không xác định").
+> Mọi bản release **cùng chữ ký** → lần sau update chỉ cần `install -r`, KHÔNG phải gỡ (giữ nguyên cấu hình).
+
 ## Xe hỗ trợ
 Kiểm chứng trên **BYD Seal EU** (DiLink 3.0). Kiến trúc generic (auto-detect + override) cho các dòng DiLink 3 cùng cụm XDJA — **SL6 / Han / Tang** dự kiến chạy được nhưng **cần cộng đồng test** (báo bug + screenshot). Chưa xác nhận = chưa đảm bảo.
 
