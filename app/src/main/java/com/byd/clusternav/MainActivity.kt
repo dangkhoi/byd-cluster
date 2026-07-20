@@ -203,7 +203,10 @@ class MainActivity : Activity() {
 
     private fun notifAccessGranted(): Boolean {
         val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
-        return flat.split(":").any { it.contains(packageName) }
+        // So KHỚP ĐÚNG component (unflatten) thay contains(packageName) lỏng — "com.byd.clusternav2" hay app khác
+        // trùng chuỗi sẽ KHÔNG còn false-positive; cũng đòi đúng NavNotificationListener được bật.
+        val want = android.content.ComponentName(this, NavNotificationListener::class.java)
+        return flat.split(":").any { android.content.ComponentName.unflattenFromString(it.trim()) == want }
     }
 
     companion object { private const val REQ_LOC = 4712 }

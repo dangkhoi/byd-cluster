@@ -49,26 +49,36 @@ data class ClusterProfile(
         private const val PREF = "clustercast"
         private const val KEY_OVERRIDE = "profileOverride"
 
-        /** parse chuỗi export → ClusterProfile. null nếu hỏng (dùng cho import + load override). */
+        /** parse chuỗi export → ClusterProfile. null nếu hỏng (dùng cho import + load override).
+         *  VALIDATE (R-hardening): chuỗi share trong nhóm là UNTRUSTED → ép W/H trong (0,8192], diLink 1..9,
+         *  mã cast/teardown trong [0,255] (chống nạp mã `service call AutoContainer` tùy ý/âm + bounds suy biến vỡ resize). */
         fun parse(s: String): ClusterProfile? {
             val f = s.split(";")
             if (f.size != 7) return null
             val id = f[0].trim()
+            if (id.isEmpty() || id.length > 32) return null
             val diLink = f[1].trim().toIntOrNull() ?: return null
+            if (diLink !in 1..9) return null
             val w = f[2].trim().toIntOrNull() ?: return null
             val h = f[3].trim().toIntOrNull() ?: return null
+            if (w !in 1..8192 || h !in 1..8192) return null
             val cast = parseSeq(f[4]) ?: return null
             val tear = parseSeq(f[5]) ?: return null
             val hint = f[6].trim()
-            if (id.isEmpty()) return null
             return ClusterProfile(id, diLink, w, h, cast, tear, hint)
         }
 
-        /** "30-16-35" → [30,16,35]. Rỗng → []. null nếu có phần không phải số. */
+        /** "30-16-35" → [30,16,35]. Rỗng → []. null nếu có phần không phải số / ngoài dải [0,255] / quá dài (>16). */
         private fun parseSeq(s: String): List<Int>? {
             if (s.isBlank()) return emptyList()
-            val out = ArrayList<Int>()
-            for (p in s.split("-")) out.add(p.trim().toIntOrNull() ?: return null)
+            val parts = s.split("-")
+            if (parts.size > 16) return null
+            val out = ArrayList<Int>(parts.size)
+            for (p in parts) {
+                val n = p.trim().toIntOrNull() ?: return null
+                if (n !in 0..255) return null
+                out.add(n)
+            }
             return out
         }
 

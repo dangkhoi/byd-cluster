@@ -38,16 +38,36 @@ object NavFormat {
     // Từ-loại CÓ NGHĨA ở đầu tên -> GIỮ (không bỏ, không viết tắt): hầm/cầu/bến...
     private val KEEP_CLASS = setOf("hầm", "ham", "cầu", "cau", "bến", "ben")
 
+    // ── Regex COMPILE 1 LẦN (hot-path: cleanRoadName/maneuverVerbIcon/roundaboutExit chạy mỗi frame @400ms).
+    //    Input các hàm này đã .lowercase() → giữ pattern lowercase, KHÔNG cần IGNORE_CASE (output y nguyên).
+    private val RE_PARENS = Regex("\\s*\\(.*?\\)\\s*")
+    private val RE_WS = Regex("\\s+")
+    private val RE_UTURN = Regex("quay đầu|quay dau|u-?turn|làm vòng")
+    private val RE_SHARP_L = Regex("ngoặt trái|ngoat trai|sharp left")
+    private val RE_SHARP_R = Regex("ngoặt phải|ngoat phai|sharp right")
+    private val RE_SLIGHT_L = Regex("chếch trái|chech trai|hơi trái|hoi trai|slight left|keep left")
+    private val RE_SLIGHT_R = Regex("chếch phải|chech phai|hơi phải|hoi phai|slight right|keep right")
+    private val RE_TURN_L = Regex("rẽ trái|re trai|quẹo trái|turn left|left onto")
+    private val RE_TURN_R = Regex("rẽ phải|re phai|quẹo phải|turn right|right onto")
+    private val RE_ROUNDABOUT = Regex("vòng xuyến|vong xuyen|bùng binh|bung binh|roundabout|rotary")
+    private val RE_ARRIVE = Regex("đến nơi|den noi|điểm đến|diem den|arrive|destination")
+    private val RE_STRAIGHT = Regex("đi thẳng|di thang|go straight|^straight")
+    private val RE_CONTINUE = Regex("tiếp tục|tiep tuc|continue|theo đường|theo duong|follow")
+    private val RE_RAB_EXIT = Regex("""(?:lối ra|loi ra|nhánh|nhanh|exit|(?:take|at) the)\s*(?:thứ|thu)?\s*(\d+)""")
+    private val RE_RAB_ORD = Regex("""(\d+)\s*(?:st|nd|rd|th)\s+exit""")
+    private val RE_DIACRITICS = Regex("\\p{InCombiningDiacriticalMarks}+")
+    private val RE_NON_ALNUM = Regex("[^A-Za-z0-9]+")
+
     /** Dọn tên đường (bỏ filler/động từ/ngoặc/Đường-Phố, GIỮ hầm/cầu) — trả tên ĐẦY ĐỦ (dùng cho marquee). */
     fun cleanRoadName(road: String): String {
         var s = road.trim()
         if (s.isEmpty()) return s
         s = s.substringBefore(",").trim()                       // bỏ phần sau dấu phẩy
-        s = s.replace(Regex("\\s*\\(.*?\\)\\s*"), " ").trim()    // bỏ phần trong ngoặc
+        s = s.replace(RE_PARENS, " ").trim()                    // bỏ phần trong ngoặc
         s = MANEUVER_PREFIX.replace(s, "").trim()                // bỏ động từ + filler ("về hướng")
         for ((re, abbr) in ROAD_CLASS) if (re.containsMatchIn(s)) { s = re.replace(s, abbr); break }
         s = ROAD_PREFIX.replace(s, "").trim()                    // bỏ "Đường/Phố/Ngõ..." (giữ hầm/cầu)
-        return s.replace(Regex("\\s+"), " ").trim().ifEmpty { road.trim() }
+        return s.replace(RE_WS, " ").trim().ifEmpty { road.trim() }
     }
 
     /** Rút gọn cho ô cụm khi KHÔNG cuộn (~7 ký tự). "Nguyễn Hữu Cảnh"->"NHC"; "hầm X Y"->"hầm XY". */
@@ -90,17 +110,17 @@ object NavFormat {
     fun maneuverVerbIcon(text: String): Int? {
         val t = text.lowercase()
         return when {
-            Regex("quay đầu|quay dau|u-?turn|làm vòng").containsMatchIn(t) -> 8
-            Regex("ngoặt trái|ngoat trai|sharp left").containsMatchIn(t) -> 6
-            Regex("ngoặt phải|ngoat phai|sharp right").containsMatchIn(t) -> 7
-            Regex("chếch trái|chech trai|hơi trái|hoi trai|slight left|keep left").containsMatchIn(t) -> 4
-            Regex("chếch phải|chech phai|hơi phải|hoi phai|slight right|keep right").containsMatchIn(t) -> 5
-            Regex("rẽ trái|re trai|quẹo trái|turn left|left onto").containsMatchIn(t) -> 2
-            Regex("rẽ phải|re phai|quẹo phải|turn right|right onto").containsMatchIn(t) -> 3
-            Regex("vòng xuyến|vong xuyen|bùng binh|bung binh|roundabout|rotary").containsMatchIn(t) -> 11
-            Regex("đến nơi|den noi|điểm đến|diem den|arrive|destination").containsMatchIn(t) -> 15
-            Regex("đi thẳng|di thang|go straight|^straight").containsMatchIn(t) -> 9
-            Regex("tiếp tục|tiep tuc|continue|theo đường|theo duong|follow").containsMatchIn(t) -> 20
+            RE_UTURN.containsMatchIn(t) -> 8
+            RE_SHARP_L.containsMatchIn(t) -> 6
+            RE_SHARP_R.containsMatchIn(t) -> 7
+            RE_SLIGHT_L.containsMatchIn(t) -> 4
+            RE_SLIGHT_R.containsMatchIn(t) -> 5
+            RE_TURN_L.containsMatchIn(t) -> 2
+            RE_TURN_R.containsMatchIn(t) -> 3
+            RE_ROUNDABOUT.containsMatchIn(t) -> 11
+            RE_ARRIVE.containsMatchIn(t) -> 15
+            RE_STRAIGHT.containsMatchIn(t) -> 9
+            RE_CONTINUE.containsMatchIn(t) -> 20
             else -> null   // không có động từ -> để tên small-icon (IconResource) quyết định
         }
     }
@@ -109,9 +129,9 @@ object NavFormat {
      *  Mirror HudTextSanitizer của reference (NFD strip + đ→d). KHÔNG dùng cho path broadcast (ô đó nhận space/dấu OK). */
     fun asciiToken(s: String): String {
         val noDiac = java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
-            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .replace(RE_DIACRITICS, "")
             .replace("đ", "d").replace("Đ", "D")
-        return noDiac.trim().replace(Regex("[^A-Za-z0-9]+"), "_").trim('_').ifEmpty { "Road" }
+        return noDiac.trim().replace(RE_NON_ALNUM, "_").trim('_').ifEmpty { "Road" }
     }
 
     /** Số nhánh ra ở vòng xuyến nếu lệnh có ("lối ra thứ 3" / "3rd exit" / "take the 2nd exit"). -1 nếu không có. */
@@ -119,8 +139,7 @@ object NavFormat {
         val t = text.lowercase()
         // B3: KHÔNG để "the" trơ — nó khớp "on the 1", "the 5 freeway" → ép glyph vòng-xuyến giả cho lệnh đi thẳng.
         // Chỉ nhận "the" khi có ngữ cảnh vòng-xuyến ("take/at the N"); còn lại là lối-ra/nhánh/exit/thứ-tự-số + "exit".
-        val m = Regex("""(?:lối ra|loi ra|nhánh|nhanh|exit|(?:take|at) the)\s*(?:thứ|thu)?\s*(\d+)""").find(t)
-            ?: Regex("""(\d+)\s*(?:st|nd|rd|th)\s+exit""").find(t)
+        val m = RE_RAB_EXIT.find(t) ?: RE_RAB_ORD.find(t)
         return m?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
     }
 }

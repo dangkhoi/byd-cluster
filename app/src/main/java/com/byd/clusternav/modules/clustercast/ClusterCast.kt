@@ -25,6 +25,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object ClusterCast {
     private val busy = AtomicBoolean(false)
+    // ★ 1 SERIAL EXECUTOR cho MỌI thao tác dadb sửa VD (cast/stop/applyScaleLive/applyGlobalAnim) → chạy TUẦN TỰ,
+    //   KHÔNG BAO GIỜ 2 luồng cùng ghi wm density / am task resize / service call lên 1 VD (khử tận gốc race
+    //   scale-vs-cast/stop: busy/scaleApplying giờ chỉ là cờ feedback + coalesce, không phải rào chống-đua DUY NHẤT).
+    private val vdExec = java.util.concurrent.Executors.newSingleThreadExecutor()
     // ★ SINGLE-FLIGHT áp-live (review#2): chỉ 1 luồng [applyScaleLive] chạy tại 1 thời điểm → nhấn mũi tên DỒN DẬP
     //   không mở nhiều kết nối dadb song song cùng `am task resize` 1 task. busy (cast/stop) là mutex RIÊNG.
     private val scaleApplying = AtomicBoolean(false)
@@ -139,7 +143,7 @@ object ClusterCast {
     fun cast(ctx: Context, pkg: String, log: (String) -> Unit) {
         if (!busy.compareAndSet(false, true)) { log("⏳ đang chạy 1 thao tác cụm — đợi xong"); return }
         val app = ctx.applicationContext
-        Thread {
+        vdExec.execute {
             try {
                 runCatching {
                     val target = pkg.ifBlank { lastCastApp }.ifBlank { castableApps.firstOrNull() ?: "" }
@@ -211,13 +215,13 @@ object ClusterCast {
                     }
                 }.onFailure { log("❌ LỖI kết nối: ${it.message}\n(popup 'Allow USB debugging' đã bấm chưa?)") }
             } finally { busy.set(false) }
-        }.start()
+        }
     }
 
     fun stop(ctx: Context, log: (String) -> Unit) {
         if (!busy.compareAndSet(false, true)) { log("⏳ đang chạy 1 thao tác — thử lại sau"); return }
         val app = ctx.applicationContext
-        Thread {
+        vdExec.execute {
             try {
                 runCatching {
                     dadb.Dadb.create("localhost", 5555, AdbKeys.ensure(app)).use { adb ->
@@ -239,7 +243,7 @@ object ClusterCast {
                     }
                 }.onFailure { log("❌ LỖI tắt: ${it.message} — vẫn reset cờ để thử lại được") }
             } finally { lastDisplayId = -1; setCasting(false); busy.set(false) }   // ★ LUÔN reset dù stop lỗi → không kẹt cờ 'đang chiếu'
-        }.start()
+        }
     }
 
     private fun rollback(adb: dadb.Dadb, teardownSeq: List<Int>, log: (String) -> Unit) {
@@ -376,7 +380,7 @@ object ClusterCast {
         //   N `am task resize` song song cho kết quả bất định). Nhả cờ trong finally → không kẹt kể cả khi lỗi.
         if (!scaleApplying.compareAndSet(false, true)) { log("đã lưu scale $pkg — đang áp bản trước, gộp vào lần áp đang chạy"); return }
         val app = ctx.applicationContext
-        Thread {
+        vdExec.execute {
             try {
                 runCatching {
                     dadb.Dadb.create("localhost", 5555, AdbKeys.ensure(app)).use { adb ->
@@ -396,20 +400,20 @@ object ClusterCast {
                     }
                 }.onFailure { log("❌ áp scale lỗi: ${it.message}") }
             } finally { scaleApplying.set(false) }
-        }.start()
+        }
     }
 
     /** "Mượt UI": set 3 animation scale GLOBAL qua dadb (uid shell). scale "0.5"=snappy · "1.0"=mặc định. Chạy nền, idempotent. */
     fun applyGlobalAnim(ctx: Context, scale: String, log: (String) -> Unit = {}) {
         val app = ctx.applicationContext
-        Thread {
+        vdExec.execute {
             runCatching {
                 dadb.Dadb.create("localhost", 5555, AdbKeys.ensure(app)).use { adb ->
                     for (k in ANIM_KEYS) adb.shell("settings put global $k $scale")
                 }
                 log("đã set animation scale = $scale (mượt UI)")
             }.onFailure { log("❌ set animation lỗi: ${it.message} (popup Allow USB đã bấm?)") }
-        }.start()
+        }
     }
 
     // ── parse helpers ──
