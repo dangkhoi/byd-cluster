@@ -277,7 +277,11 @@ class DeadReckonService : Service() {
                 // #2: ưu tiên hướng HỒI QUY track (bền), fallback bearing GPS cuối, rồi lastGoodBearing.
                 heading = trackHeading().let { if (!it.isNaN()) it else if (!fixBearing.isNaN()) fixBearing.toDouble() else lastGoodBearing }
                 enterMock(now, "DEAD_RECKON")
-            } else if (!hasFix && savedValid && !coldSeeded && ready && speed < 2.0) {
+            } else if (!hasFix && savedValid && !coldSeeded && ready && speed < 2.0 && sats < COLD_SEED_MAX_SATS) {
+                // ★ FIX D2 (đo trên xe 2026-07-20): CHỈ cold-seed khi ÍT vệ tinh (sats<COLD_SEED_MAX_SATS = thật sự
+                //   trong hầm/hầm ngầm, bầu trời bị chặn). Nếu NHIỀU sao (trời quang, sats=31) mà raw chưa kịp fix
+                //   (usedInFix=0 kinh niên + acc=999) → GPS ĐANG acquire, KHÔNG mock: mock vị trí lưu (có thể cũ) sẽ
+                //   ĐÈ lên GMaps đang chạy tốt bằng fused → nhảy sai chỗ. Để real-GPS acquire thay vì cold-seed-mock.
                 // ★ CHỈ cold-seed khi xe ĐỨNG YÊN (speed<2): cold-seed = "mở máy TẠI vị trí lưu, trong hầm". Nếu app
                 // restart lúc ĐANG CHẠY (đã rời vị trí lưu) mà cold-seed → đóng băng GMaps ở toạ độ nhà cũ = sai bét.
                 // SEED COLD-START: CHƯA TỪNG có GPS phiên này (mới mở máy, đang ở hầm/bãi ngầm) nhưng có vị trí LƯU
@@ -567,5 +571,6 @@ class DeadReckonService : Service() {
         private const val TRACK_N = 6            // #2: số fix gần nhất giữ để hồi quy hướng seed DR
         private const val SAVE_INTERVAL_MS = 5000L                 // ghi vị trí lưu mỗi 5s (throttle I/O)
         private const val MAX_SAVED_AGE_MS = 7L * 24 * 3600 * 1000 // 7 ngày: seed cũ hơn thì bỏ (xe có thể đã bị di chuyển khi app tắt)
+        private const val COLD_SEED_MAX_SATS = 8   // FIX D2: chỉ cold-seed-mock khi <8 vệ tinh THẤY (hầm/ngầm thật). Nhiều sao = trời quang, GPS đang acquire → đừng mock đè.
     }
 }

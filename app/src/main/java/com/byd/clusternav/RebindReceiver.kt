@@ -30,31 +30,20 @@ class RebindReceiver : BroadcastReceiver() {
         val action = intent?.action ?: return
         Log.i(TAG, "rebind trigger: $action")
         rebind(context)
-        // Trên sự kiện boot: (re)đặt watchdog định kỳ — alarm không sống qua reboot.
-        if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_LOCKED_BOOT_COMPLETED) {
-            // Dọn test-provider mock MỒ CÔI còn sót từ phiên trước bị kill bẩn (onDestroy không chạy) → GPS_PROVIDER
-            // kẹt = mock chết CHẶN GPS thật toàn hệ thống. An toàn tại boot: DR chưa chạy nên không gỡ mock đang dùng.
-            runCatching { com.byd.clusternav.modules.mockloc.MockLoc.stop(context) }
-            scheduleWatchdog(context)
-            // AUTO bật GPS hiệu chỉnh sau khi boot (nếu user chưa tắt). API 29 cho start FGS từ boot receiver.
-            // #1 FIX (chống ZOMBIE): CHỈ start khi ĐÃ có quyền Vị trí. Service không tự xin quyền được (không phải
-            // Activity) → start lúc thiếu quyền chỉ tạo zombie chạy-mà-không-nhận-fix, lại che mất việc MainActivity
-            // xin quyền. Chưa có quyền → bỏ qua, để MainActivity xin khi user mở app.
-            if (Prefs.gpsAuto(context) &&
-                context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
-                    android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                runCatching {
-                    context.startForegroundService(
-                        Intent(context, com.byd.clusternav.modules.deadreckon.DeadReckonService::class.java)
-                    )
-                }.onFailure { Log.e(TAG, "auto-start GPS on boot failed", it) }
-            } else if (Prefs.gpsAuto(context)) {
-                Log.i(TAG, "boot: bỏ auto-start GPS — chưa có quyền Vị trí (MainActivity sẽ xin)")
+        when (action) {
+            Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_LOCKED_BOOT_COMPLETED -> {
+                // Dọn test-provider mock MỒ CÔI còn sót từ phiên trước bị kill bẩn (onDestroy không chạy) → GPS_PROVIDER
+                // kẹt = mock chết CHẶN GPS thật toàn hệ thống. An toàn tại boot: DR chưa chạy nên không gỡ mock đang dùng.
+                runCatching { com.byd.clusternav.modules.mockloc.MockLoc.stop(context) }
+                scheduleWatchdog(context)   // alarm không sống qua reboot → (re)đặt khi boot
+                autoStartServices(context)
             }
-            // AUTO hiện NÚT NỔI lúc boot (user: "luôn hiện bubble") — cần quyền overlay (minSdk29 nên canDrawOverlays luôn có).
-            if (Prefs.bubbleAuto(context) && android.provider.Settings.canDrawOverlays(context)) {
-                runCatching { context.startForegroundService(Intent(context, com.byd.clusternav.modules.clustercast.FloatingBubbleService::class.java)) }
-                    .onFailure { Log.e(TAG, "auto-start bubble on boot failed", it) }
+            Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                // ★ FIX D1: sau install -r / update, app + DR service bị KILL nhưng KHÔNG tự chạy lại (chỉ rebind
+                //   listener ở trên). Hệ quả: user lái sau update → DR TẮT → mất GPS trong hầm KHÔNG được che →
+                //   GMaps báo "mất tín hiệu GPS". Tự bật lại DR + bubble như lúc boot (cùng uid app → startFGS OK).
+                runCatching { com.byd.clusternav.modules.mockloc.MockLoc.stop(context) }   // dọn mock mồ côi từ phiên bị kill lúc update
+                autoStartServices(context)
             }
         }
     }
@@ -71,6 +60,31 @@ class RebindReceiver : BroadcastReceiver() {
                     ComponentName(context, NavNotificationListener::class.java)
                 )
             }.onFailure { Log.e(TAG, "requestRebind failed", it) }
+        }
+
+        /**
+         * AUTO bật DR (GPS hầm) + nút nổi — gọi khi BOOT và khi MY_PACKAGE_REPLACED (sau update). Cùng uid app nên
+         * startForegroundService chạy được (khác adb shell bị chặn export). API29 cho start FGS từ receiver này.
+         * #1 (chống ZOMBIE): CHỈ start DR khi ĐÃ có quyền Vị trí — service không tự xin được (không phải Activity);
+         * start lúc thiếu quyền = zombie chạy-không-nhận-fix + che việc MainActivity xin quyền. Chưa có → để app xin.
+         */
+        fun autoStartServices(context: Context) {
+            if (Prefs.gpsAuto(context) &&
+                context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                runCatching {
+                    context.startForegroundService(
+                        Intent(context, com.byd.clusternav.modules.deadreckon.DeadReckonService::class.java)
+                    )
+                }.onFailure { Log.e(TAG, "auto-start GPS failed", it) }
+            } else if (Prefs.gpsAuto(context)) {
+                Log.i(TAG, "bỏ auto-start GPS — chưa có quyền Vị trí (MainActivity sẽ xin)")
+            }
+            // NÚT NỔI (user: "luôn hiện bubble") — cần quyền overlay (minSdk29 nên canDrawOverlays luôn có nếu đã cấp).
+            if (Prefs.bubbleAuto(context) && android.provider.Settings.canDrawOverlays(context)) {
+                runCatching { context.startForegroundService(Intent(context, com.byd.clusternav.modules.clustercast.FloatingBubbleService::class.java)) }
+                    .onFailure { Log.e(TAG, "auto-start bubble failed", it) }
+            }
         }
 
         /** Đặt alarm lặp ~60s gọi lại [rebind] → tự hồi phục binding khi đang chạy/đỗ. */
