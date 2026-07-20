@@ -266,6 +266,12 @@ object ClusterCast {
      * Trả về displayId app THỰC bám. Guard: chỉ gọi khi vd>=1 (không bao giờ đụng display 0).
      */
     private fun placeAppOnVd(app: Context, adb: dadb.Dadb, sh: (String) -> String, target: String, vd: Int, log: (String) -> Unit): Int {
+        // ★ FIX B (2026-07-20, verify trên xe: enable_freeform_support=null → am task resize BỊ BỎ QUA vì task không
+        //   thành freeform → chỉnh size không ăn, và bước "resize ép composite" của T1 không chạy → video app ĐEN/TRẮNG).
+        //   BẬT freeform (global) TRƯỚC khi đặt → windowingMode 5 dính → am task resize ăn (chỉnh size) + ép composite
+        //   (video app hết đen). Idempotent, để bật luôn (dev setting, không hại). Cả 2 tên (cũ + mới) cho chắc.
+        sh("settings put global enable_freeform_support 1")
+        sh("settings put global development_enable_freeform_windows_support 1")
         sh("wm density ${scaleOf(target).dpi} -d $vd"); Thread.sleep(150)             // ① scale per-app (dpi từ AppScale)
         // ★ DISPATCH (T-A): app trong t3Apps → T3 (daemon app_process, chắc-ăn); CÒN LẠI → T1 placeFreeform (MẶC ĐỊNH — giữ dẫn).
         val landed = if (target in t3Apps) placeT3(app, adb, sh, target, vd, log)
@@ -295,7 +301,14 @@ object ClusterCast {
         val out = sh("am start --display $vd --windowingMode 5 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $comp")
         Thread.sleep(900)
         val landed = appDisplay(sh("am stack list"), target)
-        if (landed != vd) { log("  ↩ chưa bám VD (đang $landed): ${out.take(60)}"); return landed }
+        if (landed != vd) {
+            // ★ FIX A: move-stack KHÔNG bám VD (app singleInstance/khoá xoay/từ chối move — hay gặp ở app video/mirror
+            //   như CarPlay/Android Auto) → fallback FRESH-LAUNCH (mất state nhưng ÍT NHẤT lên cụm + composite ĐÚNG,
+            //   hết đen/trắng). Generic (không hardcode pkg): áp cho mọi app move hụt. App có state (nav) thì move
+            //   đã bám ở trên nên không rơi vào đây; app video (không state cần giữ) rơi vào đây → fresh là hợp lý.
+            log("  ↩ move không bám VD (đang $landed) → fallback fresh-launch (composite đúng cho app video): ${out.take(60)}")
+            return freshLaunch(adb, sh, target, vd, log)
+        }
         // ③ resize ép composite. bounds LẤY TỪ AppScale per-app (rect=-1 → full VD [0,0,W,H], giữ hành vi cũ). dpi đã áp ở placeAppOnVd.
         val tid = appTaskId(sh("am stack list"), target)
         val (w, h) = vdRealSize(sh("dumpsys display"), vd); rememberClusterSize(w, h)
