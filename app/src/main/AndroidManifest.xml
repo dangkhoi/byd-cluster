@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_MOCK_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- WAKE_LOCK: giữ CPU thức cho dead-reckon tick khi màn tắt (postDelayed uptimeMillis dừng lúc deep-sleep). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- R7: targetSdk 34 → FGS type=location cần perm riêng trên API 34+ (Seal API29 không enforce, khai cho đúng/khỏi crash nếu cài máy đời mới). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -25,8 +27,10 @@
     <!-- liệt kê app cho picker "Chiếu app lên cụm". API29 không lọc; thêm để chắc trên API30+ (app sideload cá nhân). -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
+    <!-- allowBackup=false: app lưu ADB private key (adb.key/adb.pub) trong filesDir — key này grant shell
+         localhost:5555. Bật backup sẽ để `adb backup`/auto-backup rút key ra ngoài → tắt để không lộ. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:requestLegacyExternalStorage="true"
@@ -45,10 +49,11 @@
         </activity>
 
         <!-- Card fallback (CHIẾM màn, MẤT đồng hồ) — chỉ dùng khi làn nav zin không lên.
-             Launch tay qua "am start" với display id động + component .ClusterNavActivity. -->
+             Launch tay qua "am start" với display id động + component .ClusterNavActivity.
+             exported=false: chống app khác cài chung tự kích chiếm cụm (adb shell vẫn 'am start' được non-exported). -->
         <activity
             android:name=".ClusterNavActivity"
-            android:exported="true"
+            android:exported="false"
             android:launchMode="singleTop"
             android:screenOrientation="landscape"
             android:resizeableActivity="true"
@@ -67,10 +72,11 @@
             android:exported="false"
             android:label="Module (thí nghiệm)" />
 
-        <!-- AUTOMATION ADB: chạy self-test mọi module + recon HAL headless. exported để 'adb shell am start' gọi được. -->
+        <!-- AUTOMATION ADB: chạy self-test mọi module + recon HAL headless. exported=false: chống app khác
+             kích self-test/HAL-recon (adb shell 'am start' vẫn gọi được activity non-exported từ uid shell). -->
         <activity
             android:name=".modules.AutotestActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="Autotest (ADB)" />
 
 

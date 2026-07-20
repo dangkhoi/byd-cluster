@@ -32,6 +32,9 @@ class RebindReceiver : BroadcastReceiver() {
         rebind(context)
         // Trên sự kiện boot: (re)đặt watchdog định kỳ — alarm không sống qua reboot.
         if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_LOCKED_BOOT_COMPLETED) {
+            // Dọn test-provider mock MỒ CÔI còn sót từ phiên trước bị kill bẩn (onDestroy không chạy) → GPS_PROVIDER
+            // kẹt = mock chết CHẶN GPS thật toàn hệ thống. An toàn tại boot: DR chưa chạy nên không gỡ mock đang dùng.
+            runCatching { com.byd.clusternav.modules.mockloc.MockLoc.stop(context) }
             scheduleWatchdog(context)
             // AUTO bật GPS hiệu chỉnh sau khi boot (nếu user chưa tắt). API 29 cho start FGS từ boot receiver.
             // #1 FIX (chống ZOMBIE): CHỈ start khi ĐÃ có quyền Vị trí. Service không tự xin quyền được (không phải
