@@ -4,9 +4,9 @@
 
 ## 1. Cài đặt
 
-1. Tải APK: [`apk/ClusterNav-0.29-release.apk`](../apk/ClusterNav-0.29-release.apk) → cài:
+1. Tải APK: [`apk/ClusterNav-0.30-release.apk`](../apk/ClusterNav-0.30-release.apk) → cài:
    ```bash
-   adb install -r ClusterNav-0.29-release.apk
+   adb install -r ClusterNav-0.30-release.apk
    ```
    (hoặc copy vào máy bấm cài — cho phép "cài từ nguồn không xác định").
 2. Trên xe bật một lần: **Developer options → USB debugging** + **adb tcp 5555**.
@@ -66,7 +66,7 @@ Bật bằng nút **"Hiện nút nổi"** ở màn chính (cần quyền **Hiể
 
 ## 5. Chỉnh kích thước từng app (scale)
 
-Mỗi app một tỷ lệ khác nhau → chỉnh riêng bằng **nút mũi tên theo TỪNG CẠNH**, nhấn tới khi vừa mắt (tự lưu, áp ngay lên cụm nếu đang chiếu). **Chỉnh lệch được — không bắt căn giữa:**
+Mỗi app một tỷ lệ khác nhau → chỉnh riêng bằng **nút mũi tên theo TỪNG CẠNH**. Tick app xong, các nút chỉnh **hiện gọn ngay dưới app đó**. Nhấn tới khi vừa mắt (tự lưu; **ngừng nhấn ~0.3s mới áp lên cụm** cho mượt, khỏi giật). **Chỉnh lệch được — không bắt căn giữa:**
 
 ![Chỉnh scale](images/chinh-scale.png)
 
