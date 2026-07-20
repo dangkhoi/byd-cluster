@@ -17,6 +17,7 @@ import android.util.Log
 object NavConnect {
     private const val TAG = "NavConnect"
     private const val COMP = "com.byd.clusternav/com.byd.clusternav.NavNotificationListener"
+    private val reconnecting = java.util.concurrent.atomic.AtomicBoolean(false)   // single-flight: tap dồn dập / ensure trùng → 1 chu kỳ disallow→allow
 
     /** Reconnect NGAY qua dadb (chạy nền). An toàn gọi nhiều lần. */
     fun reconnect(ctx: Context) {
@@ -48,16 +49,19 @@ object NavConnect {
 
     /** Lõi blocking: dadb connect localhost:5555 → disallow → allow. Chạy trên thread nền của caller. */
     private fun doReconnect(app: Context) {
-        runCatching {
-            val keyPair = AdbKeys.ensure(app)   // key CHUNG, sinh nguyên tử + khóa chung (chống đua với MockLoc.selfGrant)
-            dadb.Dadb.create("localhost", 5555, keyPair).use { adb ->
-                adb.shell("cmd notification disallow_listener $COMP")
-                Thread.sleep(1500)
-                adb.shell("cmd notification allow_listener $COMP")
-            }
-            // Fallback cho chắc.
-            NotificationListenerService.requestRebind(ComponentName(app, NavNotificationListener::class.java))
-            Log.i(TAG, "reconnect qua dadb xong")
-        }.onFailure { Log.e(TAG, "reconnect qua dadb LỖI (popup Allow chưa bấm?)", it) }
+        if (!reconnecting.compareAndSet(false, true)) { Log.i(TAG, "reconnect đang chạy — bỏ lần trùng"); return }
+        try {
+            runCatching {
+                val keyPair = AdbKeys.ensure(app)   // key CHUNG, sinh nguyên tử + khóa chung (chống đua với MockLoc.selfGrant)
+                dadb.Dadb.create("localhost", 5555, keyPair).use { adb ->
+                    adb.shell("cmd notification disallow_listener $COMP")
+                    Thread.sleep(1500)
+                    adb.shell("cmd notification allow_listener $COMP")
+                }
+                // Fallback cho chắc.
+                NotificationListenerService.requestRebind(ComponentName(app, NavNotificationListener::class.java))
+                Log.i(TAG, "reconnect qua dadb xong")
+            }.onFailure { Log.e(TAG, "reconnect qua dadb LỖI (popup Allow chưa bấm?)", it) }
+        } finally { reconnecting.set(false) }
     }
 }

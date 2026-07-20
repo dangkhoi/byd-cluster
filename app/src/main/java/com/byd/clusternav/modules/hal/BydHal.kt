@@ -114,12 +114,15 @@ object BydHal {
     }
 
     /** Gọi getter tên [name] (0 hoặc 1 tham số int) qua reflection → chuỗi giá trị. null nếu không có/ném.
-     *  ĐÂY là cách đọc THẬT trên ROM này (getCurrentSpeed(), getTyrePressureValue(area)...) — KHÔNG cần listener. */
+     *  ĐÂY là cách đọc THẬT trên ROM này (getCurrentSpeed(), getTyrePressureValue(area)...) — KHÔNG cần listener.
+     *  Method cache theo (class#name#arity) → hot-path (steering mỗi tick) khỏi scan getMethods() lại. */
+    private val getterCache = java.util.concurrent.ConcurrentHashMap<String, java.lang.reflect.Method>()
     fun callGetter(dev: Any, name: String, arg: Int? = null): String? {
-        val m = dev.javaClass.methods.firstOrNull {
+        val key = "${dev.javaClass.name}#$name#${if (arg == null) 0 else 1}"
+        val m = getterCache[key] ?: dev.javaClass.methods.firstOrNull {
             it.name == name && it.parameterTypes.size == (if (arg == null) 0 else 1) &&
                 (arg == null || it.parameterTypes[0] == Int::class.javaPrimitiveType)
-        } ?: return null
+        }?.also { getterCache[key] = it } ?: return null
         return runCatching { (if (arg == null) m.invoke(dev) else m.invoke(dev, arg))?.toString() ?: "null" }.getOrNull()
     }
 

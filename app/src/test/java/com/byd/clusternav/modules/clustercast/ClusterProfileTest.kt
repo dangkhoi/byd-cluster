@@ -70,4 +70,38 @@ class ClusterProfileTest {
         assertTrue(ClusterProfile.SEAL_DL3.summary().contains("seal_dl3"))
         assertTrue(ClusterProfile.SEAL_DL3.summary().contains("1920×720"))
     }
+
+    // ── VALIDATE (R-hardening): chuỗi share là untrusted → chặn bounds suy biến + mã lệnh tùy ý ──
+    @Test fun `parse rejects W or H không dương`() {
+        assertNull(ClusterProfile.parse("id;3;0;720;30-16-35;18-0;xdja"))     // W=0
+        assertNull(ClusterProfile.parse("id;3;-5;720;30-16-35;18-0;xdja"))    // W âm
+        assertNull(ClusterProfile.parse("id;3;1920;0;30-16-35;18-0;xdja"))    // H=0
+    }
+
+    @Test fun `parse rejects W hoặc H quá lớn`() {
+        assertNull(ClusterProfile.parse("id;3;9000;720;30-16-35;18-0;xdja"))  // W>8192
+        assertNull(ClusterProfile.parse("id;3;1920;99999;30-16-35;18-0;xdja"))
+    }
+
+    @Test fun `parse rejects diLink ngoài dải`() {
+        assertNull(ClusterProfile.parse("id;0;1920;720;30-16-35;18-0;xdja"))
+        assertNull(ClusterProfile.parse("id;99;1920;720;30-16-35;18-0;xdja"))
+    }
+
+    @Test fun `parse rejects mã lệnh ngoài 0-255 (chống service call tùy ý)`() {
+        assertNull(ClusterProfile.parse("id;3;1920;720;300;;xdja"))           // cast cmd 300 > 255
+        assertNull(ClusterProfile.parse("id;3;1920;720;30-16-35;999;xdja"))   // teardown cmd 999 > 255
+    }
+
+    @Test fun `parse rejects id quá dài`() {
+        assertNull(ClusterProfile.parse("a".repeat(33) + ";3;1920;720;30;;xdja"))
+    }
+
+    @Test fun `parse chấp nhận biên hợp lệ`() {
+        val p = ClusterProfile.parse("x;9;8192;1;255-0;;h")
+        assertEquals("x", p?.id)
+        assertEquals(9, p?.diLink)
+        assertEquals(8192, p?.clusterW)
+        assertEquals(listOf(255, 0), p?.castSeq)
+    }
 }

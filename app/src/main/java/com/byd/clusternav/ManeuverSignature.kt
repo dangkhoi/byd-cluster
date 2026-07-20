@@ -39,8 +39,8 @@ object ManeuverSignature {
     /** -> mã AMAP NEW_ICON từ ảnh mũi tên, hoặc null nếu mờ/không khớp. */
     fun classify(bmp: Bitmap?): Int? {
         if (bmp == null || bmp.width < 8 || bmp.height < 8) return null
-        val sig = signature(bmp) ?: run { set("(mờ)", -1); return null }
-        val name = match(sig) ?: lastFill?.let { matchNCC(it) }   // #3: Hamming trượt → NCC fallback (suy giảm dần)
+        val s = signature(bmp) ?: run { set("(mờ)", -1); return null }
+        val name = match(s.bits) ?: matchNCC(s.fill)   // #3: Hamming trượt → NCC fallback (suy giảm dần)
             ?: run { set("(không khớp)", -1); Log.i(TAG, "no match (Hamming>$MAX_HAMMING, NCC<$NCC_MIN)"); return null }
         val amap = nameToAmap(name)
         set(name, amap)
@@ -53,13 +53,13 @@ object ManeuverSignature {
     /** -> mã icon HAL GỐC (1..49, enum HudController) từ ảnh, hoặc null. Cho đường ghi-thẳng-HAL (dadb/NavOpen). */
     fun classifyHal(bmp: Bitmap?): Int? {
         if (bmp == null || bmp.width < 8 || bmp.height < 8) return null
-        val sig = signature(bmp) ?: return null
-        val name = match(sig) ?: lastFill?.let { matchNCC(it) } ?: return null   // #3: NCC fallback
+        val s = signature(bmp) ?: return null
+        val name = match(s.bits) ?: matchNCC(s.fill) ?: return null   // #3: NCC fallback
         return nameToHal(name)
     }
 
     // ── chữ ký 225-bit (port wm0.c -> wm0.b với f=1.0, z=false) ──
-    private fun signature(bmp: Bitmap): LongArray? {
+    private fun signature(bmp: Bitmap): Sig? {
         val w = bmp.width; val h = bmp.height
         val n = w * h
         if (n <= 0) return null
@@ -131,13 +131,12 @@ object ManeuverSignature {
                 cell++
             }
         }
-        lastFill = fill
-        return sig
+        return Sig(sig, fill)
     }
 
     // #3: NCC FALLBACK — khi Hamming trượt (GMaps đổi style icon → chữ ký lệch >18 bit = "vực im lặng"), khớp mềm
     // bằng normalized cross-correlation giữa tỉ-lệ-lấp-ô (grayscale) và 38 template (bit 0/1) → suy giảm dần thay vì null.
-    @Volatile private var lastFill: FloatArray? = null
+    private class Sig(val bits: LongArray, val fill: FloatArray)   // gói bits+fill, truyền tường minh (bỏ field ngầm → thread-safe)
     private val grayRegistry: List<Pair<FloatArray, String>> by lazy {
         ManeuverRegistry.RAW.map { (bits, name) -> FloatArray(bits.length) { if (bits[it] == '1') 1f else 0f } to name }
     }

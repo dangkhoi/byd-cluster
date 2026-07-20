@@ -38,6 +38,7 @@ class DeadReckonService : Service() {
 
     private var worker: HandlerThread? = null
     private var wh: Handler? = null
+    private var wakeLock: android.os.PowerManager.WakeLock? = null   // giữ CPU thức khi màn tắt (tick postDelayed = uptimeMillis, dừng khi deep-sleep)
     private var sm: SensorManager? = null
     private var lm: LocationManager? = null
     private var hasGyro = false
@@ -116,7 +117,9 @@ class DeadReckonService : Service() {
     }
     private val locLis = object : LocationListener {
         override fun onLocationChanged(loc: Location) {
-            if (loc.isFromMockProvider) return       // bỏ chính mock của mình (chống feedback)
+            // bỏ chính mock của mình (chống feedback). isMock (API31+) thay isFromMockProvider (deprecated từ 31).
+            val fromMock = if (Build.VERSION.SDK_INT >= 31) loc.isMock else @Suppress("DEPRECATION") loc.isFromMockProvider
+            if (fromMock) return
             fixLat = loc.latitude; fixLon = loc.longitude; fixAcc = loc.accuracy
             fixAt = SystemClock.elapsedRealtime(); hasFix = true
             if (loc.hasBearing() && loc.speed > 1.5f) { fixBearing = loc.bearing; lastGoodBearing = loc.bearing.toDouble() }
@@ -144,15 +147,22 @@ class DeadReckonService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        startForeground(NOTIF_ID, buildNotif())
-        // #1 FIX (chống ZOMBIE): thiếu quyền Vị trí → requestLocationUpdates/registerGnss NÉM SecurityException (bị nuốt
-        // ở dưới) → service chạy nhưng KHÔNG BAO GIỜ nhận fix. TUYỆT ĐỐI đừng để 'running=true' giả: nó khiến
-        // MainActivity tưởng DR đang chạy nên KHÔNG xin quyền (fix #1 bị vô hiệu). Service không tự xin quyền được
-        // (không phải Activity) → thoát sạch + ghi lỗi để UI hiện "thiếu quyền", để MainActivity gánh việc xin.
+        // #1 FIX (chống ZOMBIE + R7 crash API34): CHECK QUYỀN TRƯỚC khi startForeground. Trên API34+, startForeground
+        // với foregroundServiceType=location NÉM SecurityException nếu THIẾU quyền Location → thứ tự cũ (startForeground
+        // trước) crash TRƯỚC khi kịp chạy nhánh stopSelf graceful. Service không tự xin quyền được (không phải Activity)
+        // → thoát sạch + ghi lỗi để MainActivity gánh việc xin (đừng để 'running=true' giả).
         if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             DeadReckonState.lastError = "thiếu quyền Vị trí — DR chưa chạy (mở app cấp quyền rồi bật lại)"
             stopSelf(); return
         }
+        try { startForeground(NOTIF_ID, buildNotif()) }
+        catch (e: Exception) { DeadReckonState.lastError = "startForeground lỗi: ${e.message}"; stopSelf(); return }
+        // WAKE_LOCK partial: tick() dùng Handler.postDelayed (uptimeMillis) → dừng khi CPU deep-sleep. HU có thể ngủ CPU
+        // lúc màn tắt giữa hầm dài → DR đóng băng. Giữ suốt đời service (HU luôn có nguồn, không lo pin), nhả onDestroy;
+        // process bị kill thì OS tự nhả (wakelock gắn theo process).
+        wakeLock = (getSystemService(POWER_SERVICE) as? android.os.PowerManager)
+            ?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "clusternav:deadreckon")
+            ?.apply { setReferenceCounted(false); runCatching { acquire() } }
         // #1 FIX: TỰ CẤP quyền mock qua dadb (mock_location reset DENY sau cài lại, app không tự xin runtime được).
         // Chạy nền, idempotent; grant thường xong trong ~1-2s → trước khi vào hầm cần mock. Mock lỗi lần đầu thì DR
         // retry (backoff 2s) — lúc đó grant đã tới. Popup Allow USB chưa bấm → nuốt, user bật tay được.
@@ -189,14 +199,18 @@ class DeadReckonService : Service() {
                 } else DeadReckonState.savedLoc = if (s == null) "chưa có" else "quá cũ (${s.ageMs / 3600000}h)"
             }
         }
-        // mở file log CSV (so shadow-DR vs GPS) — pull về bằng: adb pull <logPath>
-        runCatching {
-            val f = java.io.File(getExternalFilesDir(null), "dr_log_${System.currentTimeMillis()}.csv")
-            logWriter = f.bufferedWriter().also {
-                it.appendLine("t_ms,state,used,sats,acc_m,gpsLat,gpsLon,gpsBrg,spd_kmh,posLat,posLon,hdg,posErr_m,hdgErr_deg,gpsYaw_dps,steerYaw_dps,ratioCal,calN,flip")
-            }
-            DeadReckonState.logPath = f.absolutePath
-        }.onFailure { DeadReckonState.lastError = "mở log lỗi: ${it.message}" }
+        // mở file log CSV (so shadow-DR vs GPS) — TRÊN WORKER (khỏi disk-I/O trên main) + rotate giữ 5 file mới nhất.
+        h.post {
+            runCatching {
+                val dir = getExternalFilesDir(null)
+                rotateLogs(dir)
+                val f = java.io.File(dir, "dr_log_${System.currentTimeMillis()}.csv")
+                logWriter = f.bufferedWriter().also {
+                    it.appendLine("t_ms,state,used,sats,acc_m,gpsLat,gpsLon,gpsBrg,spd_kmh,posLat,posLon,hdg,posErr_m,hdgErr_deg,gpsYaw_dps,steerYaw_dps,ratioCal,calN,flip")
+                }
+                DeadReckonState.logPath = f.absolutePath
+            }.onFailure { DeadReckonState.lastError = "mở log lỗi: ${it.message}" }
+        }
         lastTickNs = SystemClock.elapsedRealtimeNanos()
         DeadReckonState.running = true
         h.post(loop)
@@ -223,6 +237,7 @@ class DeadReckonService : Service() {
         } else {
             runCatching { MockLoc.stop(applicationContext) }
         }
+        runCatching { wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null }
         DeadReckonState.running = false; DeadReckonState.mocking = false; DeadReckonState.state = "REAL"
         super.onDestroy()
     }
@@ -284,10 +299,10 @@ class DeadReckonService : Service() {
             heading += Math.toDegrees(yawRate) * dt
             if (heading.isNaN() || heading.isInfinite()) heading = if (lastGoodBearing >= 0.0) lastGoodBearing else 0.0
             heading = (heading % 360 + 360) % 360
-            val dist = if (coldSeedStationary) 0.0 else speed * dt
+            val dist = if (coldSeedStationary) 0.0 else speed * SPEEDO_CORRECTION * dt   // bù over-read đồng hồ ~5-8%
             val hRad = Math.toRadians(heading)
             drLat += dist * Math.cos(hRad) / 111320.0
-            drLon += dist * Math.sin(hRad) / (111320.0 * Math.cos(Math.toRadians(drLat)))
+            drLon += dist * Math.sin(hRad) / (111320.0 * cosLatGuard(drLat))
 
             if (peekStartedAt != 0L) {
                 // ── ĐANG PEEK (mock tạm gỡ) ── chờ GPS thật về. KHÔNG push mock (để provider trả fix THẬT + GnssStatus sống).
@@ -348,10 +363,10 @@ class DeadReckonService : Service() {
         if (shSeeded) {
             shHeading += Math.toDegrees(yawRate) * dt
             shHeading = (shHeading % 360 + 360) % 360
-            val sd = speed * dt
+            val sd = speed * SPEEDO_CORRECTION * dt
             val shr = Math.toRadians(shHeading)
             shLat += sd * Math.cos(shr) / 111320.0
-            shLon += sd * Math.sin(shr) / (111320.0 * Math.cos(Math.toRadians(shLat)))
+            shLon += sd * Math.sin(shr) / (111320.0 * cosLatGuard(shLat))
         }
         val steerYawDps = Math.toDegrees(steerYawRate(speed))   // mô hình lái (log kể cả khi chưa gate)
         if (hasFix && fixAt != lastLoggedFixAt) {
@@ -422,6 +437,23 @@ class DeadReckonService : Service() {
         val x = Math.cos(Math.toRadians(trkLat[oldest])) * Math.sin(Math.toRadians(trkLat[newest])) -
             Math.sin(Math.toRadians(trkLat[oldest])) * Math.cos(Math.toRadians(trkLat[newest])) * Math.cos(dLon)
         return (Math.toDegrees(Math.atan2(y, x)) + 360) % 360
+    }
+
+    /** cos(lat) chặn dưới để tích phân kinh độ không chia ~0 gần cực (blowup NaN/inf). VN không chạm nhưng rẻ. */
+    private fun cosLatGuard(latDeg: Double): Double {
+        val c = Math.cos(Math.toRadians(latDeg))
+        return if (Math.abs(c) < 1e-6) 1e-6 else c
+    }
+
+    /** Giữ 5 file dr_log_*.csv mới nhất, xoá phần cũ (chống phình getExternalFilesDir theo thời gian). */
+    private fun rotateLogs(dir: java.io.File?) {
+        dir ?: return
+        runCatching {
+            dir.listFiles { f -> f.name.startsWith("dr_log_") && f.name.endsWith(".csv") }
+                ?.sortedByDescending { it.name }
+                ?.drop(4)                          // giữ 4 cũ + 1 sắp tạo = 5
+                ?.forEach { runCatching { it.delete() } }
+        }
     }
 
     /** Khoảng cách Haversine (m) giữa 2 toạ độ. */
@@ -497,7 +529,7 @@ class DeadReckonService : Service() {
                                 // TỰ DÒ DẤU: yaw dự đoán (không đảo) cùng dấu với raw; nếu ngược dấu gpsYaw → cần đảo.
                                 val agree = (raw >= 0) == (gpsYaw >= 0)
                                 flipVote = (flipVote + if (agree) -1 else 1).coerceIn(-8, 8)
-                                DeadReckonState.steerFlip = flipVote > 0
+                                if (!DeadReckonState.steerFlipManual) DeadReckonState.steerFlip = flipVote > 0   // tôn trọng đảo-dấu thủ công
                             }
                         }
                     }
@@ -530,6 +562,7 @@ class DeadReckonService : Service() {
         private const val PEEK_WINDOW_MAX_MS = 8000L  // usedInFix≥4 (GPS chớm về) → gia hạn cửa tới 8s chờ fix thật (tránh nhả non)
         private const val STEER_RATIO = 15.5    // tỉ số lái Seal (giá trị KHỞI ĐẦU — sau đó tự calib online)
         private const val WHEELBASE = 2.92       // chiều dài cơ sở Seal (m)
+        private const val SPEEDO_CORRECTION = 0.93   // getCurrentSpeed (đồng hồ) đọc CAO hơn thực ~5-8% → bù khi tích phân quãng DR
         private const val MIN_CAL_SAMPLES = 4    // cần ≥4 mẫu calib (cua lúc còn GPS) mới tin heading lái
         private const val TRACK_N = 6            // #2: số fix gần nhất giữ để hồi quy hướng seed DR
         private const val SAVE_INTERVAL_MS = 5000L                 // ghi vị trí lưu mỗi 5s (throttle I/O)

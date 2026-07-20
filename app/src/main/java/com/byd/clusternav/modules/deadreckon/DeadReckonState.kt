@@ -20,6 +20,7 @@ object DeadReckonState {
     // MẶC ĐỊNH BẬT (an toàn nhờ: chỉ dùng khi đã tự-calib đủ mẫu; trước đó tự đi thẳng — xem gate ở Service).
     @Volatile var useSteer = true
     @Volatile var steerFlip = false
+    @Volatile var steerFlipManual = false   // user đã đảo dấu tay → auto-calib KHÔNG đè steerFlip nữa
     // Tỉ số lái TỰ HIỆU CHỈNH online: so yaw-rate GPS (Δbearing/dt khi có GPS tốt) với góc lái HAL để suy ra
     // tỉ số thật của xe, thay cho hằng ước lượng 15.5. Hội tụ dần khi vào cua lúc CÒN GPS.
     @Volatile var steerRatioCal = 15.5

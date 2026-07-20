@@ -9,6 +9,13 @@ import java.util.Locale
  */
 object NavParse {
 
+    // Regex COMPILE 1 LẦN (hot-path: dùng lại mỗi heartbeat 400ms + mỗi noti). Pattern GIỮ Y NGUYÊN.
+    private val RE_METERS = Regex("""(\d+([.,]\d+)?)\s*(km|m)""", RegexOption.IGNORE_CASE)
+    private val RE_ETA_KM = Regex("""(\d+([.,]\d+)?)\s*km""", RegexOption.IGNORE_CASE)
+    private val RE_ETA_MIN = Regex("""(\d+)\s*(phút|min|分)""", RegexOption.IGNORE_CASE)
+    private val RE_ETA_HR = Regex("""(\d+)\s*(giờ|h|hour|时)""", RegexOption.IGNORE_CASE)
+    private val RE_CLOCK = Regex("""\b(\d{1,2}):(\d{2})\b""")
+
     /** Làm TRÒN cự ly hiển thị theo bước theo độ xa (chống nhảy từng-mét NHƯNG đủ MỊN để đếm ngược mượt).
      *  Bước nhỏ lại (so bản cũ 50/100m) → số trượt đều thay vì "đứng im rồi nhảy cục". */
     fun quantizeDisplay(m: Int): Int = when {
@@ -21,18 +28,18 @@ object NavParse {
 
     /** "250 m" / "1.2 km" / "1,2 km" -> mét (int). -1 nếu không đọc được. */
     fun parseMeters(s: String): Int {
-        val m = Regex("""(\d+([.,]\d+)?)\s*(km|m)""", RegexOption.IGNORE_CASE).find(s) ?: return -1
+        val m = RE_METERS.find(s) ?: return -1
         val v = m.groupValues[1].replace(",", ".").toDoubleOrNull() ?: return -1
         return if (m.groupValues[3].equals("km", true)) (v * 1000).toInt() else v.toInt()
     }
 
     /** ETA "10:32 · 5.2 km · 8 phút" -> (mét còn lại, giây còn lại). -1 nếu thiếu. */
     fun parseEta(s: String): Pair<Int, Int> {
-        val dis = Regex("""(\d+([.,]\d+)?)\s*km""", RegexOption.IGNORE_CASE).find(s)
+        val dis = RE_ETA_KM.find(s)
             ?.let { (it.groupValues[1].replace(",", ".").toDoubleOrNull() ?: 0.0) * 1000 }?.toInt() ?: -1
-        val min = Regex("""(\d+)\s*(phút|min|分)""", RegexOption.IGNORE_CASE).find(s)
+        val min = RE_ETA_MIN.find(s)
             ?.groupValues?.get(1)?.toIntOrNull()
-        val hr = Regex("""(\d+)\s*(giờ|h|hour|时)""", RegexOption.IGNORE_CASE).find(s)
+        val hr = RE_ETA_HR.find(s)
             ?.groupValues?.get(1)?.toIntOrNull()
         val sec = when {
             min != null || hr != null -> ((hr ?: 0) * 3600) + ((min ?: 0) * 60)
@@ -70,7 +77,7 @@ object NavParse {
 
     /** Lấy giờ tới "HH:MM" từ chuỗi ETA notification ("10:32 · 5.2 km · 8 phút"). null nếu không có. */
     fun extractArrivalClock(s: String): String? =
-        Regex("""\b(\d{1,2}):(\d{2})\b""").find(s)?.let {
+        RE_CLOCK.find(s)?.let {
             val h = it.groupValues[1].toInt(); val m = it.groupValues[2].toInt()
             if (h in 0..23 && m in 0..59) String.format(Locale.US, "%d:%02d", h, m) else null
         }

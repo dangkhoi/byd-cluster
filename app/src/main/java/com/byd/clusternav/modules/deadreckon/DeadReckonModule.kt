@@ -62,7 +62,8 @@ object DeadReckonModule : ClusterModule {
         }
         ui.btn("Đảo dấu lái (nếu DR đi lệch chiều cua)") {
             DeadReckonState.steerFlip = !DeadReckonState.steerFlip
-            ui.log("đảo dấu lái → ${DeadReckonState.steerFlip}")
+            DeadReckonState.steerFlipManual = true   // user chỉnh tay → khoá auto-calib khỏi đè
+            ui.log("đảo dấu lái → ${DeadReckonState.steerFlip} (khoá auto-calib dấu)")
         }
         val dp = ctx.resources.displayMetrics.density
         view = TextView(ctx).apply {

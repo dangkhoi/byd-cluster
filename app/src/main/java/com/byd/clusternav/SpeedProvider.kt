@@ -14,15 +14,16 @@ import android.content.ContextWrapper
  */
 object SpeedProvider {
     @Volatile private var dev: Any? = null
+    @Volatile private var speedMethod: java.lang.reflect.Method? = null   // cache 1 lần (device ổn định) — khỏi scan getMethods() mỗi tick
     @Volatile private var lastGoodMps = 0.0
 
     /** Tốc độ hiện tại (m/s). 0 nếu chưa đọc được. */
     fun mps(): Double {
         val d = device() ?: return lastGoodMps
-        val kmh = runCatching {
-            val m = d.javaClass.methods.firstOrNull { it.name == "getCurrentSpeed" && it.parameterTypes.isEmpty() }
-            (m?.invoke(d) as? Number)?.toDouble()
-        }.getOrNull() ?: return lastGoodMps
+        val m = speedMethod ?: runCatching {
+            d.javaClass.methods.firstOrNull { it.name == "getCurrentSpeed" && it.parameterTypes.isEmpty() }
+        }.getOrNull()?.also { speedMethod = it } ?: return lastGoodMps
+        val kmh = runCatching { (m.invoke(d) as? Number)?.toDouble() }.getOrNull() ?: return lastGoodMps
         if (kmh < 0 || kmh > 400) return lastGoodMps      // sentinel/không hợp lệ → giữ giá trị cũ
         lastGoodMps = kmh / 3.6
         return lastGoodMps
