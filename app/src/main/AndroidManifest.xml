@@ -49,11 +49,12 @@
         </activity>
 
         <!-- Card fallback (CHIẾM màn, MẤT đồng hồ) — chỉ dùng khi làn nav zin không lên.
-             Launch tay qua "am start" với display id động + component .ClusterNavActivity.
-             exported=false: chống app khác cài chung tự kích chiếm cụm (adb shell vẫn 'am start' được non-exported). -->
+             Launch qua `am start` (cờ display + component .ClusterNavActivity) từ uid shell/dadb 2000, KHÔNG in-process.
+             exported=true BẮT BUỘC: BYD DiLink3 enforce export-check cho shell-uid → exported=false bị Permission
+             Denial (VERIFY TRÊN XE 2026-07-20). -->
         <activity
             android:name=".ClusterNavActivity"
-            android:exported="false"
+            android:exported="true"
             android:launchMode="singleTop"
             android:screenOrientation="landscape"
             android:resizeableActivity="true"
@@ -72,11 +73,12 @@
             android:exported="false"
             android:label="Module (thí nghiệm)" />
 
-        <!-- AUTOMATION ADB: chạy self-test mọi module + recon HAL headless. exported=false: chống app khác
-             kích self-test/HAL-recon (adb shell 'am start' vẫn gọi được activity non-exported từ uid shell). -->
+        <!-- AUTOMATION ADB: chạy self-test mọi module + recon HAL headless. exported=true BẮT BUỘC — launch DUY NHẤT
+             qua `adb shell am start` (uid shell 2000), KHÔNG có launch in-process. BYD DiLink3 ENFORCE export-check
+             cho shell-uid → exported=false bị "Permission Denial: not exported from uid" (VERIFY TRÊN XE 2026-07-20). -->
         <activity
             android:name=".modules.AutotestActivity"
-            android:exported="false"
+            android:exported="true"
             android:label="Autotest (ADB)" />
 
 
