@@ -66,6 +66,20 @@ data class AppScale(
         return copy(rectL = l, rectT = t, rectR = r, rectB = bot)
     }
 
+    /**
+     * DỜI cả khung đi ([dx],[dy]) px, GIỮ NGUYÊN kích thước (dùng cho D-pad "Vị trí" ◀▲▼▶).
+     * dx<0 = sang TRÁI · dx>0 = PHẢI · dy<0 = LÊN · dy>0 = XUỐNG. AUTO/full → materialize [0,0,w,h] trước.
+     * Clamp để khung không tràn ra ngoài VD (dán mép khi chạm biên). Khung đã full VD → không còn chỗ dời (giữ nguyên).
+     */
+    fun nudgeMove(w: Int, h: Int, dx: Int, dy: Int): AppScale {
+        val b = boundsOn(w, h)
+        val bw = b[2] - b[0]
+        val bh = b[3] - b[1]
+        val l = (b[0] + dx).coerceIn(0, (w - bw).coerceAtLeast(0))
+        val t = (b[1] + dy).coerceIn(0, (h - bh).coerceAtLeast(0))
+        return copy(rectL = l, rectT = t, rectR = l + bw, rectB = t + bh)
+    }
+
     /** 4 cạnh khung để chỉnh độc lập. */
     enum class Edge { LEFT, TOP, RIGHT, BOTTOM }
 

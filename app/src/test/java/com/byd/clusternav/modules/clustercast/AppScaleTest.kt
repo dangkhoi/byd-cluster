@@ -145,4 +145,29 @@ class AppScaleTest {
         assertEquals(0, s.rectL); assertEquals(0, s.rectT); assertEquals(720, s.rectB)
         assertEquals(1820, s.rectR)      // full 1920 → 1820
     }
+
+    @Test fun `nudgeMove shifts frame keeping size`() {
+        val s = AppScale(200, 100, 100, 1000, 600).nudgeMove(1920, 720, 50, -40)
+        assertEquals(150, s.rectL); assertEquals(1050, s.rectR)   // +50 ngang, cỡ 900 giữ
+        assertEquals(60, s.rectT); assertEquals(560, s.rectB)     // -40 dọc, cỡ 500 giữ
+        assertEquals(900, s.rectR - s.rectL); assertEquals(500, s.rectB - s.rectT)
+    }
+
+    @Test fun `nudgeMove clamps to left-top edge keeping size`() {
+        val s = AppScale(200, 100, 100, 1000, 600).nudgeMove(1920, 720, -999, -999)
+        assertEquals(0, s.rectL); assertEquals(0, s.rectT)        // dán mép trái-trên
+        assertEquals(900, s.rectR); assertEquals(500, s.rectB)    // cỡ giữ nguyên
+    }
+
+    @Test fun `nudgeMove clamps to right-bottom edge keeping size`() {
+        val s = AppScale(200, 100, 100, 1000, 600).nudgeMove(1920, 720, 9999, 9999)
+        assertEquals(1920, s.rectR); assertEquals(720, s.rectB)   // dán mép phải-dưới
+        assertEquals(1020, s.rectL); assertEquals(220, s.rectT)   // cỡ 900×500 giữ
+    }
+
+    @Test fun `nudgeMove from auto is full VD so no room to move`() {
+        val s = AppScale().nudgeMove(1920, 720, 50, 50)
+        assertFalse(s.isAuto)
+        assertEquals(listOf(0, 0, 1920, 720), s.boundsOn(1920, 720).toList())  // full → clamp giữ full
+    }
 }

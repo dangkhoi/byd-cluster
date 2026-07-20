@@ -214,58 +214,41 @@ class ClusterCastActivity : Activity() {
     }
 
     /**
-     * Panel scale INLINE nhỏ gọn (hiện dưới tile app đã tick): nhãn "Kích thước: …" + 3 hàng nút tight
-     * (Trái/Phải ◀▶ · Trên/Dưới ▲▼ · DPI −＋ · Reset). Mỗi nhấn = [ClusterCast.setScale] tức thì + cập nhật nhãn +
-     * DEBOUNCE áp-live ([scheduleApplyLive]) — KHÔNG gọi applyScaleLive ngay (fix lag/nhấn-không-ăn/CarPlay-nháy-đen).
-     * Logic nudge GIỮ NGUYÊN: ±STEP_WH cho cạnh, ±STEP_DPI cho DPI, Reset = AppScale() auto.
+     * Panel scale INLINE (dưới tile app đã tick) — UXUI GỌN 1 HÀNG, nút LỚN dễ nhấn (tận dụng bề ngang màn 15.6").
+     * Mô hình TRỰC QUAN move+resize (thay 8 nút cạnh khó hiểu Trái◀/Phải▶…): 4 nhóm nút lớn có nhãn —
+     *   • Kích thước: Hẹp/Rộng/Thấp/Cao  → [AppScale.nudgeRect] nới/thu QUANH TÂM (±2·STEP_WH mỗi nhấn).
+     *   • Vị trí:     ◀ ▲ ▼ ▶            → [AppScale.nudgeMove] dời khung GIỮ CỠ (±STEP_WH).
+     *   • DPI:        － ＋               → [AppScale.nudgeDpi] (±STEP_DPI). DPI nhỏ = nội dung TO.
+     *   • Khôi phục:  ↺                  → [AppScale] auto (full cụm).
+     * Mỗi nhấn = [ClusterCast.setScale] + cập nhật nhãn TỨC THÌ + DEBOUNCE áp-live ([scheduleApplyLive]) —
+     * KHÔNG gọi applyScaleLive ngay (fix lag/nhấn-không-ăn/CarPlay-nháy-đen). Áp-live path GIỮ NGUYÊN.
      */
     private fun scalePanel(pkg: String): View {
         val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; background = card(); setPadding(dp(8), dp(6), dp(8), dp(6))
+            orientation = LinearLayout.VERTICAL; background = card(); setPadding(dp(12), dp(10), dp(12), dp(12))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(4), 0, dp(4), dp(6)) }
         }
-        val info = TextView(this).apply { textSize = 11f; setTextColor(0xFF5B6470.toInt()); text = scaleSummary(pkg); setPadding(dp(2), 0, dp(2), dp(4)) }
+        val info = TextView(this).apply { textSize = 13f; setTextColor(0xFF5B6470.toInt()); text = scaleSummary(pkg); setPadding(dp(2), 0, dp(2), dp(8)) }
         col.addView(info)
 
-        fun applyEdge(edge: AppScale.Edge, delta: Int) {
-            val (w, h) = clusterRef()
-            ClusterCast.setScale(applicationContext, pkg, ClusterCast.scaleOf(pkg).nudgeEdge(w, h, edge, delta))
-            info.text = scaleSummary(pkg)                                   // cập nhật nhãn TỨC THÌ (local)
-            scheduleApplyLive(pkg)                                          // áp live qua DEBOUNCE (không gọi ngay)
-        }
-        fun applyDpi(d: Int) {
-            ClusterCast.setScale(applicationContext, pkg, ClusterCast.scaleOf(pkg).nudgeDpi(d))
-            info.text = scaleSummary(pkg)
-            scheduleApplyLive(pkg)
-        }
+        fun after() { info.text = scaleSummary(pkg); scheduleApplyLive(pkg) }   // cập nhật nhãn local + áp-live qua DEBOUNCE
+        fun resize(dW: Int, dH: Int) { val (w, h) = clusterRef(); ClusterCast.setScale(applicationContext, pkg, ClusterCast.scaleOf(pkg).nudgeRect(w, h, dW, dH)); after() }
+        fun move(dx: Int, dy: Int) { val (w, h) = clusterRef(); ClusterCast.setScale(applicationContext, pkg, ClusterCast.scaleOf(pkg).nudgeMove(w, h, dx, dy)); after() }
+        fun dpi(d: Int) { ClusterCast.setScale(applicationContext, pkg, ClusterCast.scaleOf(pkg).nudgeDpi(d)); after() }
+
         val S = AppScale.STEP_WH
-
-        // hàng chỉnh cạnh NGANG: cạnh Trái + cạnh Phải (mỗi cạnh đẩy ◀ trái / ▶ phải)
-        val rowLR = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for ((lbl, act) in listOf<Pair<String, () -> Unit>>(
-            "Trái ◀" to { applyEdge(AppScale.Edge.LEFT, -S) }, "Trái ▶" to { applyEdge(AppScale.Edge.LEFT, S) },
-            "Phải ◀" to { applyEdge(AppScale.Edge.RIGHT, -S) }, "Phải ▶" to { applyEdge(AppScale.Edge.RIGHT, S) }))
-            rowLR.addView(tinyBtn(lbl, act).apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) } })
-        col.addView(rowLR)
-
-        // hàng chỉnh cạnh DỌC: cạnh Trên + cạnh Dưới (mỗi cạnh đẩy ▲ lên / ▼ xuống)
-        val rowTB = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for ((lbl, act) in listOf<Pair<String, () -> Unit>>(
-            "Trên ▲" to { applyEdge(AppScale.Edge.TOP, -S) }, "Trên ▼" to { applyEdge(AppScale.Edge.TOP, S) },
-            "Dưới ▲" to { applyEdge(AppScale.Edge.BOTTOM, -S) }, "Dưới ▼" to { applyEdge(AppScale.Edge.BOTTOM, S) }))
-            rowTB.addView(tinyBtn(lbl, act).apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) } })
-        col.addView(rowTB)
-
-        // hàng DPI + Reset
-        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for ((lbl, act) in listOf<Pair<String, () -> Unit>>(
-            "DPI −" to { applyDpi(-AppScale.STEP_DPI) }, "DPI ＋" to { applyDpi(AppScale.STEP_DPI) },
-            "Reset" to {
-                ClusterCast.setScale(applicationContext, pkg, AppScale()); info.text = scaleSummary(pkg)
-                scheduleApplyLive(pkg)                                      // Reset cũng qua DEBOUNCE
-            }))
-            row2.addView(tinyBtn(lbl, act).apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) } })
-        col.addView(row2)
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(ctrlGroup("Kích thước", listOf(
+            "Hẹp" to { resize(-2 * S, 0) }, "Rộng" to { resize(2 * S, 0) },
+            "Thấp" to { resize(0, -2 * S) }, "Cao" to { resize(0, 2 * S) })), groupLp(4f))
+        row.addView(ctrlGroup("Vị trí", listOf(
+            "◀" to { move(-S, 0) }, "▲" to { move(0, -S) },
+            "▼" to { move(0, S) }, "▶" to { move(S, 0) })), groupLp(4f))
+        row.addView(ctrlGroup("DPI", listOf(
+            "－" to { dpi(-AppScale.STEP_DPI) }, "＋" to { dpi(AppScale.STEP_DPI) })), groupLp(2f))
+        row.addView(ctrlGroup("Khôi phục", listOf(
+            "↺" to { ClusterCast.setScale(applicationContext, pkg, AppScale()); after() })), groupLp(1.4f))
+        col.addView(row)
         return col
     }
 
@@ -310,10 +293,28 @@ class ClusterCastActivity : Activity() {
         text = t; isAllCaps = false; textSize = 13f; minHeight = dp(48); setBackgroundResource(R.drawable.btn_outline); setTextColor(0xFF1565C0.toInt())
         setOnClickListener { runCatching(onClick) }
     }
-    /** Nút SCALE nhỏ gọn (inline dưới tile app đã tick): text 12f + padding/minWidth nhỏ → nhét 4 nút/hàng tight. */
-    private fun tinyBtn(t: String, onClick: () -> Unit) = Button(this).apply {
-        text = t; isAllCaps = false; textSize = 12f; minHeight = dp(38); minWidth = 0; minimumWidth = 0
-        setPadding(dp(2), dp(4), dp(2), dp(4)); setBackgroundResource(R.drawable.btn_outline); setTextColor(0xFF1565C0.toInt())
+    /** Nút điều khiển scale LỚN, dễ nhấn trên màn 15.6" (cao ≥54dp, chữ 16f, bo tròn) — thay tinyBtn cũ (bé, khó nhấn). */
+    private fun bigBtn(t: String, onClick: () -> Unit) = Button(this).apply {
+        text = t; isAllCaps = false; textSize = 16f; minHeight = dp(54); minWidth = 0; minimumWidth = 0
+        setPadding(dp(2), dp(8), dp(2), dp(8)); setBackgroundResource(R.drawable.btn_outline); setTextColor(0xFF1565C0.toInt())
         setOnClickListener { runCatching(onClick) }
+    }
+
+    /** LayoutParams cho 1 nhóm nút trong hàng điều khiển (weight = tỉ lệ bề ngang, margin tách nhóm). */
+    private fun groupLp(weight: Float) = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight).apply { setMargins(dp(3), 0, dp(3), 0) }
+
+    /** 1 NHÓM nút điều khiển: caption nhỏ ở trên + hàng nút LỚN (chia đều bằng weight), nền bo tròn để tách nhóm rõ ràng. */
+    private fun ctrlGroup(caption: String, items: List<Pair<String, () -> Unit>>): View {
+        val g = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(14).toFloat(); setColor(0xFFF7F9FB.toInt()); setStroke(dp(1), 0xFFE3E6EB.toInt()) }
+            setPadding(dp(8), dp(6), dp(8), dp(8))
+        }
+        g.addView(TextView(this).apply { text = caption; textSize = 11f; setTextColor(0xFF8A929C.toInt()); gravity = Gravity.CENTER; setPadding(0, 0, 0, dp(5)) })
+        val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((lbl, act) in items)
+            btnRow.addView(bigBtn(lbl, act), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
+        g.addView(btnRow)
+        return g
     }
 }

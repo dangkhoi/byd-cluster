@@ -66,18 +66,16 @@ Bật bằng nút **"Hiện nút nổi"** ở màn chính (cần quyền **Hiể
 
 ## 5. Chỉnh kích thước từng app (scale)
 
-Mỗi app một tỷ lệ khác nhau → chỉnh riêng bằng **nút mũi tên theo TỪNG CẠNH**. Tick app xong, các nút chỉnh **hiện gọn ngay dưới app đó**. Nhấn tới khi vừa mắt (tự lưu; **ngừng nhấn ~0.3s mới áp lên cụm** cho mượt, khỏi giật). **Chỉnh lệch được — không bắt căn giữa:**
+Mỗi app một tỷ lệ khác nhau → chỉnh riêng bằng **các nút LỚN, gom gọn 1 hàng** hiện ngay dưới app đã tick (nút to, dễ nhấn trên màn 15.6"). Nhấn tới khi vừa mắt (tự lưu; **ngừng nhấn ~0.3s mới áp lên cụm** cho mượt, khỏi giật). Chia 4 nhóm:
 
 ![Chỉnh scale](images/chinh-scale.png)
 
-- **Trái ◀ / ▶** — đẩy cạnh trái ra / vào
-- **Phải ◀ / ▶** — đẩy cạnh phải ra / vào
-- **Trên ▲ / ▼** — đẩy cạnh trên lên / xuống
-- **Dưới ▲ / ▼** — đẩy cạnh dưới lên / xuống
-- **DPI − / ＋** — nội dung to / nhỏ
-- **Reset (auto)** — về full cụm
+- **Kích thước** — `Hẹp` / `Rộng` (thu/nới chiều ngang), `Thấp` / `Cao` (thu/nới chiều dọc). Co giãn **quanh tâm**.
+- **Vị trí** — `◀ ▲ ▼ ▶` dời **cả khung** sang trái / lên / xuống / phải, **giữ nguyên kích thước**.
+- **DPI** — `－ / ＋` chỉnh độ lớn nội dung (**DPI nhỏ = chữ/nội dung TO hơn**).
+- **Khôi phục** — `↺` về full cụm (auto).
 
-> Mỗi cạnh chỉnh **độc lập**, kích thước **tự tính lại**. Ví dụ CarPlay bị rộng → đẩy **Phải ◀** thu cạnh phải vào; muốn khung lệch sang trái thì chỉ chỉnh cạnh trái/phải theo ý.
+> Cách nhanh: chỉnh **Kích thước** cho vừa trước, rồi **Vị trí** (◀▲▼▶) dời cho cân. Ví dụ CarPlay bị rộng → bấm **Hẹp** vài nhịp cho gọn, rồi **◀ / ▶** đẩy khung về đúng chỗ trên cụm.
 
 ## 6. GPS trong hầm (dead-reckon)
 
@@ -96,7 +94,7 @@ Phần **Hồ sơ cụm** (trong Cài đặt chiếu) tự nhận diện kích t
 |---|---|
 | Nav không lên cụm | Bấm **Kết nối lại nav**; vẫn không thì **reboot đầu xe** (AmapService kẹt). |
 | Chiếu xong mất tuyến dẫn | Phải **bắt đầu dẫn TRƯỚC** khi chiếu; dùng **T1** (không phải mở mới). |
-| App chiếu bị méo/lệch | Chỉnh **nút mũi tên** ở mục 5 (Ngang ◀ thu hẹp, DPI chỉnh độ lớn). |
+| App chiếu bị méo/lệch | Chỉnh ở mục 5: **Hẹp/Rộng/Thấp/Cao** cho vừa, **◀▲▼▶** dời cho cân, **DPI** chỉnh độ lớn. |
 | Cài bản mới báo lỗi chữ ký | Dùng bản **release** (`install -r`) — cùng chữ ký, khỏi gỡ. |
 | Sau khi cài đè, nav mất | Tắt/bật lại **Notification access** cho ClusterNav. |
 
