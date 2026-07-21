@@ -28,6 +28,21 @@ data class AppScale(
     fun serialize(): String = "$dpi,$rectL,$rectT,$rectR,$rectB"
 
     /**
+     * Overscan insets TƯƠNG ĐƯƠNG bounds trên VD [w]×[h]: `[left, top, w−right, h−bottom]`, clamp ≥ 0
+     * (rect từ model cụm khác/to hơn không cho inset âm). Auto/full VD → `[0,0,0,0]`.
+     * Dùng làm FALLBACK chỉnh kích thước khi freeform CHƯA sống (`am task resize` bị từ chối — xem
+     * ClusterCast.applyBounds): `wm overscan l,t,ri,bi -d VD` co vùng hiển thị về đúng khung rect,
+     * ăn ở TẦNG DISPLAY nên không cần freeform (đã chứng minh ăn trên xe 2026-07-20).
+     */
+    fun overscanOn(w: Int, h: Int): IntArray {
+        val b = boundsOn(w, h)
+        return intArrayOf(
+            b[0].coerceAtLeast(0), b[1].coerceAtLeast(0),
+            (w - b[2]).coerceAtLeast(0), (h - b[3]).coerceAtLeast(0),
+        )
+    }
+
+    /**
      * Nới/thu khung QUANH TÂM. [dW]/[dH] = tổng thay đổi ngang/dọc (px; + = to ra, − = nhỏ lại).
      * Đang AUTO → materialize từ full VD [0,0,w,h] trước rồi mới nudge. Clamp trong [0,w]/[0,h] + [MIN_PX].
      */
