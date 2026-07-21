@@ -19,8 +19,8 @@ android {
         applicationId = "com.byd.clusternav"
         minSdk = 29
         targetSdk = 34
-        versionCode = 34
-        versionName = "0.34"
+        versionCode = 35
+        versionName = "0.35"
     }
 
     signingConfigs {

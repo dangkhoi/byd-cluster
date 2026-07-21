@@ -4,9 +4,9 @@
 
 ## 1. Cài đặt
 
-1. Tải APK: [`apk/ClusterNav-0.30-release.apk`](../apk/ClusterNav-0.30-release.apk) → cài:
+1. Tải APK: [`apk/ClusterNav-0.35-release.apk`](../apk/ClusterNav-0.35-release.apk) → cài:
    ```bash
-   adb install -r ClusterNav-0.30-release.apk
+   adb install -r ClusterNav-0.35-release.apk
    ```
    (hoặc copy vào máy bấm cài — cho phép "cài từ nguồn không xác định").
 2. Trên xe bật một lần: **Developer options → USB debugging** + **adb tcp 5555**.
@@ -76,6 +76,8 @@ Mỗi app một tỷ lệ khác nhau → chỉnh riêng bằng **các nút LỚN
 - **Khôi phục** — `↺` về full cụm (auto).
 
 > Cách nhanh: chỉnh **Kích thước** cho vừa trước, rồi **Vị trí** (◀▲▼▶) dời cho cân. Ví dụ CarPlay bị rộng → bấm **Hẹp** vài nhịp cho gọn, rồi **◀ / ▶** đẩy khung về đúng chỗ trên cụm.
+
+> **Ghi chú kỹ thuật (v0.35):** khi mới cài, nút kích thước chạy qua đường "overscan" (co vùng hiển thị) — hoạt động ngay. App đồng thời bật cờ hệ thống `enable_freeform_support` (chỉ có tác dụng từ lần **tắt máy xe hẳn** rồi mở lại — sau đó nút chuyển sang đường resize "xịn" mượt hơn, xem log trong màn chiếu). Cờ này **giữ nguyên kể cả gỡ app**; muốn trả về mặc định: `adb shell settings delete global enable_freeform_support && adb shell settings delete global development_enable_freeform_windows_support` rồi tắt máy xe 1 lần.
 
 ## 6. GPS trong hầm (dead-reckon)
 

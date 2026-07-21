@@ -266,28 +266,82 @@ object ClusterCast {
      * Trả về displayId app THỰC bám. Guard: chỉ gọi khi vd>=1 (không bao giờ đụng display 0).
      */
     private fun placeAppOnVd(app: Context, adb: dadb.Dadb, sh: (String) -> String, target: String, vd: Int, log: (String) -> Unit): Int {
-        // ★ FIX B (2026-07-20, verify trên xe: enable_freeform_support=null → am task resize BỊ BỎ QUA vì task không
-        //   thành freeform → chỉnh size không ăn, và bước "resize ép composite" của T1 không chạy → video app ĐEN/TRẮNG).
-        //   BẬT freeform (global) TRƯỚC khi đặt → windowingMode 5 dính → am task resize ăn (chỉnh size) + ép composite
-        //   (video app hết đen). Idempotent, để bật luôn (dev setting, không hại). Cả 2 tên (cũ + mới) cho chắc.
+        // ★ FIX B v2 (2026-07-21, verify SOURCE AOSP 10 — xem [applyBounds]): 2 setting dưới CHỈ được framework đọc
+        //   LÚC BOOT → set runtime KHÔNG ăn ngay (v0.33/0.34 tưởng ăn ngay → nút size chết có hệ thống). VẪN set để
+        //   PERSIST: sau lần user TẮT MÁY XE HẲN rồi mở lại (adb reboot bị DiLink3 chặn), freeform sống thật →
+        //   windowingMode 5 dính + `am task resize` ăn. Trước đó, size đi đường fallback overscan trong [applyBounds].
         sh("settings put global enable_freeform_support 1")
         sh("settings put global development_enable_freeform_windows_support 1")
         sh("wm density ${scaleOf(target).dpi} -d $vd"); Thread.sleep(150)             // ① scale per-app (dpi từ AppScale)
-        // ★ DISPATCH (T-A): app trong t3Apps → T3 (daemon app_process, chắc-ăn); CÒN LẠI → T1 placeFreeform (MẶC ĐỊNH — giữ dẫn).
+        // ② DISPATCH (T-A): app trong t3Apps → T3 (daemon app_process, chắc-ăn); CÒN LẠI → T1 placeFreeform (MẶC ĐỊNH — giữ dẫn).
         val landed = if (target in t3Apps) placeT3(app, adb, sh, target, vd, log)
                      else placeFreeform(adb, sh, target, vd, log)
-        sh("wm overscan ${overscanArg()} -d $vd")                                     // ② khung mỹ thuật (fallback insetH/insetV — bounds do AppScale lo)
+        // ③ KHUNG per-app TẬP TRUNG 1 CHỖ: resize (freeform sống) → fallback overscan (không cần freeform).
+        //   Thay `wm overscan overscanArg()` vô điều kiện cũ (nó đè khung khi fallback đã set overscan theo rect).
+        if (landed == vd) {
+            val tid = appTaskId(sh("am stack list"), target)
+            val (w, h) = vdRealSize(sh("dumpsys display"), vd); rememberClusterSize(w, h)
+            log("  ⑧ khung: ${applyBounds(sh, vd, tid, scaleOf(target), w, h)}")
+        } else sh("wm overscan ${overscanArg()} -d $vd")                              // app không bám VD → chỉ khung mỹ thuật legacy
         return landed
     }
 
     /**
+     * ★ ÁP KHUNG (bounds per-app) lên VD — 2 tầng, TỰ FALLBACK:
+     *   ① `am task resize` — CHỈ ăn khi freeform SỐNG (đã boot với enable_freeform_support=1).
+     *   ② bị từ chối → `wm overscan` theo [AppScale.overscanOn] — tầng display, KHÔNG cần freeform
+     *      (đã chứng minh ăn trên xe 2026-07-20) → nút chỉnh size hoạt động NGAY, không chờ reboot.
+     * GỐC RỄ (verify source AOSP 10 android-10.0.0_r47, 2026-07-21 — memory `byd-freeform-boot-gate`):
+     *   • `enable_freeform_support` CHỈ đọc 1 lần lúc boot (`ATMS.retrieveSettings`, KHÔNG có ContentObserver)
+     *     → set runtime vô hiệu tới khi power-cycle xe (adb reboot bị DiLink3 chặn → phải tắt máy tay).
+     *   • `WindowConfiguration.canResizeTask()` == (mode==FREEFORM) → `am task resize` task fullscreen LUÔN ném
+     *     IllegalArgumentException. `cmd activity task resize` là CÙNG handler → fallback cmd cũ vô dụng, ĐÃ BỎ.
+     *   • `setTaskWindowingMode(5)` (cả shell lẫn T3 daemon) bị `validateWindowingMode` downgrade IM LẶNG khi
+     *     freeform boot-flag tắt → lỗi KHÔNG lộ ở bước move, chỉ lộ ở resize — nên resize-output là probe tin cậy.
+     * rect auto (user chưa cấu hình) → fallback dùng khung mỹ thuật legacy [overscanArg] (giữ hành vi cũ).
+     * @return mô tả đường đã áp — để log TRUNG THỰC (trước đây log "đã áp scale" cả khi resize bị ném lỗi).
+     */
+    private fun applyBounds(sh: (String) -> String, vd: Int, tid: Int, scale: AppScale, w: Int, h: Int): String {
+        var rejected = ""
+        if (tid >= 0) {
+            val b = scale.boundsOn(w, h)
+            // 2>&1: lỗi resize in ra STDERR; sh() chỉ trả STDOUT → phải gộp mới detect được từ chối.
+            val o = sh("am task resize $tid ${b[0]} ${b[1]} ${b[2]} ${b[3]} 2>&1")
+            if (!resizeRejected(o)) {
+                // freeform sống: bounds do TASK quản. rect tùy chỉnh → XÓA overscan (khỏi double-inset khung
+                // fallback cũ / khung mỹ thuật); rect auto → giữ khung mỹ thuật legacy như trước (review P3).
+                if (scale.isAuto) sh("wm overscan ${overscanArg()} -d $vd")
+                else sh("wm overscan 0,0,0,0 -d $vd")
+                return "resize freeform → [${b.joinToString(",")}]"
+            }
+            rejected = o
+        }
+        val oi = if (scale.isAuto) intArrayOf(insetH, insetV, insetH, insetV) else scale.overscanOn(w, h)
+        sh("wm overscan ${oi[0]},${oi[1]},${oi[2]},${oi[3]} -d $vd")
+        // Log ĐÚNG nguyên nhân (review P3): chỉ đổ cho "freeform chưa bật" khi đúng chữ ký từ chối của
+        // canResizeTask ("not allowed"/Exception); lỗi khác (task chết, output lạ) → nói thẳng lỗi gì.
+        return when {
+            tid < 0 -> "overscan [${oi.joinToString(",")}] (không lấy được taskId)"
+            rejected.contains("not allowed", true) || rejected.contains("Exception", true) ->
+                "overscan [${oi.joinToString(",")}] (freeform chưa bật — TẮT MÁY XE 1 lần rồi mở lại để dùng resize thật)"
+            else -> "overscan [${oi.joinToString(",")}] (resize lỗi: ${rejected.take(60)})"
+        }
+    }
+
+    /** `am task resize` bị framework từ chối? (fullscreen task trên A10 → IllegalArgumentException "not allowed"). */
+    private fun resizeRejected(o: String) =
+        o.contains("Error", true) || o.contains("Exception", true) ||
+        o.contains("not allowed", true) || o.contains("must be", true)
+
+    /**
      * ★ T1 (RE DashCast 2026-07-19) — GIỮ STATE + RENDER ĐÚNG. Giải mâu thuẫn fresh(mất dẫn) vs move-stack(trắng).
      * Đường shell chạy từ uid-2000 (dadb), KHÔNG cần ký platform:
-     *   ① `settings put global force_resizable_activities 0` — cho phép resize task bất kỳ (DashCast ClusterService:149).
+     *   ① `settings put global force_resizable_activities 0` — theo RE DashCast (ClusterService:149). ⚠ setting này
+     *      cũng BOOT-ONLY (AOSP 10 retrieveSettings) → chỉ có nghĩa cho lần boot sau, runtime là no-op.
      *   ② `am start --display VD --windowingMode 5 -n comp` **KHÔNG --activity-clear-task**: resume task ĐANG CHẠY
-     *      (giữ phiên dẫn) + move sang VD + set FREEFORM. (clear-task mới là thứ xoá phiên dẫn ở fresh-launch.)
-     *   ③ `am task resize <taskId> l t r b` (fallback `cmd activity task resize` cho DL5) — ép task nhận config cụm →
-     *      GL/video composite lại → HẾT TRẮNG. `am task resize` CHỈ nhận task FREEFORM (đã set ở ②). bounds LẤY TỪ [AppScale] per-app (rect=-1 → full VD).
+     *      (giữ phiên dẫn) + move sang VD. FREEFORM chỉ dính khi freeform sống (boot-flag) — không thì im lặng
+     *      giữ fullscreen, app VẪN bám VD (move được, render map OK; app GL/video có thể trắng).
+     *   ③ bounds/ép-composite áp TẬP TRUNG ở [placeAppOnVd] bước ⑧ ([applyBounds]: resize → fallback overscan).
      * Trả về displayId app thực bám. Nếu chưa có task đang chạy → fallback freshLaunch (không có state để giữ).
      */
     private fun placeFreeform(adb: dadb.Dadb, sh: (String) -> String, target: String, vd: Int, log: (String) -> Unit): Int {
@@ -296,7 +350,7 @@ object ClusterCast {
             log("  ↩ $target chưa chạy (không có state để giữ) → fresh-launch")
             return freshLaunch(adb, sh, target, vd, log)
         }
-        sh("settings put global force_resizable_activities 0")                        // ① cho phép resize
+        sh("settings put global force_resizable_activities 0")                        // ① persist cho boot sau (runtime no-op)
         // ② move + freeform, GIỮ state (không clear-task → resume task đang dẫn)
         val out = sh("am start --display $vd --windowingMode 5 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $comp")
         Thread.sleep(900)
@@ -309,21 +363,7 @@ object ClusterCast {
             log("  ↩ move không bám VD (đang $landed) → fallback fresh-launch (composite đúng cho app video): ${out.take(60)}")
             return freshLaunch(adb, sh, target, vd, log)
         }
-        // ③ resize ép composite. bounds LẤY TỪ AppScale per-app (rect=-1 → full VD [0,0,W,H], giữ hành vi cũ). dpi đã áp ở placeAppOnVd.
-        val tid = appTaskId(sh("am stack list"), target)
-        val (w, h) = vdRealSize(sh("dumpsys display"), vd); rememberClusterSize(w, h)
-        if (tid >= 0) {
-            val b = scaleOf(target).boundsOn(w, h)
-            val r = "${b[0]} ${b[1]} ${b[2]} ${b[3]}"
-            // ★ 2>&1: `am task resize` in lỗi ra STDERR; sh() chỉ trả STDOUT → không có 2>&1 thì nhánh
-            //   fallback `cmd activity task resize` (DL5) KHÔNG BAO GIỜ chạy. Gộp stderr vào stdout để detect.
-            val o1 = sh("am task resize $tid $r 2>&1")
-            if (o1.contains("Error", true) || o1.contains("must be", true) || o1.contains("Exception", true)) {
-                log("  ↩ 'am task resize' lỗi (${o1.take(50)}) → thử cmd activity")
-                sh("cmd activity task resize $tid $r")
-            }
-            log("  ✓ move-giữ-state + freeform + resize → display $vd (task $tid, VD ${w}x$h, bounds $r)")
-        } else log("  ⚠ bám VD $vd nhưng không lấy được taskId để resize (có thể vẫn trắng)")
+        log("  ✓ move-giữ-state → display $vd (khung áp ở bước ⑧)")
         return landed
     }
 
@@ -402,14 +442,9 @@ object ClusterCast {
                         sh("wm density ${cur.dpi} -d $vd")
                         val tid = appTaskId(sh("am stack list"), pkg)
                         val (w, h) = vdRealSize(sh("dumpsys display"), vd); rememberClusterSize(w, h)
-                        val b = cur.boundsOn(w, h)
-                        val r = "${b[0]} ${b[1]} ${b[2]} ${b[3]}"
-                        if (tid >= 0) {
-                            val o1 = sh("am task resize $tid $r 2>&1")
-                            if (o1.contains("Error", true) || o1.contains("must be", true) || o1.contains("Exception", true))
-                                sh("cmd activity task resize $tid $r")
-                            log("đã áp scale: dpi=${cur.dpi} bounds=[$r] (task $tid, VD ${w}x$h)")
-                        } else log("⚠ chưa lấy được taskId $pkg — mới áp dpi=${cur.dpi}, bounds chờ chiếu lại")
+                        // ★ v0.35: [applyBounds] tự fallback overscan khi freeform chưa sống (kể cả tid<0) →
+                        //   nút chỉnh size LUÔN có tác dụng; log nói thật đường nào đã áp (hết "đã áp" ảo).
+                        log("đã áp scale: dpi=${cur.dpi} qua ${applyBounds(::sh, vd, tid, cur, w, h)} (task $tid, VD ${w}x$h)")
                     }
                 }.onFailure { log("❌ áp scale lỗi: ${it.message}") }
             } finally { scaleApplying.set(false) }
