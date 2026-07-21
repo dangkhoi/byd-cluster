@@ -49,6 +49,26 @@ class AppScaleTest {
         assertNull(AppScale.parse("200,-1,-1,-1,x"))     // không phải số
     }
 
+    // ── overscanOn (v0.35 — fallback size khi freeform chưa sống) ──
+
+    @Test fun `overscanOn auto is zero insets`() {
+        assertEquals(listOf(0, 0, 0, 0), AppScale().overscanOn(1920, 720).toList())
+    }
+
+    @Test fun `overscanOn maps rect to insets`() {
+        // rect [100,40,1820,680] trên 1920×720 → insets [100, 40, 1920−1820, 720−680]
+        assertEquals(listOf(100, 40, 100, 40), AppScale(200, 100, 40, 1820, 680).overscanOn(1920, 720).toList())
+    }
+
+    @Test fun `overscanOn clamps negative insets from oversized rect`() {
+        // rect lưu từ cụm model khác TO HƠN VD hiện tại → không cho inset âm
+        assertEquals(listOf(0, 0, 0, 0), AppScale(200, 0, 0, 2400, 900).overscanOn(1920, 720).toList())
+    }
+
+    @Test fun `overscanOn full rect is zero insets`() {
+        assertEquals(listOf(0, 0, 0, 0), AppScale(200, 0, 0, 1920, 720).overscanOn(1920, 720).toList())
+    }
+
     @Test fun `map serialize then parse round-trips`() {
         val m = linkedMapOf(
             "com.google.android.apps.maps" to AppScale(200, -1, -1, -1, -1),
