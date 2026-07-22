@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cấu hình RIÊNG của MÁY DÒ (modules/navprobe). KHÔNG dùng chung với nav_accessibility_config.xml của
+     booster GMaps — nới packageNames của file kia là đổ toàn bộ event Vietmap (vẽ rất dày) vào hot-path
+     của tính năng đang chạy tốt.
+
+     flagReportViewIds: BẬT. Có viewId thì bộ rút dữ liệu sau này bám được vào id thay vì dò toạ độ.
+       Cờ này chỉ thêm một chuỗi id vào NodeInfo — rẻ.
+     flagRetrieveInteractiveWindows: KHÔNG bật. Đó mới là cờ đắt (system_server theo dõi và tính lại vị trí
+       MỌI cửa sổ trên MỌI display; đang chiếu cụm là gấp đôi). Không cần: dump đi từ event.source.
+
+     notificationTimeout 300ms: gộp bớt event khi bản đồ vẽ liên tục; service còn tự tiết lưu 2s/gói.
+     Xoá máy dò = xoá file này + thư mục modules/navprobe/ + 3 khối trong Manifest. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="300"
+    android:packageNames="vn.vietmap.live,com.waze,com.byd.carplay.ui,com.byd.androidauto"
+    android:description="@string/navprobe_desc" />

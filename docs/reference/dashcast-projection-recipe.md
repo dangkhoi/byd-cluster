@@ -34,7 +34,7 @@ Header ClusterCast cũ ghi `am start --display <phụ>` bị **SecurityException
 
 **move-stack = OPT-IN "giữ state" per-app** (`keepStateApps`, mặc định RỖNG = mọi app fresh): **giữ nhấn** 1 app trong Cài đặt chiếu để bật (marker ◈) — cho app cần giữ nguyên màn (vd VietMap). **State tradeoff:** launch mới reset activity, NHƯNG app dẫn đường tự resume nav đang chạy → "bấm Bắt đầu dẫn rồi mới chiếu" giữ tuyến; chỉ mất màn preview trước khi bấm Bắt đầu.
 
-**DPI** chỉnh live trong Cài đặt chiếu (nút **DPI −/＋**, clamp 120–320): DPI nhỏ = chữ/UI TO. Mặc định 200 (160 hơi bé).
+**DPI** chỉnh live trong Cài đặt chiếu (nút **Chữ nhỏ/to**, clamp 120–320): **DPI CAO = chữ/UI TO hơn** (px = dp × density/160). Mặc định 200 trên cụm gốc 320dpi → nội dung ~62.5% cỡ gốc.
 
 Còn treo (cần xe — task #17/#18): verify fresh-launch render full + DPI-live + keep-state toggle trên cụm. Test: `docs/diagnostics/cluster-cast-test.ps1 -Wifi -Pkg anddea.youtube`.
 

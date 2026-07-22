@@ -17,17 +17,33 @@ object SpeedProvider {
     @Volatile private var speedMethod: java.lang.reflect.Method? = null   // cache 1 lần (device ổn định) — khỏi scan getMethods() mỗi tick
     @Volatile private var lastGoodMps = 0.0
 
-    /** Tốc độ hiện tại (m/s). 0 nếu chưa đọc được. */
-    fun mps(): Double {
-        val d = device() ?: return lastGoodMps
+    /**
+     * ★★ W1-3 (senior review 2026-07-21) — "KHÔNG ĐỌC ĐƯỢC" phải là một GIÁ TRỊ RIÊNG, không được giả dạng 0.
+     *
+     * Bản cũ chỉ có [mps], và cả BỐN nhánh hỏng đều trả `lastGoodMps` — khởi tạo 0.0. Trên đời xe mà HAL tốc độ
+     * không đọc được, hàm này trả **0.0 vĩnh viễn**. Mà `DeadReckonService` lại dùng `speed < 2.0` làm cổng an toàn
+     * với ý nghĩa "xe đang ĐỖ" trước khi cold-seed — nên trên những xe đó cổng **luôn mở**, kể cả lúc đang chạy.
+     * Hậu quả: vị trí GPS của cả xe bị ghim vào một toạ độ lưu từ trước (có thể cũ tới 7 ngày), và COLD_SEED lại
+     * được miễn failsafe → chỉ nhả khi có fix thật < 75m, mà trong hầm thì không bao giờ.
+     *
+     * ⇒ [mpsOrNull] = null nghĩa là KHÔNG BIẾT. Mọi cổng an toàn phải đòi một quan sát KHẲNG ĐỊNH:
+     *   `SpeedProvider.mpsOrNull()?.let { it < 2.0 } == true`  ← không đọc được ⇒ coi như KHÔNG đứng yên.
+     * [mps] giữ nguyên hành vi suy biến cho các chỗ chỉ hiển thị/nội suy, nơi lấy giá trị cũ là đúng.
+     */
+    fun mpsOrNull(): Double? {
+        val d = device() ?: return null
         val m = speedMethod ?: runCatching {
             d.javaClass.methods.firstOrNull { it.name == "getCurrentSpeed" && it.parameterTypes.isEmpty() }
-        }.getOrNull()?.also { speedMethod = it } ?: return lastGoodMps
-        val kmh = runCatching { (m.invoke(d) as? Number)?.toDouble() }.getOrNull() ?: return lastGoodMps
-        if (kmh < 0 || kmh > 400) return lastGoodMps      // sentinel/không hợp lệ → giữ giá trị cũ
+        }.getOrNull()?.also { speedMethod = it } ?: return null
+        val kmh = runCatching { (m.invoke(d) as? Number)?.toDouble() }.getOrNull() ?: return null
+        if (kmh < 0 || kmh > 400) return null             // sentinel/không hợp lệ → KHÔNG BIẾT, không phải 0
         lastGoodMps = kmh / 3.6
         return lastGoodMps
     }
+
+    /** Tốc độ hiện tại (m/s), suy biến về giá trị đọc được gần nhất. CHỈ dùng cho hiển thị/nội suy —
+     *  cổng an toàn phải dùng [mpsOrNull]. */
+    fun mps(): Double = mpsOrNull() ?: lastGoodMps
 
     private fun device(): Any? {
         dev?.let { return it }

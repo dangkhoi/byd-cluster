@@ -137,7 +137,13 @@ class DeadReckonService : Service() {
 
     @Volatile private var stopping = false   // R6: dừng loop + dọn trên worker thread (không đua với tick đang chạy)
     private val loop = object : Runnable {
-        override fun run() { if (stopping) return; runCatching { tick() }; if (!stopping) wh?.postDelayed(this, 200) }
+        // ★ v0.36 NHỊP THÍCH ỨNG: 5Hz CHỈ khi đang dead-reckon (cần tích phân mịn). GPS thật còn tốt → 1Hz là đủ
+        //   (tick lúc đó chỉ đọc HAL + shadow-log) → cắt ~80% lượt đọc HAL/CAN chạy nền suốt chuyến.
+        override fun run() {
+            if (stopping) return
+            runCatching { tick() }
+            if (!stopping) wh?.postDelayed(this, if (DeadReckonState.mocking) 200L else 1000L)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -158,10 +164,12 @@ class DeadReckonService : Service() {
         try { startForeground(NOTIF_ID, buildNotif()) }
         catch (e: Exception) { DeadReckonState.lastError = "startForeground lỗi: ${e.message}"; stopSelf(); return }
         // WAKE_LOCK partial: tick() dùng Handler.postDelayed (uptimeMillis) → dừng khi CPU deep-sleep. HU có thể ngủ CPU
-        // lúc màn tắt giữa hầm dài → DR đóng băng. Giữ suốt đời service (HU luôn có nguồn, không lo pin), nhả onDestroy;
-        // process bị kill thì OS tự nhả (wakelock gắn theo process).
+        // lúc màn tắt giữa hầm dài → DR đóng băng.
         wakeLock = (getSystemService(POWER_SERVICE) as? android.os.PowerManager)
             ?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "clusternav:deadreckon")
+            // ★ v0.36 (sửa sau review): GIỮ suốt đời service như cũ. Đã thử chỉ giữ khi đang mock — SAI: chính
+            //   vòng lặp phát hiện MẤT GPS mới là thứ cần CPU thức. Màn tắt lúc chui vào hầm mà CPU ngủ thì DR
+            //   không bao giờ kịp vào cuộc. HU luôn có nguồn nên đây không phải chi phí pin.
             ?.apply { setReferenceCounted(false); runCatching { acquire() } }
         // #1 FIX: TỰ CẤP quyền mock qua dadb (mock_location reset DENY sau cài lại, app không tự xin runtime được).
         // Chạy nền, idempotent; grant thường xong trong ~1-2s → trước khi vào hầm cần mock. Mock lỗi lần đầu thì DR
@@ -179,7 +187,10 @@ class DeadReckonService : Service() {
         val gyro = sm?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
         hasGyro = gyro != null
         DeadReckonState.headingSrc = if (hasGyro) "gyro Z (xác minh trục!)" else "GPS bearing (thẳng)"
-        gyro?.let { sm?.registerListener(gyroLis, it, SensorManager.SENSOR_DELAY_GAME, h) }
+        // ★ v0.36: gyro CHỈ đăng ký khi useGyro thật sự bật (mặc định TẮT — heading đi đường lái/steering), và ở
+        //   SENSOR_DELAY_UI (~15Hz) thay SENSOR_DELAY_GAME (~50Hz). Trước đây 50 sự kiện/giây chạy suốt đời máy chỉ
+        //   để nuôi một bộ lọc bias KHÔNG AI ĐỌC → thuế đánh thức CPU vô ích trên SoC yếu.
+        if (DeadReckonState.useGyro) gyro?.let { sm?.registerListener(gyroLis, it, SensorManager.SENSOR_DELAY_UI, h) }
         runCatching {
             lm?.registerGnssStatusCallback(gnssCb, h)
             lm?.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, locLis, t.looper)
@@ -204,7 +215,9 @@ class DeadReckonService : Service() {
             runCatching {
                 val dir = getExternalFilesDir(null)
                 rotateLogs(dir)
-                val f = java.io.File(dir, "dr_log_${System.currentTimeMillis()}.csv")
+                // ★ v0.41: nhét PHIÊN BẢN vào tên file. Cả ngày 21/07 mất công vì không biết log/APK nào của bản nào.
+                val ver = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "x"
+                val f = java.io.File(dir, "dr_log_v${ver}_${System.currentTimeMillis()}.csv")
                 logWriter = f.bufferedWriter().also {
                     it.appendLine("t_ms,state,used,sats,acc_m,gpsLat,gpsLon,gpsBrg,spd_kmh,posLat,posLon,hdg,posErr_m,hdgErr_deg,gpsYaw_dps,steerYaw_dps,ratioCal,calN,flip")
                 }
@@ -277,7 +290,13 @@ class DeadReckonService : Service() {
                 // #2: ưu tiên hướng HỒI QUY track (bền), fallback bearing GPS cuối, rồi lastGoodBearing.
                 heading = trackHeading().let { if (!it.isNaN()) it else if (!fixBearing.isNaN()) fixBearing.toDouble() else lastGoodBearing }
                 enterMock(now, "DEAD_RECKON")
-            } else if (!hasFix && savedValid && !coldSeeded && ready && speed < 2.0 && sats < COLD_SEED_MAX_SATS) {
+            // ★★ W1-3: cổng "xe đang ĐỖ" phải là QUAN SÁT KHẲNG ĐỊNH. `speed` ở đây suy biến về 0.0 khi HAL
+            //   không đọc được → cổng luôn mở trên xe không có HAL tốc độ. Đọc lại qua mpsOrNull(): null = KHÔNG
+            //   BIẾT = coi như đang chạy = KHÔNG cold-seed. Sai hướng này là an toàn (mất tính năng), sai hướng
+            //   kia là ghim GPS cả xe vào toạ độ cũ suốt chuyến.
+            } else if (!hasFix && savedValid && !coldSeeded && ready &&
+                SpeedProvider.mpsOrNull()?.let { it < 2.0 } == true &&
+                savedAgeMs <= COLD_SEED_MAX_AGE_MS && sats < COLD_SEED_MAX_SATS) {
                 // ★ FIX D2 (đo trên xe 2026-07-20): CHỈ cold-seed khi ÍT vệ tinh (sats<COLD_SEED_MAX_SATS = thật sự
                 //   trong hầm/hầm ngầm, bầu trời bị chặn). Nếu NHIỀU sao (trời quang, sats=31) mà raw chưa kịp fix
                 //   (usedInFix=0 kinh niên + acc=999) → GPS ĐANG acquire, KHÔNG mock: mock vị trí lưu (có thể cũ) sẽ
@@ -319,7 +338,10 @@ class DeadReckonService : Service() {
                 val peekEl = now - peekStartedAt
                 val remockNow = peekEl > PEEK_WINDOW_MAX_MS || (peekEl > PEEK_WINDOW_MS && usedInFix < 4)
                 when {
-                    realBack -> {                                      // GPS THẬT ĐÃ VỀ → nhả HẲN (mock đang tắt sẵn)
+                    realBack -> {                                      // GPS THẬT ĐÃ VỀ → nhả HẲN
+                        // gọi stop() cho CHẮC (idempotent): đừng bao giờ dựa vào "mock chắc đang tắt sẵn" —
+                        // rẽ nhánh nào đó bỏ sót là test provider ở lại VĨNH VIỄN, cả máy mất GPS.
+                        runCatching { MockLoc.stop(applicationContext) }
                         stateReal = true; peekStartedAt = 0L; gpsBackSince = 0L; lostSince = 0L
                         coldSeeded = false; coldSeedStationary = false
                         DeadReckonState.state = "REAL"; DeadReckonState.mocking = false
@@ -336,7 +358,7 @@ class DeadReckonService : Service() {
                 // COLD_SEED: accuracy TĂNG theo tuổi seed → seed cũ (vd Himlam vài giờ) hiện VÒNG MỜ, GMaps không tin là
                 // vị trí chắc. Seed mới (vài phút) vẫn ~50m dùng được ("bạn đang ở nhà"). DR-từ-fix-thật giữ 6m.
                 val acc = if (coldSeedStationary) (50f + (savedAgeMs / 60000f) * 20f).coerceIn(50f, 600f) else 6f
-                MockLoc.push(applicationContext, drLat, drLon, heading, speed, acc)
+                MockLoc.push(applicationContext, drLat, drLon, heading, speed, acc, moving = !coldSeedStationary)
                 // recovery "cổ điển" (ăn trên head unit KHÔNG đóng băng GnssStatus) — giữ làm bonus; head unit này băng nên
                 // đường THẬT là PEEK bên dưới.
                 if (usedInFix >= 4) { if (gpsBackSince == 0L) gpsBackSince = now } else if (usedInFix < 3) gpsBackSince = 0L
@@ -355,7 +377,16 @@ class DeadReckonService : Service() {
                         DeadReckonState.state = "REAL"; DeadReckonState.mocking = false
                         if (failsafe && !recovered) DeadReckonState.lastError = "DR failsafe timeout (gỡ mock an toàn)"
                     }
-                    now - lastPeekAt > PEEK_INTERVAL_MS -> {           // tới hạn → BẮT ĐẦU peek (tạm gỡ mock để dò GPS thật)
+                    // ★ ĐỪNG BAO GIỜ gate peek bằng sats/usedInFix (đã thử, review pass-2 bắt được): addTestProvider
+                    //   làm LMS đẩy ProviderRequest RỖNG xuống GNSS thật → native_stop() → HAL im → GnssStatus.Callback
+                    //   KHÔNG fire lần nào nữa → sats ĐÓNG BĂNG ở giá trị lúc vào mock. Mà chỉ peek mới bật lại được
+                    //   engine. Gate bằng nó = phụ thuộc vòng tròn: COLD_SEED (vào mock lúc sats thấp, lại được miễn
+                    //   failsafe) sẽ KHÔNG BAO GIỜ peek → ghim GPS cả máy suốt chuyến.
+                    now - lastPeekAt > peekIntervalMs() -> {
+                        // ★ v0.36: PHẢI removeTestProvider (không thể chỉ tắt cờ enabled — xem KDoc MockLoc): chỉ
+                        //   removeTestProvider mới lắp lại provider GPS thật, không có nó thì peek mù hoàn toàn.
+                        //   Giảm tác động lên app khác bằng cách peek THƯA hơn (60s thay 20s) + bỏ qua peek khi
+                        //   còn ít vệ tinh (chắc chắn chưa ra khỏi hầm, peek chỉ tổ gây nhiễu cho app khác).
                         runCatching { MockLoc.stop(applicationContext) }
                         DeadReckonState.mocking = false
                         peekStartedAt = now
@@ -372,7 +403,10 @@ class DeadReckonService : Service() {
             shLat += sd * Math.cos(shr) / 111320.0
             shLon += sd * Math.sin(shr) / (111320.0 * cosLatGuard(shLat))
         }
-        val steerYawDps = Math.toDegrees(steerYawRate(speed))   // mô hình lái (log kể cả khi chưa gate)
+        // ★ v0.36: CHỈ đọc HAL lái khi sắp ghi log hoặc đang thật sự dùng — trước đây gọi getSteeringWheelValue()
+        //   MỖI TICK (5 lần/giây, suốt đời máy) chỉ để điền 1 cột CSV → tranh chấp binder với chính service xe.
+        val willLog = (hasFix && fixAt != lastLoggedFixAt) || (!stateReal && (drLogTick + 1) % 5 == 0)
+        val steerYawDps = if (willLog || (DeadReckonState.useSteer && steerReady)) Math.toDegrees(steerYawRate(speed)) else 0.0
         if (hasFix && fixAt != lastLoggedFixAt) {
             val gpsYawDps = if (!fixBearing.isNaN() && !prevLogBearing.isNaN() && prevLogAt != 0L) {
                 var db = (fixBearing - prevLogBearing).toDouble(); while (db > 180) db -= 360; while (db < -180) db += 360
@@ -415,6 +449,13 @@ class DeadReckonService : Service() {
     }
 
     /** Bật mock + chuyển sang DR/COLD_SEED. Ghi lỗi vào DeadReckonState nếu MockLoc.start thất bại (thiếu quyền mock). */
+    /**
+     * Chu kỳ peek. COLD_SEED = vị trí ĐÓNG BĂNG (không tích phân) nên chờ lâu không mất mát gì → dò thưa để đỡ
+     * làm phiền app khác. DEAD_RECKON thì trôi theo quãng đường → phải dò dày như cũ, không được đánh đổi.
+     */
+    private fun peekIntervalMs(): Long =
+        if (DeadReckonState.state == "COLD_SEED") PEEK_INTERVAL_COLD_MS else PEEK_INTERVAL_DR_MS
+
     private fun enterMock(now: Long, stateName: String) {
         val err = MockLoc.start(applicationContext)
         if (err.isEmpty()) {
@@ -454,7 +495,9 @@ class DeadReckonService : Service() {
         dir ?: return
         runCatching {
             dir.listFiles { f -> f.name.startsWith("dr_log_") && f.name.endsWith(".csv") }
-                ?.sortedByDescending { it.name }
+                // ★ v0.41: sắp theo THỜI GIAN SỬA, không theo TÊN — tên giờ có version nên so chuỗi sẽ xoá nhầm
+                //   (vd "v0.9" > "v0.41" khi so từng ký tự).
+                ?.sortedByDescending { it.lastModified() }
                 ?.drop(4)                          // giữ 4 cũ + 1 sắp tạo = 5
                 ?.forEach { runCatching { it.delete() } }
         }
@@ -479,6 +522,10 @@ class DeadReckonService : Service() {
     /** Ghi 1 dòng CSV log (shadow-DR vs GPS). flush mỗi dòng (~1Hz). */
     private fun logRow(now: Long, posErr: Double, hdgErr: Double, gpsYaw: Double, steerYaw: Double, speed: Double) {
         val w = logWriter ?: return
+        // ★ v0.41: khi shadow-DR CHƯA seed (dòng đầu tiên) thì shLat/shLon còn là 0.0 → trước đây ghi ra
+        //   "0.000000,0.000000" = toạ độ null island giữa Đại Tây Dương, làm hỏng mọi biểu đồ vẽ từ log.
+        //   Chưa có số thì để TRỐNG, đúng như cách các cột posErr/hdgErr đang làm.
+        val hasPos = !stateReal || shSeeded
         val pLat = if (stateReal) shLat else drLat
         val pLon = if (stateReal) shLon else drLon
         val pHdg = if (stateReal) shHeading else heading
@@ -488,7 +535,7 @@ class DeadReckonService : Service() {
         runCatching {
             w.append("$now,${DeadReckonState.state},$usedInFix,$sats,${f("%.0f", fixAcc.toDouble())},")
             w.append("${f("%.6f", fixLat)},${f("%.6f", fixLon)},${if (fixBearing.isNaN()) "" else f("%.0f", fixBearing.toDouble())},${f("%.0f", speed * 3.6)},")
-            w.append("${f("%.6f", pLat)},${f("%.6f", pLon)},${f("%.0f", pHdg)},")
+            w.append("${if (hasPos) f("%.6f", pLat) else ""},${if (hasPos) f("%.6f", pLon) else ""},${if (hasPos) f("%.0f", pHdg) else ""},")
             w.append("${if (posErr < 0) "" else f("%.1f", posErr)},${if (hdgErr < 0) "" else f("%.1f", hdgErr)},")
             w.appendLine("${f("%.1f", gpsYaw)},${f("%.1f", steerYaw)},${f("%.1f", DeadReckonState.steerRatioCal)},${DeadReckonState.steerCalSamples},${DeadReckonState.steerFlip}")
             w.flush()
@@ -561,9 +608,15 @@ class DeadReckonService : Service() {
         private const val NOTIF_ID = 4711
         private const val MAX_DR_MS = 300000L   // 5 phút: failsafe — KHÔNG BAO GIỜ kẹt mock đè GPS thật quá lâu (áp CẢ cold-seed)
         private const val GPS_BACK_MS = 800L     // nhả DR khi GPS đủ tốt giữ 0.8s (trước 2s) → lên GPS thật nhanh hơn
-        private const val PEEK_INTERVAL_MS = 20000L  // mock ~20s rồi PEEK (GnssStatus băng khi mock → phải tạm gỡ mới dò được GPS về)
-        private const val PEEK_WINDOW_MS = 3000L     // cửa peek ~3s: đủ cho 1 fix GPS thật (1Hz) tới nếu đã ra khỏi hầm
-        private const val PEEK_WINDOW_MAX_MS = 8000L  // usedInFix≥4 (GPS chớm về) → gia hạn cửa tới 8s chờ fix thật (tránh nhả non)
+        // ★ v0.36: 20s → 60s. Mỗi lần peek là 1 lần removeTestProvider → LocationManagerService broadcast
+    //   PROVIDERS_CHANGED tới mọi user + xoá mLastLocation của MỌI provider → app dẫn đường khác khựng.
+    //   Không bỏ được peek (chỉ removeTestProvider mới trả lại GPS thật), nhưng thưa 3× thì nhiễu giảm 3×.
+    // Chu kỳ peek theo TRẠNG THÁI (xem [peekIntervalMs]): DEAD_RECKON trôi theo thời gian nên phải dò dày;
+    // COLD_SEED đứng yên (không trôi) nên dò thưa được, đổi lại giảm 3× số lần gỡ/cắm provider.
+    private const val PEEK_INTERVAL_DR_MS = 20000L
+    private const val PEEK_INTERVAL_COLD_MS = 60000L
+        private const val PEEK_WINDOW_MS = 5000L     // cửa peek ~5s: GNSS vừa bị native_stop cần chút thời gian hot-start
+        private const val PEEK_WINDOW_MAX_MS = 10000L  // usedInFix≥4 (GPS chớm về) → gia hạn cửa tới 8s chờ fix thật (tránh nhả non)
         private const val STEER_RATIO = 15.5    // tỉ số lái Seal (giá trị KHỞI ĐẦU — sau đó tự calib online)
         private const val WHEELBASE = 2.92       // chiều dài cơ sở Seal (m)
         private const val SPEEDO_CORRECTION = 0.93   // getCurrentSpeed (đồng hồ) đọc CAO hơn thực ~5-8% → bù khi tích phân quãng DR
@@ -571,6 +624,12 @@ class DeadReckonService : Service() {
         private const val TRACK_N = 6            // #2: số fix gần nhất giữ để hồi quy hướng seed DR
         private const val SAVE_INTERVAL_MS = 5000L                 // ghi vị trí lưu mỗi 5s (throttle I/O)
         private const val MAX_SAVED_AGE_MS = 7L * 24 * 3600 * 1000 // 7 ngày: seed cũ hơn thì bỏ (xe có thể đã bị di chuyển khi app tắt)
-        private const val COLD_SEED_MAX_SATS = 8   // FIX D2: chỉ cold-seed-mock khi <8 vệ tinh THẤY (hầm/ngầm thật). Nhiều sao = trời quang, GPS đang acquire → đừng mock đè.
+        private const val COLD_SEED_MAX_SATS = 8
+    /**
+     * ★ W1-3, lớp chặn thứ hai: toạ độ đem PHÁT RA như vị trí SỐNG của xe phải còn mới. Kho lưu giữ tới 7 ngày
+     * ([MAX_SAVED_AGE_MS]) là để hiển thị/chẩn đoán, KHÔNG phải để mock. 30 phút là biên hợp lý cho "xe vẫn đỗ
+     * đúng chỗ lúc tắt máy".
+     */
+    private const val COLD_SEED_MAX_AGE_MS = 30L * 60 * 1000   // FIX D2: chỉ cold-seed-mock khi <8 vệ tinh THẤY (hầm/ngầm thật). Nhiều sao = trời quang, GPS đang acquire → đừng mock đè.
     }
 }

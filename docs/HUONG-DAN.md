@@ -72,12 +72,12 @@ Mỗi app một tỷ lệ khác nhau → chỉnh riêng bằng **các nút LỚN
 
 - **Kích thước** — `Hẹp` / `Rộng` (thu/nới chiều ngang), `Thấp` / `Cao` (thu/nới chiều dọc). Co giãn **quanh tâm**.
 - **Vị trí** — `◀ ▲ ▼ ▶` dời **cả khung** sang trái / lên / xuống / phải, **giữ nguyên kích thước**.
-- **DPI** — `－ / ＋` chỉnh độ lớn nội dung (**DPI nhỏ = chữ/nội dung TO hơn**).
+- **Chữ** — `nhỏ / to` chỉnh độ lớn nội dung (**DPI cao = chữ/nội dung TO hơn, ít nội dung lọt màn**; gốc của cụm là 320, app đặt 200).
 - **Khôi phục** — `↺` về full cụm (auto).
 
 > Cách nhanh: chỉnh **Kích thước** cho vừa trước, rồi **Vị trí** (◀▲▼▶) dời cho cân. Ví dụ CarPlay bị rộng → bấm **Hẹp** vài nhịp cho gọn, rồi **◀ / ▶** đẩy khung về đúng chỗ trên cụm.
 
-> **Ghi chú kỹ thuật (v0.35):** khi mới cài, nút kích thước chạy qua đường "overscan" (co vùng hiển thị) — hoạt động ngay. App đồng thời bật cờ hệ thống `enable_freeform_support` (chỉ có tác dụng từ lần **tắt máy xe hẳn** rồi mở lại — sau đó nút chuyển sang đường resize "xịn" mượt hơn, xem log trong màn chiếu). Cờ này **giữ nguyên kể cả gỡ app**; muốn trả về mặc định: `adb shell settings delete global enable_freeform_support && adb shell settings delete global development_enable_freeform_windows_support` rồi tắt máy xe 1 lần.
+> **Ghi chú kỹ thuật (v0.36):** khi mới cài, nút kích thước chạy qua đường "overscan" (co vùng hiển thị) — hoạt động ngay. App đồng thời bật cờ hệ thống `enable_freeform_support` (chỉ có tác dụng từ lần **tắt máy xe hẳn** rồi mở lại — sau đó nút chuyển sang đường resize "xịn" mượt hơn, xem log trong màn chiếu). Cờ này **giữ nguyên kể cả gỡ app**; muốn trả về mặc định: `adb shell settings delete global enable_freeform_support && adb shell settings delete global development_enable_freeform_windows_support && adb shell settings delete global force_resizable_activities` rồi tắt máy xe 1 lần.
 
 ## 6. GPS trong hầm (dead-reckon)
 
