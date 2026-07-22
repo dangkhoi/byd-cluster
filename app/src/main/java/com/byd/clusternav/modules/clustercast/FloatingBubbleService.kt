@@ -49,6 +49,9 @@ class FloatingBubbleService : Service() {
         if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
         startForeground(NOTIF_ID, buildNotif())
         ClusterCast.loadPrefs(applicationContext)
+        // ★ W2-3: đây là entry point khởi-động-tiến-trình DUY NHẤT chưa dọn state phiên trước
+        //   (RebindReceiver và ClusterCastActivity đều đã gọi). Bong bóng lại hay là thứ chạy đầu tiên sau boot.
+        ClusterCast.reconcileOnStart(applicationContext)
         if (bubble == null) {
             if (Build.VERSION.SDK_INT >= 23 && !android.provider.Settings.canDrawOverlays(this)) { notifyNeedOverlay(); stopSelf(); return START_NOT_STICKY }
             runCatching { addBubble() }.onFailure { notifyNeedOverlay(); stopSelf(); return START_NOT_STICKY }
@@ -66,9 +69,11 @@ class FloatingBubbleService : Service() {
                    else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
         val sz = dp(56)
         val p = WindowManager.LayoutParams(sz, sz, type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,   // không bắt cả màn hình đi composite bằng CPU
             PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.START
+            alpha = IDLE_ALPHA        // ★ MỜ khi rảnh → không đè/che app đang dùng; chạm vào là rõ ngay
             val pf = getSharedPreferences("bubble", MODE_PRIVATE)
             x = pf.getInt("x", dp(12)); y = pf.getInt("y", dp(240))
         }
@@ -76,11 +81,28 @@ class FloatingBubbleService : Service() {
         btn.setOnTouchListener(makeDragTap())
         wm?.addView(btn, p)
         bubble = btn
+        scheduleFade()
     }
+
+    // ── ĐỘ MỜ (user: "làm transparent để không đè lên app khác") ──
+    // Rảnh → mờ hẳn, chỉ còn thấy lờ mờ để biết nó ở đâu. Chạm/kéo → rõ ngay. Bỏ tay ra vài giây → mờ lại.
+    private val fade = Runnable { setBubbleAlpha(IDLE_ALPHA) }
+
+    private fun setBubbleAlpha(a: Float) {
+        val p = lp ?: return; val b = bubble ?: return
+        if (p.alpha == a) return
+        p.alpha = a
+        runCatching { wm?.updateViewLayout(b, p) }
+    }
+
+    /** Gọi khi có tương tác: rõ ngay, rồi hẹn mờ lại. */
+    private fun wake() { ui.removeCallbacks(fade); setBubbleAlpha(ACTIVE_ALPHA); scheduleFade() }
+    private fun scheduleFade() { ui.removeCallbacks(fade); ui.postDelayed(fade, FADE_DELAY_MS) }
 
     /** Bong bóng đổi hình theo trạng thái chiếu — điểm mấu chốt để "1 chạm không nhầm". */
     private fun updateVisual() {
         val b = bubble ?: return
+        wake()      // đổi trạng thái chiếu = sự kiện đáng chú ý → sáng lên cho user thấy, rồi tự mờ lại
         val casting = ClusterCast.casting
         b.textSize = 24f
         b.text = if (casting) "▣" else "▢"   // ô-màn-hình: đặc = đang chiếu, rỗng = chưa (tap = mở menu)
@@ -97,7 +119,7 @@ class FloatingBubbleService : Service() {
         return View.OnTouchListener { v, e ->
             val p = lp ?: return@OnTouchListener false
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; startX = p.x; startY = p.y; moved = false; downAt = System.currentTimeMillis(); true }
+                MotionEvent.ACTION_DOWN -> { wake(); downX = e.rawX; downY = e.rawY; startX = p.x; startY = p.y; moved = false; downAt = System.currentTimeMillis(); true }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - downX; val dy = e.rawY - downY
                     if (abs(dx) > 14 || abs(dy) > 14) moved = true
@@ -202,6 +224,7 @@ class FloatingBubbleService : Service() {
 
     override fun onDestroy() {
         ClusterCast.onCastingChanged = null
+        ui.removeCallbacks(fade)
         removeMenu()
         runCatching { bubble?.let { wm?.removeView(it) } }; bubble = null
         super.onDestroy()
@@ -239,6 +262,10 @@ class FloatingBubbleService : Service() {
     }
 
     companion object {
+        // Bong bóng luôn nổi trên mọi app nên PHẢI mờ lúc rảnh, không thì nó che nội dung app đang dùng.
+        private const val IDLE_ALPHA = 0.35f     // rảnh: chỉ đủ thấy nó ở đâu
+        private const val ACTIVE_ALPHA = 1.0f    // đang chạm/kéo, hoặc vừa đổi trạng thái chiếu
+        private const val FADE_DELAY_MS = 2500L
         private const val NOTIF_ID = 4720
         private const val ACTION_STOP = "com.byd.clusternav.BUBBLE_STOP"
         fun start(ctx: Context) { runCatching { ctx.startForegroundService(Intent(ctx, FloatingBubbleService::class.java)) } }

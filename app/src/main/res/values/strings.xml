@@ -31,4 +31,5 @@
 
     <string name="acc_label">ClusterNav — booster đọc bản đồ</string>
     <string name="acc_desc">Đọc cự ly tới ngã rẽ hiển thị trên Google Maps để bơm lên cụm chính xác hơn. Chỉ đọc khi Google Maps đang mở; không chạm, không thu thập dữ liệu cá nhân.</string>
+    <string name="navprobe_desc">MÁY DÒ (khảo sát, tạm thời): đọc chữ dẫn đường đang hiện của Vietmap/Waze/CarPlay để xem có bắn lên cụm được không. TỰ BẬT mỗi lần nổ máy, ghi 2 giờ rồi tự tắt. Xem hoặc tắt trong màn Chẩn đoán → Máy dò dẫn đường.</string>
 </resources>

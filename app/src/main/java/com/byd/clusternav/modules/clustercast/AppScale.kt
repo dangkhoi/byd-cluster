@@ -48,21 +48,86 @@ data class AppScale(
      */
     fun nudgeRect(w: Int, h: Int, dW: Int, dH: Int): AppScale {
         val b = boundsOn(w, h)
-        var l = b[0] - dW / 2
-        var r = b[2] + dW / 2
-        var t = b[1] - dH / 2
-        var bot = b[3] + dH / 2
-        val maxL = (w - MIN_PX).coerceAtLeast(0)
-        val maxT = (h - MIN_PX).coerceAtLeast(0)
-        l = l.coerceIn(0, maxL)
-        r = r.coerceIn((l + MIN_PX).coerceAtMost(w), w)
-        t = t.coerceIn(0, maxT)
-        bot = bot.coerceIn((t + MIN_PX).coerceAtMost(h), h)
-        return copy(rectL = l, rectT = t, rectR = r, rectB = bot)
+        // ★ v0.37 SỬA LỖI TRÔI KHUNG: bản cũ kẹp TỪNG CẠNH độc lập, nên khi đã chạm đáy MIN_PX mà user bấm tiếp
+        //   thì cạnh trên vẫn dịch được còn cạnh dưới bị suy ra lại → khung KHÔNG nhỏ thêm mà LỪ LỪ TRÔI xuống/
+        //   sang phải. Đúng vết hiện trường: khung lưu trên xe là 1296×160 (chạm sàn) và lệch tâm (536,224).
+        //   Giờ kẹp KÍCH THƯỚC trước rồi mới đặt lại quanh TÂM CŨ → chạm sàn là đứng yên hẳn.
+        val cx = (b[0] + b[2]) / 2
+        val cy = (b[1] + b[3]) / 2
+        val nw = ((b[2] - b[0]) + dW).coerceIn(MIN_PX.coerceAtMost(w), w)
+        val nh = ((b[3] - b[1]) + dH).coerceIn(MIN_PX.coerceAtMost(h), h)
+        val l = (cx - nw / 2).coerceIn(0, w - nw)
+        val t = (cy - nh / 2).coerceIn(0, h - nh)
+        return copy(rectL = l, rectT = t, rectR = l + nw, rectB = t + nh)
+    }
+
+    /**
+     * Kích thước LOGIC của VD để tái tạo khung này bằng `wm size` (tầng sizing KHÔNG cần freeform).
+     * ⚠ `wm size` chỉ đổi được KÍCH THƯỚC — LogicalDisplay letterbox căn giữa và giữ tỉ lệ, nên VỊ TRÍ lệch tâm
+     * KHÔNG tái tạo được. Chấp nhận: với app chiếu điện thoại thì cỡ mới là thứ người dùng cần.
+     */
+    fun forcedSizeOn(w: Int, h: Int): IntArray {
+        val b = boundsOn(w, h)
+        return intArrayOf(
+            (b[2] - b[0]).coerceIn(MIN_PX.coerceAtMost(w), w),
+            (b[3] - b[1]).coerceIn(MIN_PX.coerceAtMost(h), h),
+        )
+    }
+
+    /** DPI bù lại phần phóng to mà LogicalDisplay áp khi thu logical size → chữ giữ nguyên cỡ vật lý. */
+    fun dpiForForcedSize(w: Int, h: Int): Int {
+        val s = forcedSizeOn(w, h)
+        if (s[0] <= 0 || s[1] <= 0) return dpi
+        val k = minOf(w.toFloat() / s[0], h.toFloat() / s[1])
+        return (dpi * k).toInt().coerceIn(DPI_MIN, DPI_MAX)
     }
 
     /** Đổi DPI ± [d] nấc, GIỮ nguyên rect. Clamp [DPI_MIN,DPI_MAX]. */
     fun nudgeDpi(d: Int): AppScale = copy(dpi = (dpi + d).coerceIn(DPI_MIN, DPI_MAX))
+
+    /**
+     * ★ KHUNG = PHẦN TRĂM CỦA CỤM, CĂN GIỮA (v0.42) — thay cặp preset 16:9 / 21:9.
+     *
+     * VÌ SAO BỎ 16:9 và 21:9: cụm là một DẢI NGANG rất dẹt — Seal đo được 1920×720 = **8:3 = 2.667:1**.
+     * Mọi tỉ lệ HẸP hơn 2.667 (16:9 = 1.78, 21:9 = 2.33) khi căn vào dải này đều bị kẹp theo CHIỀU CAO, nghĩa là
+     * khung luôn cao hết cụm và chỉ khác nhau ở chỗ bị cắt bao nhiêu HAI BÊN. Không bao giờ tạo ra viền trên/dưới.
+     * Nói cách khác: chúng chỉ biết làm hẹp bề ngang — đúng như anh em phản ánh là "vô nghĩa".
+     *
+     * [scaled] lấy [pct]% của cụm THẬT rồi căn giữa, nên không phụ thuộc đời xe: Seal 1920×720, hay bất kỳ cụm
+     * nào khác, đều ra khung đúng tỉ lệ của chính nó. Đây mới là thứ người dùng cần trên một dải ngang.
+     */
+    fun scaled(w: Int, h: Int, pct: Int): AppScale {
+        if (w <= 0 || h <= 0) return this
+        val q = pct.coerceIn(20, 100)
+        val bw = (w * q / 100).coerceIn(MIN_PX.coerceAtMost(w), w)
+        val bh = (h * q / 100).coerceIn(MIN_PX.coerceAtMost(h), h)
+        val l = (w - bw) / 2
+        val t = (h - bh) / 2
+        return copy(rectL = l, rectT = t, rectR = l + bw, rectB = t + bh)
+    }
+
+    /**
+     * ★ KHUNG THEO TỈ LỆ, CĂN GIỮA (v0.36) — giữ lại cho app VIDEO thật sự cần tỉ lệ cố định.
+     * ⚠ Trên cụm dạng dải 2.667:1 thì mọi tỉ lệ hẹp hơn đều bị kẹp theo chiều cao (xem [scaled]).
+     * Cụm 1920×720 là 2.67:1; trừ tiếp inset dọc mặc định 90px còn 1920×540 = **3.56:1**. Không layout điện thoại
+     * nào sống nổi ở tỉ lệ đó: riêng chrome của YouTube (thanh trên + chips + nav dưới) đã ăn gần hết chiều cao,
+     * phần nội dung còn lại gần bằng 0 → app tự thu về mini-player, nhìn như bị bóp méo.
+     * [fit] cắt khung về đúng [arW]:[arH] căn giữa nên nội dung có tỉ lệ người ta thiết kế cho.
+     * VD 1920×720 · 16:9 · insetV=0 → [480,0,1440,720] (1280×720). insetV=40 → [531,40,1389,680] (858×640... )
+     * @param insetV chừa trên/dưới bao nhiêu px cho thanh OEM của cụm (0 = dùng trọn chiều cao).
+     */
+    fun fit(w: Int, h: Int, arW: Int = 16, arH: Int = 9, insetV: Int = 0): AppScale {
+        if (w <= 0 || h <= 0 || arW <= 0 || arH <= 0) return this
+        val availH = (h - 2 * insetV).coerceIn(MIN_PX.coerceAtMost(h), h)
+        var bh = availH
+        var bw = bh * arW / arH
+        if (bw > w) { bw = w; bh = (bw * arH / arW).coerceAtMost(availH) }   // rộng quá → khớp theo bề ngang
+        bw = bw.coerceIn(MIN_PX.coerceAtMost(w), w)
+        bh = bh.coerceIn(MIN_PX.coerceAtMost(h), h)
+        val l = (w - bw) / 2
+        val t = (h - bh) / 2
+        return copy(rectL = l, rectT = t, rectR = l + bw, rectB = t + bh)
+    }
 
     /**
      * Chỉnh 1 CẠNH độc lập: dời cạnh [edge] đi [delta] px, TỰ TÍNH LẠI kích thước (không căn giữa).

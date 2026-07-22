@@ -190,4 +190,122 @@ class AppScaleTest {
         assertFalse(s.isAuto)
         assertEquals(listOf(0, 0, 1920, 720), s.boundsOn(1920, 720).toList())  // full → clamp giữ full
     }
+
+    // ── fit(): khung theo tỉ lệ, căn giữa (v0.36 — sửa gốc "YouTube méo") ──
+
+    @Test fun `fit 16-9 tren cum 1920x720 cho 1280x720 can giua`() {
+        val s = AppScale().fit(1920, 720, 16, 9)
+        assertFalse(s.isAuto)
+        assertEquals(listOf(320, 0, 1600, 720), s.boundsOn(1920, 720).toList())
+        assertEquals(1280, s.rectR - s.rectL); assertEquals(720, s.rectB - s.rectT)
+        // overscan tương đương chính là con số hiện trường đã mò ra bằng tay
+        assertEquals(listOf(320, 0, 320, 0), s.overscanOn(1920, 720).toList())
+    }
+
+    @Test fun `fit chua inset doc cho thanh OEM`() {
+        val s = AppScale().fit(1920, 720, 16, 9, insetV = 90)
+        assertEquals(540, s.rectB - s.rectT)                       // 720 - 2*90
+        assertEquals(960, s.rectR - s.rectL)                       // 540 * 16/9
+        assertEquals(90, s.rectT); assertEquals(630, s.rectB)      // căn giữa theo chiều dọc
+    }
+
+    @Test fun `fit 21-9 rong hon 16-9 nhung khong tran VD`() {
+        val w = AppScale().fit(1920, 720, 21, 9)
+        assertEquals(1680, w.rectR - w.rectL)
+        assertTrue(w.rectR <= 1920 && w.rectL >= 0)
+    }
+
+    @Test fun `fit khop theo be ngang khi ti le qua rong`() {
+        val s = AppScale().fit(1920, 720, 32, 9)                   // 720*32/9 = 2560 > 1920
+        assertEquals(1920, s.rectR - s.rectL)                      // kẹp về bề ngang VD
+        assertEquals(540, s.rectB - s.rectT)                       // 1920*9/32
+        assertEquals(0, s.rectL)
+    }
+
+    @Test fun `fit giu nguyen dpi va bo qua tham so vo ly`() {
+        val base = AppScale(dpi = 240)
+        assertEquals(240, base.fit(1920, 720).dpi)
+        assertEquals(base, base.fit(0, 720))                       // w<=0 → giữ nguyên
+        assertEquals(base, base.fit(1920, 720, 0, 9))              // tỉ lệ <=0 → giữ nguyên
+    }
+
+    // ── v0.37: nudgeRect phải KẸP KÍCH THƯỚC, không được trôi khung khi chạm sàn ──
+
+    @Test fun `nudgeRect cham san MIN_PX thi DUNG YEN, khong troi`() {
+        var s = AppScale().nudgeRect(1920, 720, 0, -2000)     // ép chiều cao xuống sàn
+        assertEquals(AppScale.MIN_PX, s.rectB - s.rectT)
+        val before = listOf(s.rectL, s.rectT, s.rectR, s.rectB)
+        repeat(10) { s = s.nudgeRect(1920, 720, 0, -32) }     // bấm "Thấp" thêm 10 lần
+        assertEquals(before, listOf(s.rectL, s.rectT, s.rectR, s.rectB))   // KHÔNG được xê dịch chút nào
+    }
+
+    @Test fun `nudgeRect giu tam khi thu nho`() {
+        val s = AppScale().nudgeRect(1920, 720, -320, -160)
+        assertEquals(1600, s.rectR - s.rectL); assertEquals(560, s.rectB - s.rectT)
+        assertEquals((s.rectL + s.rectR) / 2, 960)            // vẫn giữa theo chiều ngang
+        assertEquals((s.rectT + s.rectB) / 2, 360)
+    }
+
+    @Test fun `nudgeRect noi ra khong vuot VD`() {
+        var s = AppScale().nudgeRect(1920, 720, -640, -320)
+        repeat(40) { s = s.nudgeRect(1920, 720, 64, 64) }
+        assertEquals(1920, s.rectR - s.rectL); assertEquals(720, s.rectB - s.rectT)
+        assertEquals(0, s.rectL); assertEquals(0, s.rectT)
+    }
+
+    // ── forcedSizeOn / dpiForForcedSize cho tầng `wm size` ──
+
+    @Test fun `forcedSizeOn tra ve dung kich thuoc khung`() {
+        val s = AppScale().fit(1920, 720, 16, 9)              // 1280x720
+        assertEquals(listOf(1280, 720), s.forcedSizeOn(1920, 720).toList())
+    }
+
+    @Test fun `forcedSizeOn khung auto la full VD`() {
+        assertEquals(listOf(1920, 720), AppScale().forcedSizeOn(1920, 720).toList())
+    }
+
+    @Test fun `dpiForForcedSize bu lai phan phong to`() {
+        // 16:9 trên cụm 1920×720 = 1280×720 → LogicalDisplay PILLARBOX: hệ số min(1920/1280, 720/720) = 1.0,
+        // tức KHÔNG phóng gì cả (chỉ chừa hai dải đen hai bên) → DPI phải giữ nguyên.
+        assertEquals(200, AppScale(dpi = 200).fit(1920, 720, 16, 9).dpiForForcedSize(1920, 720))
+        assertEquals(200, AppScale(dpi = 200).dpiForForcedSize(1920, 720))   // auto = full → không phóng
+        // thu ĐỀU cả hai chiều còn một nửa (960×360) → phóng thật 2× → dpi 150 → 300
+        val half = AppScale(dpi = 150, rectL = 480, rectT = 180, rectR = 1440, rectB = 540)
+        assertEquals(300, half.dpiForForcedSize(1920, 720))
+        // vượt trần thì kẹp ở DPI_MAX
+        assertEquals(
+            AppScale.DPI_MAX,
+            AppScale(dpi = 300, rectL = 480, rectT = 180, rectR = 1440, rectB = 540).dpiForForcedSize(1920, 720),
+        )
+    }
+
+    // ── v0.42: preset theo PHẦN TRĂM cụm (thay 16:9 / 21:9 vốn vô nghĩa trên dải 2.667:1) ──
+
+    @Test fun `scaled lay dung phan tram va can giua`() {
+        val s = AppScale().scaled(1920, 720, 80)
+        assertEquals(1536, s.rectR - s.rectL); assertEquals(576, s.rectB - s.rectT)
+        assertEquals(192, s.rectL); assertEquals(72, s.rectT)              // căn giữa cả hai chiều
+        assertEquals(listOf(192, 72, 192, 72), s.overscanOn(1920, 720).toList())
+    }
+
+    /** ★ Điểm mấu chốt: preset GIỮ NGUYÊN tỉ lệ cụm — đúng thứ 16:9/21:9 không làm được. */
+    @Test fun `scaled giu nguyen ti le cum`() {
+        for (pct in listOf(90, 80, 70, 50)) {
+            val s = AppScale().scaled(1920, 720, pct)
+            val ar = (s.rectR - s.rectL).toDouble() / (s.rectB - s.rectT)
+            assertTrue(kotlin.math.abs(ar - 1920.0 / 720) < 0.02, "pct=$pct ar=$ar")
+        }
+    }
+
+    @Test fun `scaled hoat dong tren cum kich thuoc khac`() {
+        val s = AppScale().scaled(1280, 480, 75)                          // đời xe khác, cùng 8:3
+        assertEquals(960, s.rectR - s.rectL); assertEquals(360, s.rectB - s.rectT)
+    }
+
+    @Test fun `scaled kep trong khoang hop le`() {
+        assertEquals(1920, AppScale().scaled(1920, 720, 999).let { it.rectR - it.rectL })
+        val tiny = AppScale().scaled(1920, 720, 1)
+        assertTrue(tiny.rectB - tiny.rectT >= AppScale.MIN_PX)
+        assertEquals(AppScale(), AppScale().scaled(0, 720, 80))            // kích thước vô lý → giữ nguyên
+    }
 }

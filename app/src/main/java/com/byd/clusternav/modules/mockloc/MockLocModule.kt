@@ -28,11 +28,16 @@ object MockLocModule : ClusterModule {
     private var view: TextView? = null
     private val main = Handler(Looper.getMainLooper())
 
-    override fun selfTest(ctx: Context): SelfTest {
-        val err = MockLoc.start(ctx)
-        return if (err.isEmpty()) { MockLoc.stop(ctx); SelfTest.pass("addTestProvider OK — đã chọn ClusterNav làm mock app ✓") }
-        else SelfTest.fail(err)
-    }
+    /**
+     * ★★ W1-2 (senior review 2026-07-21): selfTest CHỈ ĐƯỢC QUAN SÁT, TUYỆT ĐỐI KHÔNG ĐƯỢC MUTATE.
+     * Bản cũ gọi `MockLoc.start()` rồi `stop()`. Nếu người dùng đang trong hầm và DeadReckon đang mock thật,
+     * cái `stop()` đó **gỡ luôn test provider đang phục vụ** → mất vị trí giữa hầm. Và nếu tiến trình chết giữa
+     * `start` và `stop` thì test provider mồ côi **chặn GPS thật của cả xe** cho tới lần khởi động sau.
+     * Giờ chỉ ĐỌC cấu hình: `Settings.Secure.mock_location` (đời cũ) hoặc appops (đời mới).
+     */
+    override fun selfTest(ctx: Context): SelfTest =
+        if (MockLoc.isMockAppGranted(ctx)) SelfTest.pass("đã chọn ClusterNav làm mock location app ✓ (chỉ đọc, không bơm thử)")
+        else SelfTest.fail("chưa chọn ClusterNav làm 'mock location app' trong Developer Options")
 
     override fun buildView(ctx: Context, parent: ViewGroup) {
         val ui = ModuleUi(ctx, parent)

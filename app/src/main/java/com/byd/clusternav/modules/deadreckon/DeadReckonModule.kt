@@ -35,12 +35,14 @@ object DeadReckonModule : ClusterModule {
         val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         val gyro = sm?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
         val loc = ctx.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val mockErr = MockLoc.start(ctx).also { if (it.isEmpty()) MockLoc.stop(ctx) }
+        // ★★ W1-2: KHÔNG bơm thử. Xem KDoc MockLocModule.selfTest — gọi start/stop ở đây có thể gỡ mock
+        //   đang phục vụ giữa hầm, hoặc để lại provider mồ côi chặn GPS cả xe.
+        val mockOk = MockLoc.isMockAppGranted(ctx)
         val parts = mutableListOf<String>()
         parts += "gyro=${if (gyro != null) "CÓ (${gyro.name})" else "KHÔNG → heading=GPS bearing thẳng"}"
         parts += "quyền Location=${if (loc) "OK" else "CHƯA (mode mockprobe để xin)"}"
-        parts += if (mockErr.isEmpty()) "mock-app=OK" else "mock-app=CHƯA chọn"
-        val ok = loc && mockErr.isEmpty()
+        parts += if (mockOk) "mock-app=OK" else "mock-app=CHƯA chọn"
+        val ok = loc && mockOk
         return if (ok) SelfTest.pass(parts.joinToString(" · ")) else SelfTest.fail(parts.joinToString(" · "))
     }
 

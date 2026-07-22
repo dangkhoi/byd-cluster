@@ -59,7 +59,16 @@ public final class T3Daemon {
                 return;
             }
             System.out.println("T3 move: " + moveViaStack(taskId, displayId));
-            System.out.println("T3 resize: " + resizeTask(taskId, l, t, r, b));
+            // ★★ GUARD P0 (v0.36): resize CHỈ khi task ĐÚNG là đang ở display đích. Bản cũ in kết quả move rồi
+            //   resize BẤT CHẤP — sau khi xe được tắt-mở (freeform sống thật), lệnh đó sẽ resize một task còn
+            //   nằm ở display 0 = MÀN HÌNH GIỮA của tài xế, với toạ độ tính cho cụm. Đọc lại display thật rồi mới quyết.
+            int after = displayOfTask(taskId);
+            if (after != displayId) {
+                System.out.println("T3 SKIP resize: task " + taskId + " dang o display " + after
+                        + " (≠ " + displayId + ") — KHONG dung man giua");
+            } else {
+                System.out.println("T3 resize: " + resizeTask(taskId, l, t, r, b));
+            }
             System.out.println("T3 DONE");
         } catch (Throwable e) {
             System.out.println("T3 FATAL: " + e.getClass().getSimpleName() + " — " + e.getMessage());
@@ -187,6 +196,34 @@ public final class T3Daemon {
             Throwable c = unwrap(t);
             return log.append("ERR moveViaStack: ").append(c.getClass().getSimpleName()).append(" — ").append(c.getMessage()).toString();
         }
+    }
+
+    /**
+     * displayId THẬT của [taskId] ngay lúc này (đọc lại getAllStackInfos sau khi move). -1 = không tìm thấy.
+     * Dùng để GATE resizeTask: không bao giờ resize một task còn nằm ở display 0 (màn hình giữa của tài xế).
+     */
+    static int displayOfTask(int taskId) {
+        try {
+            Object atm = iAtm();
+            Object res = atm.getClass().getMethod("getAllStackInfos").invoke(atm);
+            List<?> stacks;
+            if (res instanceof List) stacks = (List<?>) res;
+            else if (res != null && res.getClass().isArray()) stacks = Arrays.asList((Object[]) res);
+            else stacks = Collections.emptyList();
+            for (Object si : stacks) {
+                if (si == null) continue;
+                Object did = readField(si, "displayId");
+                Object tids = readField(si, "taskIds");
+                if (tids instanceof int[]) {
+                    for (int tt : (int[]) tids) {
+                        if (tt == taskId) return did instanceof Integer ? (Integer) did : -1;
+                    }
+                }
+            }
+        } catch (Throwable ignore) {
+            // đọc không được → trả -1 → phía gọi BỎ QUA resize (an toàn hơn resize mù)
+        }
+        return -1;
     }
 
     /** ⑤ resizeTask(taskId, Rect, FORCED). bounds toàn 0 = null = full display. Duyệt biến thể signature. */
