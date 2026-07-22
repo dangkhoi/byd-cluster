@@ -196,6 +196,17 @@ object ClusterCast {
     /** true = cho phép daemon T3 ép freeform SAU KHI app đã bám VD (chỉ có tác dụng khi freeform đã sống). */
     fun setT3(ctx: Context, pkg: String, on: Boolean) { t3Apps = if (on) t3Apps + pkg else t3Apps - pkg; save(ctx) }
     fun isT3(pkg: String) = pkg in t3Apps
+    /**
+     * App có phải loại CHIẾU MÀN ĐIỆN THOẠI không (CarPlay / Android Auto / projection sink) — nhận diện theo
+     * chuỗi component/gói, KHÔNG hardcode một tên cụ thể. Mất phiên của loại này là mất luôn, phải khởi động lại xe.
+     * Tên activity từ firmware đã đọc: `com.google.android.projection.sink.ui.AAPVideoActivity`, `com.byd.carplay.ui`.
+     */
+    private val PROJECTION_HINTS = listOf("projection.sink", "aapactivity", "aapvideo", "carplay", "androidauto")
+    fun isPhoneProjection(comp: String?, pkg: String): Boolean {
+        val hay = ((comp ?: "") + " " + pkg).lowercase()
+        return PROJECTION_HINTS.any { hay.contains(it) }
+    }
+
     /** true = CẤM rung R2 (force-stop + mở lại) cho app này → giữ phiên bằng mọi giá, thà không lên cụm. */
     fun setKeepSession(ctx: Context, pkg: String, on: Boolean) { keepSessionApps = if (on) keepSessionApps + pkg else keepSessionApps - pkg; save(ctx) }
     fun isKeepSession(pkg: String) = pkg in keepSessionApps
@@ -779,6 +790,15 @@ object ClusterCast {
             log("  ⛔ R3 BỎ QUA: '$target' đang bật GIỮ PHIÊN (◈) — không force-stop. Bỏ ◈ nếu muốn thử.")
             return null
         }
+        // ★ v0.58 TỰ BẢO VỆ app chiếu-điện-thoại. keepSessionApps mặc định rỗng → trước đây R3 được phép
+        //   force-stop CarPlay/Android Auto khi user bấm CHIẾU, giết luôn phiên chiếu từ điện thoại → "cắm CP/AA
+        //   không lên nữa, phải khởi động lại xe" (lỗi hiện trường). Nhận diện theo HÀNH VI (activity đang hiện là
+        //   sink chiếu màn), KHÔNG hardcode tên gói: mất phiên của loại app này là mất luôn.
+        if (isPhoneProjection(comp, target)) {
+            log("  ⛔ R3 BỎ QUA: '$target' là app chiếu điện thoại (CarPlay/Android Auto) — force-stop sẽ RỚT phiên, " +
+                "phải khởi động lại xe. Thà không lên cụm còn hơn. Bật GIỮ PHIÊN thủ công nếu muốn ép.")
+            return null
+        }
         log("  R3 ⚠ PHÁ PHIÊN: force-stop $target rồi mở lại trên VD — MẤT phiên dẫn/chiếu đang chạy")
         sh("am force-stop $target"); Thread.sleep(700)
         CastShell.logLines(sh("am start --display $vd --windowingMode 5 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $comp --activity-clear-task 2>&1"), log)
@@ -948,6 +968,15 @@ object ClusterCast {
                             }
                             // tới đây là app THẬT SỰ đang trên cụm → nhận lại phiên nếu cờ RAM đã mất
                             if (!casting || lastCastApp != pkg) { lastDisplayId = vd; setLastCastApp(app, pkg); setCasting(true) }
+                            // ★ v0.58 NÓI THẬT KHI SIZE-COMPAT. Log SL6 chứng minh AA (và app non-resizeable khác)
+                            //   vào size-compat trên cụm → framework đóng băng densityDpi ⇒ wm density / task resize
+                            //   KHÔNG ăn. Trước đây nút DPI im lặng no-op, người dùng tưởng app hỏng. Báo đúng bệnh.
+                            DisplayParse.sizeCompatScale(sh("dumpsys window displays"), pkg)?.let { sc ->
+                                val pct = (sc * 100).toInt()
+                                log("⚠ $pkg đang SIZE-COMPAT (thu nhỏ ${pct}%): app khai KHÔNG cho đổi kích thước, " +
+                                    "framework đóng băng cấu hình → DPI/kích thước KHÔNG ăn với app này. " +
+                                    "Đây là hạn chế của chính app, không phải lỗi ClusterNav.")
+                            }
                             setDensityIfNeeded(::sh, vd, cur.dpi)
                             val (w, h) = DisplayParse.realSize(sh("dumpsys display"), vd); rememberClusterSize(w, h)
                             val how = applyBounds(::sh, vd, e, cur, w, h)

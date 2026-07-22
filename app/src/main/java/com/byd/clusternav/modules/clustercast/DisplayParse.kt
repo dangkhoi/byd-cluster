@@ -133,6 +133,29 @@ object DisplayParse {
         return null
     }
 
+    private val RE_ACT_PKG = Regex("ActivityRecord\\{\\S+ u\\d+ ([A-Za-z][A-Za-z0-9_.]*)/")
+    private val RE_SCS = Regex("mSizeCompatScale=([0-9.]+)")
+
+    /**
+     * Tỉ lệ size-compat của app [pkg] (dòng `mSizeCompatScale=` trong `dumpsys window displays`), null nếu app
+     * KHÔNG ở size-compat. Trường này chỉ in ra khi activity đang size-compat (có mSizeCompatBounds) → hiện diện
+     * = đang bị đóng băng cấu hình ⇒ **wm density / am task resize KHÔNG ăn**.
+     *
+     * Vì sao cần: log SL6 22/07 chứng minh Android Auto vào size-compat trên cụm (scale 0.727, pillarbox). Không
+     * check thì nút DPI/kích thước im lặng no-op và người dùng tưởng app hỏng. Có nó thì báo đúng bệnh.
+     * Ghép pkg theo ActivityRecord đứng TRƯỚC dòng scale (scale nằm trong block token của đúng app đó).
+     */
+    fun sizeCompatScale(windowDisplaysDump: String, pkg: String): Float? {
+        var cur: String? = null
+        for (line in windowDisplaysDump.lineSequence()) {
+            RE_ACT_PKG.find(line)?.let { cur = it.groupValues[1] }
+            if (cur == pkg) RE_SCS.find(line)?.let {
+                return it.groupValues[1].toFloatOrNull()
+            }
+        }
+        return null
+    }
+
     /**
      * id logical display của CỤM — tên chứa fission/xdja. Luôn ≥1: display 0 là màn hình giữa, KHÔNG BAO GIỜ trả 0
      * (mọi lệnh `wm density`/`wm overscan`/`am task resize` sau đó đều nhắm vào id này).
