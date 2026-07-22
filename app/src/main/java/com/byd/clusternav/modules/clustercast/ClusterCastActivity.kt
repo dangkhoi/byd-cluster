@@ -15,6 +15,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.byd.clusternav.Lang
 import com.byd.clusternav.Prefs
 import com.byd.clusternav.R
 
@@ -47,6 +48,7 @@ class ClusterCastActivity : Activity() {
 
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
+        Lang.load(this)   // nạp ngôn ngữ TRƯỚC khi dựng UI để t() trả đúng tiếng
         ClusterCast.loadPrefs(this)
         // ★ W2-5: đo kích cụm THẬT ngay khi mở màn — để nút chỉnh khung không tính theo con số đoán
         ClusterCast.measureClusterInProcess(this)
@@ -59,23 +61,23 @@ class ClusterCastActivity : Activity() {
         //   khác nhau, và một lần đoán nhầm phiên bản xe đang chạy đã làm cả buổi chẩn đoán đi sai hướng.
         //   Ảnh chụp màn hình hay log hiện trường từ giờ luôn tự mang theo version.
         val ver = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"
-        root.addView(TextView(this).apply { text = "Chiếu app lên cụm  ·  v$ver"; textSize = 20f; setTextColor(0xFF1A1F24.toInt()) })
-        root.addView(TextView(this).apply { text = "Mở app + đưa về trạng thái cần xem ở màn giữa TRƯỚC (vd Maps: chọn tuyến), rồi CHIẾU. Cụm không cảm ứng nên chỉ để NGÓ."; textSize = 13f; setTextColor(0xFF5B6470.toInt()); setPadding(0, dp(4), 0, dp(10)) })
+        root.addView(TextView(this).apply { text = Lang.t("Chiếu app lên cụm  ·  v$ver", "Cast app to cluster  ·  v$ver"); textSize = 20f; setTextColor(0xFF1A1F24.toInt()) })
+        root.addView(TextView(this).apply { text = Lang.t("Mở app + đưa về trạng thái cần xem ở màn giữa TRƯỚC (vd Maps: chọn tuyến), rồi CHIẾU. Cụm không cảm ứng nên chỉ để NGÓ.", "Open the app and set it to the state you want to view on the center screen FIRST (e.g. Maps: pick a route), then CAST. The cluster is not touch, so it is for viewing only."); textSize = 13f; setTextColor(0xFF5B6470.toInt()); setPadding(0, dp(4), 0, dp(10)) })
 
         // ── TẦNG ĐIỀU KHIỂN ──
         statusLine = TextView(this).apply { textSize = 15f; setTextColor(0xFF1A1F24.toInt()); setPadding(0, dp(2), 0, dp(8)) }
         root.addView(statusLine)
-        root.addView(primaryBtn("CHIẾU LÊN CỤM") {
+        root.addView(primaryBtn(Lang.t("CHIẾU LÊN CỤM", "CAST TO CLUSTER")) {
             logln("=== CHIẾU (v$ver) ==="); showLog()   // chuỗi chiếu mất ~10-15s: không mở log thì người thử tưởng máy treo
             ClusterCast.cast(applicationContext, "") { s -> runOnUiThread { logln(s); refresh() } }
         })
-        root.addView(warnBtn("TẮT — trả đồng hồ") {
+        root.addView(warnBtn(Lang.t("TẮT — trả đồng hồ", "STOP — restore gauges")) {
             logln("=== TẮT (v$ver) ==="); showLog()
             ClusterCast.stop(applicationContext) { s -> runOnUiThread { logln(s); refresh() } }
         })
 
         // ── TẦNG CÀI ĐẶT ──
-        root.addView(sectionTitle("Cài đặt chiếu (khi đỗ)"))
+        root.addView(sectionTitle(Lang.t("Cài đặt chiếu (khi đỗ)", "Cast settings (when parked)")))
 
         // kiểu cong / thẳng
         kmhLabel = TextView(this).apply { textSize = 13f; setTextColor(0xFF5B6470.toInt()); setPadding(0, dp(4), 0, dp(2)) }
@@ -84,46 +86,46 @@ class ClusterCastActivity : Activity() {
         root.addView(kmhLabel)
 
         // "Mượt UI head-unit": set 3 animation scale = 0.5 global (tweak hội BYD). Bật/tắt, tự áp qua dadb.
-        root.addView(outlineBtn("Mượt UI head-unit (animation 0.5) — bật/tắt") {
+        root.addView(outlineBtn(Lang.t("Mượt UI head-unit (animation 0.5) — bật/tắt", "Smooth head-unit UI (animation 0.5) — on/off")) {
             val v = !Prefs.animOpt(applicationContext); Prefs.setAnimOpt(applicationContext, v)
             ClusterCast.applyGlobalAnim(applicationContext, if (v) "0.5" else "1.0") { s -> runOnUiThread { logln(s) } }
             logln(if (v) "Mượt UI: BẬT (animation 0.5)" else "Mượt UI: TẮT (về 1.0)")
         })
 
         // ── DANH SÁCH APP (1 CỘT): tick app cho menu nút nổi · panel scale hiện INLINE ngay dưới app đã tick ──
-        root.addView(sectionTitle("App được chiếu (hiện trong menu nút nổi)"))
-        root.addView(TextView(this).apply { text = "Tick app muốn chiếu lên cụm (nên chọn app ĐỂ NGÓ: nav, nhạc, đồng hồ, video). Tick xong → nút chỉnh kích thước hiện gọn ngay dưới app đó."; textSize = 12f; setTextColor(0xFF5B6470.toInt()); setPadding(0, 0, 0, dp(6)) })
+        root.addView(sectionTitle(Lang.t("App được chiếu (hiện trong menu nút nổi)", "Apps to cast (shown in the floating-button menu)")))
+        root.addView(TextView(this).apply { text = Lang.t("Tick app muốn chiếu lên cụm (nên chọn app ĐỂ NGÓ: nav, nhạc, đồng hồ, video). Tick xong → nút chỉnh kích thước hiện gọn ngay dưới app đó.", "Tick the apps you want to cast to the cluster (pick apps for VIEWING: nav, music, clock, video). After ticking → the adjust-size button appears neatly right under that app."); textSize = 12f; setTextColor(0xFF5B6470.toInt()); setPadding(0, 0, 0, dp(6)) })
         chosen.clear(); chosen.addAll(ClusterCast.castableApps)
         val gridBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = card(); setPadding(dp(6), dp(6), dp(6), dp(6)) }
-        val loadingTv = TextView(this).apply { text = "Đang tải danh sách app…"; textSize = 14f; setTextColor(0xFF5B6470.toInt()); setPadding(dp(10), dp(12), dp(10), dp(12)) }
+        val loadingTv = TextView(this).apply { text = Lang.t("Đang tải danh sách app…", "Loading app list…"); textSize = 14f; setTextColor(0xFF5B6470.toInt()); setPadding(dp(10), dp(12), dp(10), dp(12)) }
         gridBox.addView(loadingTv)
         root.addView(gridBox)
-        root.addView(TextView(this).apply { text = "Giữ nhấn 1 app = xoay vòng chế độ: (trống) chạy đủ 3 rung, rung cuối được mở lại app → ◈ GIỮ PHIÊN, không bao giờ force-stop (chọn cho Android Auto/CarPlay/app đang dẫn) → ⊞ cho daemon ép freeform sau khi đã bám cụm"; textSize = 12f; setTextColor(0xFF5B6470.toInt()); setPadding(0, dp(4), 0, dp(2)) })
+        root.addView(TextView(this).apply { text = Lang.t("Giữ nhấn 1 app = xoay vòng chế độ: (trống) chạy đủ 3 rung, rung cuối được mở lại app → ◈ GIỮ PHIÊN, không bao giờ force-stop (chọn cho Android Auto/CarPlay/app đang dẫn) → ⊞ cho daemon ép freeform sau khi đã bám cụm", "Long-press an app = cycle modes: (empty) runs all 3 shakes, the last shake may reopen the app → ◈ KEEP SESSION, never force-stop (pick for Android Auto/CarPlay/an app that is navigating) → ⊞ let the daemon force freeform after it has attached to the cluster"); textSize = 12f; setTextColor(0xFF5B6470.toInt()); setPadding(0, dp(4), 0, dp(2)) })
         // ★ đọc app + loadLabel/loadIcon CHẠY NỀN (nhiều app → tránh giật/ANR trong onCreate), dựng block trên UI thread
         Thread {
             val apps = ClusterCast.listInstalledApps(applicationContext)
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 gridBox.removeView(loadingTv)
-                if (apps.isEmpty()) { gridBox.addView(TextView(this).apply { text = "(không đọc được danh sách app)"; textSize = 13f; setPadding(dp(10), dp(10), dp(10), dp(10)) }); return@runOnUiThread }
+                if (apps.isEmpty()) { gridBox.addView(TextView(this).apply { text = Lang.t("(không đọc được danh sách app)", "(could not read app list)"); textSize = 13f; setPadding(dp(10), dp(10), dp(10), dp(10)) }); return@runOnUiThread }
                 apps.forEach { a -> gridBox.addView(appBlock(a)) }   // 1 CỘT: mỗi app = block dọc [tile full-width] + [holder scale inline]
             }
         }.start()
 
         // ── HỒ SƠ CỤM ĐA-MODEL (T-F): auto-detect + override + export/import ──
-        root.addView(sectionTitle("Hồ sơ cụm (đa-model — chia sẻ nhóm)"))
+        root.addView(sectionTitle(Lang.t("Hồ sơ cụm (đa-model — chia sẻ nhóm)", "Cluster profile (multi-model — share with group)")))
         profileLabel = TextView(this).apply { textSize = 12f; setTextColor(0xFF5B6470.toInt()); setPadding(0, 0, 0, dp(4)) }
         root.addView(profileLabel)
-        root.addView(outlineBtn("Xuất hồ sơ (copy để chia sẻ)") {
+        root.addView(outlineBtn(Lang.t("Xuất hồ sơ (copy để chia sẻ)", "Export profile (copy to share)")) {
             val p = ClusterProfile.resolve(this); logln("Hồ sơ hiện tại (copy dòng dưới để share):"); logln(p.export()); showLog()
         })
         profileEdit = EditText(this).apply {
-            hint = "dán chuỗi hồ sơ để nhập (id;diLink;W;H;cast;tear;hint)"; textSize = 13f
+            hint = Lang.t("dán chuỗi hồ sơ để nhập (id;diLink;W;H;cast;tear;hint)", "paste a profile string to import (id;diLink;W;H;cast;tear;hint)"); textSize = 13f
             setBackgroundColor(Color.WHITE); setPadding(dp(10), dp(10), dp(10), dp(10))
         }
         root.addView(profileEdit, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
         val profRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        profRow.addView(smallBtn("Nhập & áp hồ sơ") {
+        profRow.addView(smallBtn(Lang.t("Nhập & áp hồ sơ", "Import & apply profile")) {
             // ★ v0.36: ô TRỐNG không còn báo "sai định dạng" (dọa người dùng vô cớ) — điền sẵn hồ sơ hiện tại để
             //   thấy mẫu. Và MỌI nhánh đều showLog(), vì panel log mặc định ẩn → trước đây bấm xong tưởng máy đơ.
             val raw = profileEdit?.text?.toString().orEmpty()
@@ -138,25 +140,25 @@ class ClusterCastActivity : Activity() {
             else { ClusterProfile.saveOverride(applicationContext, p); logln("✅ đã áp hồ sơ override: ${p.summary()}"); refresh() }
             showLog()
         }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
-        profRow.addView(smallBtn("Về auto-detect") {
+        profRow.addView(smallBtn(Lang.t("Về auto-detect", "Back to auto-detect")) {
             ClusterProfile.clearOverride(applicationContext); logln("đã xoá override — về auto-detect theo model xe"); showLog(); refresh()
         }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
         root.addView(profRow)
 
         // ── CHẨN ĐOÁN (tách hẳn ra màn riêng) ──
-        root.addView(outlineBtn("🩺 Chẩn đoán · lấy log gửi dev") {
+        root.addView(outlineBtn(Lang.t("🩺 Chẩn đoán · lấy log gửi dev", "🩺 Diagnostics · grab log for devs")) {
             startActivity(android.content.Intent(this, DiagActivity::class.java))
         })
 
         // ── LOG (gập) ──
-        val lb = outlineBtn("Chi tiết kỹ thuật ▾") {}
+        val lb = outlineBtn(Lang.t("Chi tiết kỹ thuật ▾", "Technical details ▾")) {}
         logBtn = lb; root.addView(lb)
         log = TextView(this).apply {
             textSize = 12f; setTextColor(Color.parseColor("#1A1F24")); setBackgroundColor(Color.parseColor("#F1EFE8"))
             setPadding(dp(12), dp(12), dp(12), dp(12)); setTextIsSelectable(true); visibility = View.GONE
             movementMethod = android.text.method.ScrollingMovementMethod()   // hộp log cao cố định 240dp → phải tự cuộn được
         }
-        lb.setOnClickListener { log.visibility = if (log.visibility == View.GONE) View.VISIBLE else View.GONE; lb.text = if (log.visibility == View.VISIBLE) "Chi tiết kỹ thuật ▴" else "Chi tiết kỹ thuật ▾" }
+        lb.setOnClickListener { log.visibility = if (log.visibility == View.GONE) View.VISIBLE else View.GONE; lb.text = if (log.visibility == View.VISIBLE) Lang.t("Chi tiết kỹ thuật ▴", "Technical details ▴") else Lang.t("Chi tiết kỹ thuật ▾", "Technical details ▾") }
         root.addView(log, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(240)).apply { topMargin = dp(6) })
 
         refresh()
@@ -219,7 +221,7 @@ class ClusterCastActivity : Activity() {
             }
             val live = ClusterCast.casting && ClusterCast.lastCastApp == a.pkg
             lbl.setTextColor(if (live) 0xFF1B7A34.toInt() else if (on) 0xFF185FA5.toInt() else 0xFF1A1F24.toInt())
-            lbl.text = (if (live) "● ĐANG CHIẾU · " else if (on) "✓ " else "") + marker + a.label
+            lbl.text = (if (live) Lang.t("● ĐANG CHIẾU · ", "● NOW CASTING · ") else if (on) "✓ " else "") + marker + a.label
         }
         paint()
         repaintTiles.add { paint() }
@@ -293,8 +295,8 @@ class ClusterCastActivity : Activity() {
         col.addView(liveNote)
         fun paintLive() {
             val live = ClusterCast.casting && ClusterCast.lastCastApp == pkg
-            liveNote.text = if (live) "● Đang chiếu app này — nút bên dưới áp thẳng lên cụm"
-                else "Chưa chiếu app này — chỉnh ở đây chỉ LƯU LẠI, bấm \"CHIẾU APP NÀY\" để thấy trên cụm"
+            liveNote.text = if (live) Lang.t("● Đang chiếu app này — nút bên dưới áp thẳng lên cụm", "● Casting this app — the buttons below apply straight to the cluster")
+                else Lang.t("Chưa chiếu app này — chỉnh ở đây chỉ LƯU LẠI, bấm \"CHIẾU APP NÀY\" để thấy trên cụm", "Not casting this app — changes here are only SAVED, press \"CAST THIS APP\" to see it on the cluster")
             liveNote.setTextColor(if (live) 0xFF1B7A34.toInt() else 0xFFB25000.toInt())
         }
         paintLive(); repaintTiles.add { paintLive(); info.text = scaleSummary(pkg) }
@@ -302,8 +304,8 @@ class ClusterCastActivity : Activity() {
         val autoBtn = outlineBtn("") {}
         fun paintAuto() {
             val on = ClusterCast.isAutoCast(pkg)
-            autoBtn.text = if (on) "⏱ ĐANG tự chiếu app này khi nổ máy — chạm để tắt"
-                           else "⏱ Tự chiếu app này khi nổ máy"
+            autoBtn.text = if (on) Lang.t("⏱ ĐANG tự chiếu app này khi nổ máy — chạm để tắt", "⏱ NOW auto-casting this app on engine start — tap to turn off")
+                           else Lang.t("⏱ Tự chiếu app này khi nổ máy", "⏱ Auto-cast this app on engine start")
             autoBtn.setTextColor(if (on) 0xFF1B7A34.toInt() else 0xFF1565C0.toInt())
         }
         autoBtn.setOnClickListener {
@@ -317,7 +319,7 @@ class ClusterCastActivity : Activity() {
         }
         paintAuto(); repaintTiles.add { paintAuto() }
         col.addView(autoBtn.apply { minHeight = dp(44); textSize = 13f })
-        col.addView(outlineBtn("🩺 Chụp chẩn đoán app này (không cần WiFi)") {
+        col.addView(outlineBtn(Lang.t("🩺 Chụp chẩn đoán app này (không cần WiFi)", "🩺 Capture diagnostics for this app (no WiFi needed)")) {
             // ★ Chạy được NGAY CẢ KHI đang cắm CarPlay/AA (lúc đó xe tắt WiFi, adb ngoài vào không được):
             //   app nối dadb qua localhost, loopback trong máy, không đụng mạng.
             logln("🩺 đang chụp chẩn đoán ${ClusterCast.labelOf(this, pkg)}…"); showLog()
@@ -327,11 +329,11 @@ class ClusterCastActivity : Activity() {
                 val (path, sum) = ClusterDiag.capture(applicationContext, pkg, vd, stamp)
                 runOnUiThread {
                     logln(sum); logln("→ đã lưu: $path")
-                    android.widget.Toast.makeText(this, "Đã lưu chẩn đoán:\n$path", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(this, Lang.t("Đã lưu chẩn đoán:\n$path", "Diagnostics saved:\n$path"), android.widget.Toast.LENGTH_LONG).show()
                 }
             }.start()
         }.apply { minHeight = dp(44); textSize = 13f })
-        col.addView(primaryBtn("CHIẾU APP NÀY LÊN CỤM") {
+        col.addView(primaryBtn(Lang.t("CHIẾU APP NÀY LÊN CỤM", "CAST THIS APP TO CLUSTER")) {
             logln("=== CHIẾU ${ClusterCast.labelOf(this, pkg)} (v${appVersion()}) ==="); showLog()
             ClusterCast.cast(applicationContext, pkg) { m -> runOnUiThread { logln(m); refresh() } }
         }.apply { minHeight = dp(48); textSize = 14f })
@@ -351,18 +353,18 @@ class ClusterCastActivity : Activity() {
         row.addView(ctrlGroup(clusterCaption(), listOf(
             "100%" to { ClusterCast.setScale(applicationContext, pkg, AppScale(dpi = ClusterCast.scaleOf(pkg).dpi)); after() },
             "90%" to { preset(90) }, "80%" to { preset(80) }, "70%" to { preset(70) })), groupLp(4f))
-        row.addView(ctrlGroup("Kích thước", listOf(
-            "Hẹp" to { resize(-2 * S, 0) }, "Rộng" to { resize(2 * S, 0) },
-            "Thấp" to { resize(0, -2 * S) }, "Cao" to { resize(0, 2 * S) })), groupLp(4f))
-        row.addView(ctrlGroup("Vị trí", listOf(
+        row.addView(ctrlGroup(Lang.t("Kích thước", "Size"), listOf(
+            Lang.t("Hẹp", "Narrow") to { resize(-2 * S, 0) }, Lang.t("Rộng", "Wide") to { resize(2 * S, 0) },
+            Lang.t("Thấp", "Short") to { resize(0, -2 * S) }, Lang.t("Cao", "Tall") to { resize(0, 2 * S) })), groupLp(4f))
+        row.addView(ctrlGroup(Lang.t("Vị trí", "Position"), listOf(
             "◀" to { move(-S, 0) }, "▲" to { move(0, -S) },
             "▼" to { move(0, S) }, "▶" to { move(S, 0) })), groupLp(4f))
         // nhãn theo Ý ĐỊNH thay vì số kỹ thuật — "－/＋" trên một đại lượng mà tài liệu từng ghi ngược chiều
         // là công thức chắc chắn gây nhầm.
-        row.addView(ctrlGroup("Chữ", listOf(
-            "nhỏ" to { dpi(-AppScale.STEP_DPI) }, "to" to { dpi(AppScale.STEP_DPI) })), groupLp(2f))
+        row.addView(ctrlGroup(Lang.t("Chữ", "Text"), listOf(
+            Lang.t("nhỏ", "small") to { dpi(-AppScale.STEP_DPI) }, Lang.t("to", "large") to { dpi(AppScale.STEP_DPI) })), groupLp(2f))
         // ★ W2-6: đời xe không đổi kiểu được thì ẨN hẳn nút — thà không có còn hơn có mà bấm không ăn.
-        if (ClusterProfile.resolve(this).supportsStyle) row.addView(ctrlGroup("Kiểu", listOf(
+        if (ClusterProfile.resolve(this).supportsStyle) row.addView(ctrlGroup(Lang.t("Kiểu", "Style"), listOf(
             (if (ClusterCast.isRectProfile(pkg)) "▭" else "◠") to {
                 ClusterCast.setRectProfile(applicationContext, pkg, !ClusterCast.isRectProfile(pkg))
                 info.text = scaleSummary(pkg)
@@ -370,7 +372,7 @@ class ClusterCastActivity : Activity() {
                     if (ClusterCast.isRectProfile(pkg)) "▭ THẲNG (ảnh full, mất km/h)" else "◠ CONG (giữ km/h gốc)")
                 showLog()
             })), groupLp(1.4f))
-        row.addView(ctrlGroup("Khôi phục", listOf(
+        row.addView(ctrlGroup(Lang.t("Khôi phục", "Reset"), listOf(
             "↺" to { ClusterCast.setScale(applicationContext, pkg, AppScale()); after() })), groupLp(1.4f))
         col.addView(row)
         return col
@@ -396,7 +398,7 @@ class ClusterCastActivity : Activity() {
         val (w, h) = clusterRef()
         val g = gcd(w, h)
         val measured = ClusterCast.lastClusterW > 0
-        return "Khung · ${w}×$h (${w / g}:${h / g})" + if (measured) "" else " — chưa đo"
+        return Lang.t("Khung · ${w}×$h (${w / g}:${h / g})", "Frame · ${w}×$h (${w / g}:${h / g})") + if (measured) "" else Lang.t(" — chưa đo", " — not measured")
     }
     private fun gcd(a: Int, b: Int): Int = if (b == 0) a.coerceAtLeast(1) else gcd(b, a % b)
 
@@ -408,19 +410,19 @@ class ClusterCastActivity : Activity() {
 
     private fun scaleSummary(pkg: String): String {
         val s = ClusterCast.scaleOf(pkg)
-        val kieu = if (ClusterCast.isRectProfile(pkg)) "▭ thẳng" else "◠ cong (giữ km/h)"
-        return "Đã lưu — " + (if (s.isAuto) "kích thước auto (full cụm) · DPI ${s.dpi}"
-        else "khung ${s.rectR - s.rectL}×${s.rectB - s.rectT} tại (${s.rectL},${s.rectT}) · DPI ${s.dpi}") + " · $kieu"
+        val kieu = if (ClusterCast.isRectProfile(pkg)) Lang.t("▭ thẳng", "▭ flat") else Lang.t("◠ cong (giữ km/h)", "◠ curved (keep km/h)")
+        return Lang.t("Đã lưu — ", "Saved — ") + (if (s.isAuto) Lang.t("kích thước auto (full cụm) · DPI ${s.dpi}", "auto size (full cluster) · DPI ${s.dpi}")
+        else Lang.t("khung ${s.rectR - s.rectL}×${s.rectB - s.rectT} tại (${s.rectL},${s.rectT}) · DPI ${s.dpi}", "frame ${s.rectR - s.rectL}×${s.rectB - s.rectT} at (${s.rectL},${s.rectT}) · DPI ${s.dpi}")) + " · $kieu"
     }
 
     private fun refresh() {
         repaintTiles.forEach { runCatching(it) }
         val casting = ClusterCast.casting
         val app = ClusterCast.lastCastApp
-        statusLine.text = "● " + if (casting) "Đang chiếu: ${if (app.isBlank()) "app" else ClusterCast.labelOf(this, app)}" else "Chưa chiếu"
+        statusLine.text = "● " + if (casting) Lang.t("Đang chiếu: ${if (app.isBlank()) "app" else ClusterCast.labelOf(this, app)}", "Casting: ${if (app.isBlank()) "app" else ClusterCast.labelOf(this, app)}") else Lang.t("Chưa chiếu", "Not casting")
         statusLine.setTextColor(if (casting) 0xFF2E7D32.toInt() else 0xFF5B6470.toInt())
-        kmhLabel.text = "Kiểu cụm đặt riêng cho từng app — xem nút \"Kiểu\" trong phần chỉnh kích thước của app đó."
-        profileLabel?.text = "Hồ sơ: " + ClusterProfile.resolve(this).summary()
+        kmhLabel.text = Lang.t("Kiểu cụm đặt riêng cho từng app — xem nút \"Kiểu\" trong phần chỉnh kích thước của app đó.", "Cluster style is set per app — see the \"Style\" button in that app's size-adjust section.")
+        profileLabel?.text = Lang.t("Hồ sơ: ", "Profile: ") + ClusterProfile.resolve(this).summary()
     }
 
     private fun appVersion(): String =
@@ -440,7 +442,7 @@ class ClusterCastActivity : Activity() {
     private fun showLog() {
         if (!::log.isInitialized) return
         log.visibility = View.VISIBLE
-        logBtn?.text = "Chi tiết kỹ thuật ▴"
+        logBtn?.text = Lang.t("Chi tiết kỹ thuật ▴", "Technical details ▴")
     }
 
     // ── helpers dựng nút (dùng drawable/màu app cho nhất quán) ──
