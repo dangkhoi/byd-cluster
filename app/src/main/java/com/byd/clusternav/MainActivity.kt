@@ -108,7 +108,7 @@ class MainActivity : Activity() {
                 openCastSettings()
             } else {
                 toast("Đang chiếu… (nếu hiện popup Allow USB debugging thì bấm Allow)")
-                ClusterCast.cast(applicationContext, "", castLog)
+                ClusterCast.cast(applicationContext, "", log = castLog)
             }
             updateCastUI()
         }

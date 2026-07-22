@@ -572,6 +572,12 @@ class AutotestActivity : Activity() {
 
             out("")
             out("----- BƠM frame lên cụm (2 đường, NHÌN CỤM xem path nào render) -----")
+            // ★★ W1-1 (senior review 2026-07-21) — DỌN BẮT BUỘC.
+            //   `ClusterBroadcaster.emit` bật heartbeat gửi lại mỗi 400ms suốt 3 PHÚT (STALE_MS=180000).
+            //   Nhánh autotest cũ KHÔNG hề gọi stop/clearNavFrame → sau khi chạy test, cụm đồng hồ mà tài xế
+            //   đang nhìn còn treo một chỉ dẫn rẽ BỊA ("rẽ phải, 250m, Nguyễn Huệ") suốt 3 phút, sống cả sau khi
+            //   rút máy tính. Đây là chỉ dẫn giao thông giả trên mặt đồng hồ — phải dọn trong `finally`.
+            try {
             runCatching {
                 ClusterBroadcaster.emit(applicationContext, NavState(
                     active = true, distance = "250 m", road = "Nguyễn Huệ",
@@ -585,6 +591,15 @@ class AutotestActivity : Activity() {
                 out("(2) IN-PROC (KHÔNG dadb) → cụm nên đổi thành: trái + 300m + 'InProc'\n    rc: $rc")
                 out("    → CỤM đổi sang 'InProc 300m' = in-proc GHI ĐƯỢC (bỏ dadb!). Vẫn 'Nguyễn Huệ' = in-proc không render.")
             }.onFailure { out("(2) in-proc lỗi: ${it.javaClass.simpleName}: ${it.message}") }
+            } finally {
+                // để mắt người test kịp nhìn frame rồi mới xoá — nhưng XOÁ LÀ BẮT BUỘC, kể cả khi ở trên ném lỗi.
+                Thread.sleep(CLUSTER_FRAME_VIEW_MS)
+                runCatching { ClusterBroadcaster.stop(applicationContext) }
+                    .onFailure { out("⚠ dọn broadcast lỗi: ${it.message}") }
+                runCatching { BydHal.clearNavFrame(applicationContext) }
+                    .onFailure { out("⚠ dọn nav-frame lỗi: ${it.message}") }
+                out("(dọn) đã tắt heartbeat + xoá frame khỏi cụm — không để chỉ dẫn giả nằm lại")
+            }
 
             val path = runCatching {
                 File(getExternalFilesDir(null), "autotest-report.txt").apply { writeText(sb.toString()) }.absolutePath
@@ -594,6 +609,10 @@ class AutotestActivity : Activity() {
             out("===== DONE ===== report: $path")
         }.start()
     }
+
+
+    /** Chờ người test kịp NHÌN frame trên cụm trước khi dọn. Dọn vẫn là bắt buộc — xem W1-1. */
+    private val CLUSTER_FRAME_VIEW_MS = 5000L
 
     private fun notifConnected(): Boolean {
         val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false

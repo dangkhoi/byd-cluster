@@ -30,6 +30,9 @@ dr_logs/
 *.log
 docs/diagnostics/carlog/
 docs/diagnostics/carlog2/
+# Chặn MỌI thư mục dump xe theo ngày (chứa IP nội bộ, SSID/BSSID WiFi, kê khai app) — chỉ 2 tên cứng
+# ở trên không bắt được thư mục có ngày, nên carlog-2026-07-21/ từng lọt. Whitelist file phân tích nếu cần.
+docs/diagnostics/carlog-*/
 docs/diagnostics/log-nav-debug.txt
 
 # ─── Không thuộc ClusterNav (PoSound / tooling / audio / bên thứ 3) ──
