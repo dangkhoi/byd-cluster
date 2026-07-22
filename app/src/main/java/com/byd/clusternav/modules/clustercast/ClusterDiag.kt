@@ -34,6 +34,10 @@ object ClusterDiag {
         "SIZE-COMPAT (window)" to "dumpsys window windows | grep -iE 'sizeCompat|mCompatDisplayInsets|mOverrideConfig'",
         "DENSITY VD $vd" to "wm density -d $vd",
         "SIZE VD $vd" to "wm size -d $vd",
+        // ★ v0.58: hai cờ QUYẾT ĐỊNH size-compat (AOSP r47 ActivityRecord:2834 shouldUseSizeCompatMode:
+        //   `&& !mForceResizableActivities`). Trước đây diag không chụp → phải SUY RA cờ tắt từ việc có
+        //   size-compat. Đọc thẳng thì chốt được ngay: AA size-compat trên cụm ⇔ force_resizable đang tắt.
+        "CỜ FREEFORM/RESIZABLE" to "echo force_resizable=$(settings get global force_resizable_activities) enable_freeform=$(settings get global enable_freeform_support)",
     )
 
     /**
@@ -113,9 +117,14 @@ object ClusterDiag {
                 // size-compat: hỏi cả hai nguồn; im lặng ở CẢ HAI mới dám nói "không có"
                 val scA = sh("dumpsys activity activities | grep -iE 'sizeCompat|mCompatDisplayInsets' | head -5")
                 val scW = sh("dumpsys window windows | grep -iE 'sizeCompat|mCompatDisplayInsets' | head -5")
+                // mSizeCompatScale/Bounds nằm ở dumpsys window displays (block token của app) — grep riêng để
+                //   in ĐÚNG con số (vd scale 0.727 + pillarbox), thay vì chỉ "có dấu hiệu".
+                val scD = sh("dumpsys window displays | grep -iE 'mSizeCompatScale|mSizeCompatBounds' | head -3")
+                val scAll = listOf(scA, scW, scD).filter { it.isNotBlank() }
                 summary.append(when {
-                    scA.isBlank() && scW.isBlank() -> "→ không thấy size-compat ở CẢ activity lẫn window\n"
-                    else -> "→ CÓ dấu hiệu size-compat (DPI sẽ không ăn):\n$scA\n$scW\n"
+                    scAll.isEmpty() -> "→ không thấy size-compat (DPI sẽ ăn bình thường)\n"
+                    else -> "→ CÓ size-compat — DPI sẽ KHÔNG ăn, app bị đóng băng cấu hình + thu nhỏ:\n" +
+                        scAll.joinToString("\n") + "\n   (nguyên nhân: app non-resizeable + force_resizable tắt — xem mục CỜ FREEFORM/RESIZABLE)\n"
                 })
                 // ★ cảnh báo trạng thái hỏng — thứ đắt nhất mà bộ log cũ không hề nói
                 // soi MỌI id cụm, không chỉ cái đầu — đúng tình huống VD tái tạo mà WmParse sinh ra để bắt
