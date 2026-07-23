@@ -1,10 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Đọc notification do user cấp trong Settings. WRITE_EXTERNAL_STORAGE chỉ để THU THẬP (lưu icon/HUD
-         vào Download cho hội) trên Android 10 (legacy storage); user tự cấp khi vào màn Thu thập. -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
-
     <!-- Dead-reckoning vá GPS trong hầm: đọc trạng thái GNSS thật (số vệ tinh) + bơm mock-location cho GMaps.
          ACCESS_MOCK_LOCATION không enforce runtime; phải chọn app làm "mock location app" trong Developer Options
          (no-root). FINE_LOCATION cấp runtime cho registerGnssStatusCallback. -->
@@ -33,7 +29,6 @@
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
-        android:requestLegacyExternalStorage="true"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
@@ -68,31 +63,11 @@
             android:configChanges="orientation|screenSize|screenLayout|density|smallestScreenSize|keyboardHidden"
             android:theme="@style/ClusterTheme" />
 
-        <!-- Màn thu thập dữ liệu cho hội (icon mũi tên + bảng HUD). -->
-        <activity
-            android:name=".CollectActivity"
-            android:exported="false"
-            android:label="Thu thập (hội)" />
-
         <!-- Host CHUNG cho mọi ClusterModule (thí nghiệm). 1 dòng VĨNH VIỄN — thêm/xoá module không đụng đây. -->
         <activity
             android:name=".modules.ModuleHost"
             android:exported="false"
             android:label="Module (thí nghiệm)" />
-
-        <!-- AUTOMATION ADB: chạy self-test mọi module + recon HAL headless. exported=true BẮT BUỘC — launch DUY NHẤT
-             qua `adb shell am start` (uid shell 2000), KHÔNG có launch in-process. BYD DiLink3 ENFORCE export-check
-             cho shell-uid → exported=false bị "Permission Denial: not exported from uid" (VERIFY TRÊN XE 2026-07-20). -->
-        <!-- ★ W2-9: activity này lái HAL cụm + provider vị trí hệ thống. exported=true là bắt buộc để
-             `adb shell am start` gọi được, nhưng KHÔNG được để app bất kỳ nào trên xe cũng gọi.
-             Khoá bằng permission mức signature: shell (uid 2000) vẫn start được vì nó có quyền hệ thống,
-             còn app bên thứ ba thì bị chặn. -->
-        <activity
-            android:name=".modules.AutotestActivity"
-            android:exported="true"
-            android:permission="android.permission.WRITE_SECURE_SETTINGS"
-            android:label="Autotest (ADB)" />
-
 
         <!-- MAP LÊN CLUSTER (projection qua dadb). exported=false: chống app khác kích projection (chiếm cluster) —
              nút trong MainActivity mở qua explicit intent; adb shell vẫn 'am start' được activity non-exported. -->
@@ -165,38 +140,6 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/nav_accessibility_config" />
         </service>
-
-        <!-- ══════════ MÁY DÒ DẪN ĐƯỜNG (modules/navprobe) — KHẢO SÁT, xoá được cả cụm ══════════
-             Ba component RIÊNG, không đụng gì tới listener/accessibility đang chạy thật.
-             Gỡ máy dò = xoá đúng khối này + thư mục modules/navprobe/ + res/xml/navprobe_accessibility.xml -->
-        <activity
-            android:name=".modules.navprobe.NavProbeActivity"
-            android:exported="true"
-            android:label="Máy dò dẫn đường" />
-
-        <service
-            android:name=".modules.navprobe.NavProbeNotificationListener"
-            android:exported="false"
-            android:label="ClusterNav · Máy dò (thông báo)"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
-        <service
-            android:name=".modules.navprobe.NavProbeAccessibility"
-            android:exported="false"
-            android:label="ClusterNav · Máy dò (màn hình)"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/navprobe_accessibility" />
-        </service>
-        <!-- ══════════ hết MÁY DÒ ══════════ -->
 
     </application>
 </manifest>
