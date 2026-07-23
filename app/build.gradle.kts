@@ -19,8 +19,8 @@ android {
         applicationId = "com.byd.clusternav"
         minSdk = 29
         targetSdk = 34
-        versionCode = 60
-        versionName = "0.60"
+        versionCode = 63
+        versionName = "0.63"
         manifestPlaceholders["appLabel"] = "ClusterNav"   // ★ nhãn launcher — bản debug đổi thành "ClusterNav DEBUG"
     }
 
