@@ -710,7 +710,7 @@ object ClusterCast {
      *
      * @return chuỗi mô tả để hiện cho người dùng, hoặc null nếu lành.
      */
-    private fun divergenceOn(sh: (String) -> String, vd: Int): String? {
+    internal fun divergenceOn(sh: (String) -> String, vd: Int): String? {
         if (vd < 1) return null
         // ★ ĐÒI HAI LẦN LẤY MẪU LIÊN TIẾP. Hai lệnh dumpsys không nguyên tử: stack bị gỡ đúng khe giữa hai lệnh
         //   cũng trông y như mồ côi. Đây là CỔNG CẤM THAO TÁC nên một mẫu là không đủ — cùng mẫu WATCHDOG_MISSES.
@@ -764,7 +764,7 @@ object ClusterCast {
         }
     }
 
-    private fun guardSinksOffVd(sh: (String) -> String, vd: Int, keepPkg: String, log: (String) -> Unit): Boolean {
+    internal fun guardSinksOffVd(sh: (String) -> String, vd: Int, keepPkg: String, log: (String) -> Unit): Boolean {
         if (vd < 1) return true
         val sinks = phoneProjectionSinksOn(StackParse.parse(sh("am stack list")), vd).filter { it.pkg != keepPkg }
         if (sinks.isEmpty()) return true
@@ -911,7 +911,7 @@ object ClusterCast {
      * rect auto (user chưa cấu hình) → fallback dùng khung mỹ thuật legacy [overscanArg] (giữ hành vi cũ).
      * @return mô tả đường đã áp — để log TRUNG THỰC (trước đây log "đã áp scale" cả khi resize bị ném lỗi).
      */
-    private fun applyBounds(sh: (String) -> String, vd: Int, e: StackEntry?, scale: AppScale, w: Int, h: Int): String {
+    internal fun applyBounds(sh: (String) -> String, vd: Int, e: StackEntry?, scale: AppScale, w: Int, h: Int): String {
         // ★★ GUARD P0 (v0.36): TUYỆT ĐỐI không `am task resize` một task KHÔNG nằm trên VD.
         //   Trước đây taskId lấy từ `am stack list` toàn cục, không kiểm display → khi app không bám VD mà cờ
         //   casting vẫn bật, nút chỉnh size bắn `am task resize <task ở display 0>` với toạ độ cụm 1920×720:
