@@ -84,10 +84,13 @@ dependencies {
 //   • ClusterNav-release.apk = để CHIA SẺ (chữ ký release cố định)
 // → Chỉ cần nhìn byd/apks/, bỏ qua app/build/outputs.
 tasks.register<Copy>("collectApks") {
-    val apksDir = rootProject.projectDir.parentFile.resolve("apks")
-    into(apksDir)
-    from(layout.buildDirectory.dir("outputs/apk/debug"))   { include("*.apk"); rename { "ClusterNav-debug.apk" } }
-    from(layout.buildDirectory.dir("outputs/apk/release")) { include("*.apk"); rename { "ClusterNav-release.apk" } }
-    doLast { println("★ APK đã gôm về: ${apksDir.absolutePath}") }
+    // ★ build APK VÀO TRONG repo: apk/ (nơi .gitignore track `apk/ClusterNav-*-release.apk` cho UpdateChecker/README),
+    //   KHÔNG ra sibling byd/apks/. Tên CÓ VERSION để khớp rule track + phân biệt bản.
+    val apkDir = rootProject.projectDir.resolve("apk")
+    val ver = android.defaultConfig.versionName ?: "0"
+    into(apkDir)
+    from(layout.buildDirectory.dir("outputs/apk/debug"))   { include("*.apk"); rename { "ClusterNav-$ver-debug.apk" } }
+    from(layout.buildDirectory.dir("outputs/apk/release")) { include("*.apk"); rename { "ClusterNav-$ver-release.apk" } }
+    doLast { println("★ APK → ${apkDir.absolutePath}") }
 }
 tasks.matching { it.name == "assembleDebug" || it.name == "assembleRelease" }.configureEach { finalizedBy("collectApks") }
