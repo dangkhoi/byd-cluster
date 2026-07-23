@@ -188,7 +188,7 @@ class FloatingBubbleService : Service() {
         runCatching { wmm.addView(backdrop, blp); menu = backdrop }
     }
 
-    /** 1 ô app trong bảng 2 cột: ICON + tên — nhấn = chiếu (warm switch nếu đang chiếu). Ô đang chiếu tô nền xanh + ✓. */
+    /** 1 ô app trong bảng 2 cột: ICON + tên — nhấn = chiếu (cold re-cast nếu đang chiếu). Ô đang chiếu tô nền xanh + ✓. */
     private fun appTile(pkg: String, active: Boolean): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; minimumHeight = dp(78)
         background = GradientDrawable().apply {
