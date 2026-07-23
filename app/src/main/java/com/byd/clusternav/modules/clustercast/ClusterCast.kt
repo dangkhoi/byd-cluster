@@ -207,6 +207,18 @@ object ClusterCast {
         return PROJECTION_HINTS.any { hay.contains(it) }
     }
 
+    /**
+     * ★ v0.60 TEARDOWN-GUARD (P0) — mọi stack CHIẾU-ĐIỆN-THOẠI (CarPlay/Android Auto) đang bám VD [vd].
+     * Dùng để BÊ RA display 0 TRƯỚC khi huỷ/tái tạo VD (cmd16 re-project · teardownSeq · evictVd). Gốc lỗi
+     * hiện trường 22/07 (diag-0722-172848): AOSP 10 release ActivityDisplay của VD khi sink CÒN BÁM →
+     * `mDisplayContent=null` → cửa sổ mồ côi (WM thấy, AM không) → chỉ TẮT MÁY XE mới sạch.
+     * PURE (chỉ đọc [entries]) → unit-test off-device được (SinkGuardTest).
+     */
+    fun phoneProjectionSinksOn(entries: List<StackEntry>, vd: Int): List<StackEntry> {
+        if (vd < 1) return emptyList()
+        return entries.filter { it.displayId == vd && isPhoneProjection(it.comp, it.pkg) }.distinctBy { it.stackId }
+    }
+
     /** true = CẤM rung R2 (force-stop + mở lại) cho app này → giữ phiên bằng mọi giá, thà không lên cụm. */
     fun setKeepSession(ctx: Context, pkg: String, on: Boolean) { keepSessionApps = if (on) keepSessionApps + pkg else keepSessionApps - pkg; save(ctx) }
     fun isKeepSession(pkg: String) = pkg in keepSessionApps
@@ -358,6 +370,7 @@ object ClusterCast {
     fun cast(ctx: Context, pkg: String, allowDestructive: Boolean = true, log: (String) -> Unit) {
         if (!takeBusy(log)) { log("⏳ đang chạy 1 thao tác cụm — đợi xong"); return }
         val app = ctx.applicationContext
+        val log = castLogger(app, "cast", log)   // ★ v0.60 RT1.6: tee ra file để chẩn đoán khi cắm CP/AA (WiFi tắt)
         vdExec.execute {
             try {
                 runCatching {
@@ -448,7 +461,14 @@ object ClusterCast {
                             }
                             // ADAS-fix: re-issue chiếu (16) để xoá mảng đen — warm switch cũ bỏ qua → ADAS hiện lại (RE DashCast).
                             // 16 có thể tái tạo VD → dò lại id trước khi đặt app.
-                            sh(wp.svcCall(CMD_PROJECT)); Thread.sleep(1000)
+                            // ★ v0.60 TEARDOWN-GUARD (P0): cmd16 TÁI TẠO VD → nếu sink CP/AA (≠ app đang chuyển tới)
+                            //   còn bám VD lúc này sẽ thành cửa sổ mồ côi (phải reboot). Bê sink ra TRƯỚC. Bê hụt →
+                            //   BỎ re-project (fail-safe); placeAppOnVd/evictVd vẫn chạy tiếp để dọn nốt.
+                            if (guardSinksOffVd({ c -> sh(c) }, curVd, target, log))
+                                sh(wp.svcCall(CMD_PROJECT))
+                            else
+                                log("  ↩ bỏ qua re-project cmd16 (guard chặn — không tạo cửa sổ mồ côi)")
+                            Thread.sleep(1000)
                             val useVd = DisplayParse.clusterDisplayId(sh("dumpsys display | grep -iE 'Display [0-9]+:|fission|xdja'")).let { if (it >= 1) it else curVd }
                             // ★ cmd 16 có thể TÁI TẠO VD → id mới. Ghi lastDisplayId NGAY, bất kể đặt app thành công
                             //   hay không: stop()/rollback() và nút size đều cần id ĐANG SỐNG, không phải id cũ đã chết.
@@ -458,6 +478,7 @@ object ClusterCast {
                                 warmRestoreStreak = 0
                                 setLastCastApp(app, target); setCasting(true)
                                 log("✅ Đổi sang ${labelOf(app, target)} (warm, display $useVd)")
+                                divergenceOn({ c -> sh(c) }, useVd)?.let { log("  ⚠ post-cast: $it") }
                             } else {
                                 // ★ KHÔNG ghi đè lastCastApp bằng app KHÔNG bám được → nút size/bong bóng vẫn trỏ đúng app cũ.
                                 log("⚠ ${labelOf(app, target)} không bám được VD")
@@ -478,6 +499,11 @@ object ClusterCast {
                                     log("     (app cũ vẫn ở màn giữa; bấm CHIẾU lại khi cần)")
                                     runCatching {
                                         val rcp = activeProfile(app)
+                                        // ★ v0.60 TEARDOWN-GUARD (P0): teardown KHẨN cũng HUỶ VD (cmd 18) → bê MỌI sink CP/AA
+                                        //   khỏi VD về display 0 TRƯỚC (giữ phiên, chống cửa sổ mồ côi). Đây là điểm huỷ VD thứ 3
+                                        //   trong nhánh ấm, trước đây bị BỎ SÓT (stop() bê qua evictableOnVd, rollback() qua guard,
+                                        //   riêng đường này không có). Đường thoát hiểm → best-effort như rollback(): bê hụt vẫn trả đồng hồ.
+                                        if (useVd >= 1) guardSinksOffVd({ c -> sh(c) }, useVd, "", log)
                                         rcp.teardownSeq.forEachIndexed { i, cmd -> if (i > 0) Thread.sleep(800); sh(rcp.svcCall(cmd)) }
                                     }
                                     if (useVd >= 1) CastShell.resetDisplayAll({ c -> sh(c) }, useVd)
@@ -557,6 +583,9 @@ object ClusterCast {
                                 setLastCastApp(app, target); setCasting(true)
                                 autoDiag(app, target, vd, log)
                                 log("✅ Xong — ${labelOf(app, target)} trên cụm (${landedE.brief()}). ${if (isRectProfile(target)) "full (mất km/h)." else "km/h gốc còn."}")
+                                // ★ v0.60 post-op divergence: kiểm mồ côi NGAY SAU cast (không chỉ trước) — bắt sớm
+                                //   nếu chính thao tác đặt app vừa làm WM↔AM lệch.
+                                divergenceOn({ c -> sh(c) }, vd)?.let { log("  ⚠ post-cast: $it") }
                             } else {
                                 // ★ v0.36: KHÔNG còn tự nhận "đang chiếu" khi app không lên. Trả app về màn giữa
                                 //   (fullscreen, không để cửa sổ nổi mồ côi) rồi trả đồng hồ — hết cảnh cụm sáng rỗng
@@ -576,6 +605,7 @@ object ClusterCast {
         // TẮT là đường thoát hiểm: nó PHẢI chạy được kể cả khi thao tác trước còn treo.
         if (!takeBusy(log)) { log("⏳ đang chạy 1 thao tác — thử lại sau"); return }
         val app = ctx.applicationContext
+        val log = castLogger(app, "stop", log)   // ★ v0.60 RT1.6: tee ra file (teardown-guard/bê stack/trả đồng hồ)
         vdExec.execute {
             try {
                 runCatching {
@@ -638,6 +668,9 @@ object ClusterCast {
     private fun rollback(ctx: Context, adb: dadb.Dadb, teardownSeq: List<Int>, log: (String) -> Unit) {
         log("↩ rollback: trả đồng hồ [${teardownSeq.joinToString(",")}${if (teardownProfile >= 0) "→$teardownProfile" else ""}]…")
         val vd = lastDisplayId
+        // ★ v0.60 TEARDOWN-GUARD (P0): bê sink CP/AA khỏi VD TRƯỚC khi reset/teardown (giữ phiên, chống mồ côi).
+        //   rollback là đường HỒI PHỤC → best-effort (dù bê hụt vẫn phải trả đồng hồ), nhưng bê được thì hết orphan.
+        if (vd >= 1) guardSinksOffVd({ c -> adb.shell(c).output.trim() }, vd, "", log)
         runCatching {
             if (vd >= 1) CastShell.resetDisplayAll({ c -> adb.shell(c).output.trim() }, vd)
             val rp = activeProfile(ctx)
@@ -697,6 +730,56 @@ object ClusterCast {
                 "không còn quản lý được. Mọi thao tác cụm lúc này đều vô nghĩa hoặc làm hỏng thêm — " +
                 "cần TẮT MÁY XE hẳn một lần rồi mở lại."
         }.getOrNull()
+    }
+
+    /**
+     * ★ v0.60 TEARDOWN-GUARD (P0) — bê MỌI sink chiếu-điện-thoại (pkg ≠ [keepPkg]) khỏi VD về display 0
+     * (`am display move-stack … 0` — GIỮ phiên, KHÔNG force-stop) rồi verify VD sạch sink. Gọi TRƯỚC mỗi lần
+     * huỷ/tái tạo VD (cmd16 re-project · teardownSeq).
+     * @return true nếu VD đã sạch sink (an toàn tiếp tục huỷ/tái tạo VD);
+     *         false nếu move-stack HỤT hoặc còn sót → phía gọi KHÔNG được huỷ/tái tạo VD (fail-safe:
+     *         thà không làm còn hơn tạo cửa sổ mồ côi phải reboot xe).
+     */
+    /**
+     * ★ v0.60 RT1.6 — TEE log chiếu ra FILE (`getExternalFilesDir/castlog/cast_<tag>_v<ver>_<ts>.txt`) song song
+     * với UI. Vì sao: cắm CP/AA là đầu xe tắt WiFi → adb ngoài không vào được; panel Diag chỉ hiện TextView, không
+     * lưu → phân tích R1/R2/R3/evict/guard phải suy từ code. Giữ 5 file mới nhất (chống phình). Lỗi ghi file KHÔNG
+     * được làm ngã đường chiếu (nuốt lỗi, vẫn trả về UI logger).
+     */
+    private fun castLogger(app: Context, tag: String, ui: (String) -> Unit): (String) -> Unit {
+        val f = runCatching {
+            val dir = java.io.File(app.getExternalFilesDir(null), "castlog").apply { mkdirs() }
+            dir.listFiles()?.sortedBy { it.lastModified() }?.dropLast(4)?.forEach { runCatching { it.delete() } }
+            val ver = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "x"
+            java.io.File(dir, "cast_${tag}_v${ver}_${System.currentTimeMillis()}.txt").also {
+                it.appendText("### cast-log $tag · v$ver · " +
+                    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()) + " ###\n")
+            }
+        }.getOrNull()
+        return { line ->
+            ui(line)
+            if (f != null) runCatching {
+                f.appendText(java.text.SimpleDateFormat("HH:mm:ss.SSS ", java.util.Locale.US).format(java.util.Date()) + line + "\n")
+            }
+        }
+    }
+
+    private fun guardSinksOffVd(sh: (String) -> String, vd: Int, keepPkg: String, log: (String) -> Unit): Boolean {
+        if (vd < 1) return true
+        val sinks = phoneProjectionSinksOn(StackParse.parse(sh("am stack list")), vd).filter { it.pkg != keepPkg }
+        if (sinks.isEmpty()) return true
+        for (s in sinks) {
+            log("  🛡 teardown-guard: bê sink chiếu-điện-thoại ${s.brief()} khỏi VD → màn giữa (GIỮ phiên)")
+            val o = sh("am display move-stack ${s.stackId} 0 2>&1")
+            if (CastShell.moveRejected(o)) {
+                log("  ⛔ teardown-guard: move-stack HỤT (${o.take(80)}) → KHÔNG huỷ/tái tạo VD (fail-safe)")
+                return false
+            }
+            Thread.sleep(400)
+        }
+        val still = phoneProjectionSinksOn(StackParse.parse(sh("am stack list")), vd).filter { it.pkg != keepPkg }
+        if (still.isNotEmpty()) { log("  ⛔ teardown-guard: VD còn ${still.size} sink sau khi bê → fail-safe"); return false }
+        return true
     }
 
     private fun placeAppOnVd(app: Context, adb: dadb.Dadb, sh: (String) -> String, target: String, vd: Int, allowDestructive: Boolean, log: (String) -> Unit): StackEntry? {
@@ -790,13 +873,19 @@ object ClusterCast {
             log("  ⛔ R3 BỎ QUA: '$target' đang bật GIỮ PHIÊN (◈) — không force-stop. Bỏ ◈ nếu muốn thử.")
             return null
         }
-        // ★ v0.58 TỰ BẢO VỆ app chiếu-điện-thoại. keepSessionApps mặc định rỗng → trước đây R3 được phép
-        //   force-stop CarPlay/Android Auto khi user bấm CHIẾU, giết luôn phiên chiếu từ điện thoại → "cắm CP/AA
-        //   không lên nữa, phải khởi động lại xe" (lỗi hiện trường). Nhận diện theo HÀNH VI (activity đang hiện là
-        //   sink chiếu màn), KHÔNG hardcode tên gói: mất phiên của loại app này là mất luôn.
+        // ★ v0.58/v0.60 TỰ BẢO VỆ app chiếu-điện-thoại. keepSessionApps mặc định rỗng → trước đây R3 được phép
+        //   force-stop CarPlay/Android Auto khi user bấm CHIẾU → RỚT phiên chiếu từ điện thoại (user phải cắm lại).
+        //   ★ ĐÍNH CHÍNH (workflow phản biện 23/07): force-stop KHÔNG phải nguyên nhân "phải reboot xe" — trong
+        //   incident 22/07 force-stop KHÔNG hề chạy mà crash vẫn nổ. Lỗi reboot là do VD bị huỷ/tái tạo khi sink
+        //   CÒN BÁM (cửa sổ mồ côi), nay đã chặn bằng teardown-guard [P0]. Vẫn CHẶN R3 cho sink: mất phiên chiếu
+        //   là mất luôn (khó chịu). Nhận diện theo HÀNH VI (activity đang hiện là sink chiếu màn), KHÔNG hardcode tên gói.
         if (isPhoneProjection(comp, target)) {
-            log("  ⛔ R3 BỎ QUA: '$target' là app chiếu điện thoại (CarPlay/Android Auto) — force-stop sẽ RỚT phiên, " +
-                "phải khởi động lại xe. Thà không lên cụm còn hơn. Bật GIỮ PHIÊN thủ công nếu muốn ép.")
+            log("  ⛔ R3 BỎ QUA: '$target' là app chiếu điện thoại (CarPlay/Android Auto) — force-stop sẽ RỚT phiên " +
+                "chiếu (phải cắm lại điện thoại). Thà không lên cụm còn hơn. Bật GIỮ PHIÊN thủ công nếu muốn ép.")
+            // ★ v0.60 (§5-A.3): R1/R2 có thể đã để sink DÍNH NỬA VỜI trên VD → bê về display 0 (giữ phiên) ngay,
+            //   để lần huỷ/tái tạo VD kế KHÔNG biến nó thành cửa sổ mồ côi. target CHÍNH là sink nên bê đúng nó.
+            StackParse.of(StackParse.parse(sh("am stack list")), target).filter { it.displayId == vd }
+                .map { it.stackId }.distinct().forEach { sh("am display move-stack $it 0 2>&1"); Thread.sleep(300) }
             return null
         }
         log("  R3 ⚠ PHÁ PHIÊN: force-stop $target rồi mở lại trên VD — MẤT phiên dẫn/chiếu đang chạy")
