@@ -107,7 +107,15 @@ object NavProbe {
         val app = ctx.applicationContext
         if (!autoArmEnabled(app) || suppressed(app)) return
         if (sh != null && !NavProbeArm.armed(app)) log("🔬 máy dò tự cấp quyền:\n" + NavProbeArm.selfGrant(app, sh))
-        if (isOn(app)) { restartChannels(app); return }
+        if (isOn(app)) {
+            // ★ v0.60-debug (RT2.1/RT2.2): cờ CÒN hạn nhưng đã REBOOT / đổi version (boot_count|version đổi) →
+            //   phiên MỚI → append kế tiếp sẽ tạo FILE MỚI (không trộn phiên cũ). Ghi header cho file phiên mới đó,
+            //   else file hậu-reboot khởi đầu KHÔNG có đầu đề (mất preamble bật-lúc/phiên/build/quyền). Cùng phiên
+            //   (chỉ restart tiến trình trong CÙNG lần boot) → KHÔNG ghi lại header, tái dùng đúng file đang mở.
+            val sp = app.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            if (sp.getString(K_SESSION, null) != sessionId(app)) writeHeader(app)
+            restartChannels(app); return
+        }
         setOn(app, true)
         log("🔬 máy dò TỰ LÊN NÒNG (${AUTO_OFF_MS / 60000} phút) — bật/tắt trong màn Máy dò")
     }
@@ -143,6 +151,10 @@ object NavProbe {
         sb.appendLine("bật lúc : " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()))
         sb.appendLine("xe      : ${android.os.Build.MODEL} / ${android.os.Build.BRAND} · Android ${android.os.Build.VERSION.RELEASE}")
         sb.appendLine("app     : v" + (runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?"))
+        sb.appendLine("phiên   : " + sessionId(ctx) + "  (file MỚI mỗi version+lần-boot — KHÔNG trộn phiên cũ)")
+        sb.appendLine("build   : " + (if (com.byd.clusternav.BuildConfig.DEBUG) "DEBUG — ghi ra external (adb pull được)" else "release (nội bộ)"))
+        sb.appendLine("lưu ý   : Android KHÔNG cho receiver biết app PHÁT broadcast → mỗi bản ghi kèm ⟨fg=…⟩ (app")
+        sb.appendLine("          đang foreground lúc bắt) làm proxy quy kết; xác nhận chắc bằng nút CÔ LẬP (isolation).")
         sb.appendLine()
         sb.appendLine("quyền đọc notification : " + if (notifGranted(ctx)) "ĐÃ BẬT ✓" else "*** CHƯA BẬT — kênh 1 câm ***")
         // Đọc thẳng Settings.Secure, KHÔNG dùng cờ RAM `NavProbeAccessibility.connected`: header được ghi ngay
@@ -255,7 +267,10 @@ object NavProbe {
         if (!isOn(ctx)) return
         runCatching {
             val sb = StringBuilder("=== ").append(stamp()).append(" · [BROADCAST] ")
-                .append(i.action ?: "(không action)").append('\n')
+                .append(i.action ?: "(không action)")
+                .append("  ⟨fg=").append(lastForeground.ifBlank { "?" }).append("⟩").append('\n')
+            // sender thật KHÔNG lấy được (Android chặn) — chỉ có hint nếu intent đặt package tường minh (hiếm).
+            i.`package`?.let { sb.append("  [sender-hint pkg] ").append(it).append('\n') }
             i.extras?.let { ex ->
                 for (k in ex.keySet().sorted()) {
                     val v = runCatching { ex.get(k) }.getOrNull() ?: continue
@@ -271,6 +286,33 @@ object NavProbe {
 
     /** Cho các kênh khác ghi nhận "đã bắt được X" mà không phải chạm vào map nội bộ. */
     fun noteSeen(key: String) { seen.merge(key, 1, Int::plus) }
+
+    /**
+     * ★ v0.60-debug (RT2.2) — gói ĐANG hiện foreground, cập nhật bởi [NavProbeAccessibility] mỗi window-state.
+     * Dùng gắn CONTEXT cho mỗi bản ghi broadcast: broadcast KHÔNG cho biết app phát → foreground là proxy quy kết.
+     */
+    @Volatile var lastForeground: String = ""
+
+    /**
+     * ★ v0.60-debug (RT2.5) — CÔ LẬP 1 app để biết CHẮC app nào phát nav: force-stop mọi [TARGETS] khác qua
+     * [sh] (dadb loopback), ghi marker rõ vào file. Chỉ chạy khi ĐANG đo. Trả mô tả để hiện UI.
+     * Cách dùng: mở app muốn kiểm (nó thành foreground), bấm "CÔ LẬP" → chỉ còn nó phát → nav bắt được là của nó.
+     */
+    fun isolateToApp(ctx: Context, keepPkg: String, sh: (String) -> String): String {
+        if (!isOn(ctx)) return "chưa bật máy dò — bật trước rồi cô lập"
+        if (keepPkg.isBlank()) return "chưa rõ app đang mở — mở app muốn đo rồi bấm lại"
+        val others = TARGETS.filter { it != keepPkg }
+        val sb = StringBuilder("=== ").append(stamp()).append(" · [ISOLATION] CHỈ ĐO ").append(keepPkg).append('\n')
+        var stopped = 0
+        for (p in others) {
+            val ok = runCatching { sh("am force-stop $p"); true }.getOrDefault(false)
+            if (ok) stopped++
+            sb.append("  force-stop ").append(p).append(if (ok) " ✓" else " ✗").append('\n')
+        }
+        append(ctx, sb.append('\n').toString())
+        noteSeen("isolation → $keepPkg")
+        return "đã force-stop $stopped app nav khác — giờ chỉ còn $keepPkg. Lái tiếp, nav bắt được là CỦA NÓ."
+    }
 
     private val seen = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private val lastWrite = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -289,31 +331,68 @@ object NavProbe {
     @Volatile private var cachedFile: java.io.File? = null
 
     /**
-     * Thư mục RIÊNG của app (`filesDir`), KHÔNG phải `getExternalFilesDir`.
-     * App khai `requestLegacyExternalStorage=true` + minSdk 29 ⇒ rào `Android/data` chưa siết, app khác trên xe
-     * nhiều khả năng đọc được. File này chứa nguyên văn thông báo của mọi app — không để ngoài đó.
-     * Nút CHIA SẺ vẫn chạy bình thường vì nó gửi nội dung qua EXTRA_TEXT, không gửi đường dẫn.
+     * Thư mục lưu file máy dò.
+     * ★ v0.60-debug (RT2.4): bản DEBUG ghi ra `getExternalFilesDir` → `adb pull` thẳng được (dò nav sạch,
+     *   không phải rút qua nút CHIA SẺ). Bản RELEASE giữ `filesDir` nội bộ (riêng tư — file chứa nguyên văn
+     *   thông báo + chữ màn hình của mọi app). Phân biệt bằng `BuildConfig.DEBUG`.
      */
-    private fun dir(ctx: Context) = java.io.File(ctx.applicationContext.filesDir, "navprobe").apply { mkdirs() }
+    private fun dir(ctx: Context): java.io.File {
+        val app = ctx.applicationContext
+        val base = if (com.byd.clusternav.BuildConfig.DEBUG)
+            (app.getExternalFilesDir(null) ?: app.filesDir) else app.filesDir
+        return java.io.File(base, "navprobe").apply { mkdirs() }
+    }
 
     private const val K_FILE = "cur_file"
+    private const val K_SESSION = "cur_session"
 
-    /** Đường dẫn file hiện tại — nhớ trong prefs để tiến trình sống lại vẫn GHI TIẾP đúng file của chuyến này. */
+    /**
+     * ★ v0.60-debug (RT2.1) — ID PHIÊN = versionName + số lần boot (`boot_count`). File navprobe CHỈ được tái
+     * dùng trong CÙNG phiên (cùng version + cùng lần nổ máy). Đổi version HOẶC reboot xe → phiên mới → FILE MỚI.
+     *
+     * SỬA GỐC "log lẫn lộn mới/cũ" (feedback 23/07): bản cũ [file] tái dùng `K_FILE` bất kể version/ngày → hôm
+     * nay `setOn`/`restartChannels` append vào file 07-22 → digest trộn 2 phiên (bản ghi tiếng Trung 07-22 lẫn
+     * hôm nay) → mọi quy kết nguồn thành vô nghĩa. Reboot giữa 2 ngày làm `boot_count` đổi → phiên mới → hết trộn.
+     */
+    private fun sessionId(ctx: Context): String {
+        val ver = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "x"
+        val boot = runCatching {
+            android.provider.Settings.Global.getInt(ctx.contentResolver, "boot_count", -1)
+        }.getOrDefault(-1)
+        // `boot_count` là chuẩn AOSP (API24+) nên xe Seal/Android10 luôn có. NHƯNG nếu ROM nào đó thiếu (trả -1),
+        // fallback về HẰNG SỐ 0 như bản nháp sẽ khiến MỌI lần boot chung 1 khoá phiên → tái dùng file xuyên ngày
+        // → ĐÚNG cái bug đang sửa quay lại trong im lặng. Thay bằng "giờ khởi động" ước lượng (wall-clock − uptime):
+        // ỔN ĐỊNH trong một lần boot (2 đồng hồ trôi cùng nhịp), ĐỔI sau mỗi reboot → phiên vẫn tách đúng.
+        val bootKey = if (boot >= 0) "b$boot"
+                      else "t" + ((System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()) / 1000)
+        return "$ver@$bootKey"
+    }
+
+    /** PURE — có được tái dùng file phiên trước không? Tách ra để unit-test off-device (NavProbeSessionTest). */
+    fun shouldReuseFile(savedSession: String?, curSession: String, savedFileExists: Boolean): Boolean =
+        savedFileExists && savedSession != null && savedSession == curSession
+
+    /** Đường dẫn file MỚI cho phiên hiện tại — nhớ file + session trong prefs (tiến trình sống lại GHI TIẾP đúng file phiên này). */
     private fun newFilePath(ctx: Context): java.io.File {
         val d = dir(ctx)
         d.listFiles()?.sortedBy { it.lastModified() }?.dropLast(4)?.forEach { runCatching { it.delete() } }
         val ver = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "x"
         val f = java.io.File(d, "navprobe_v${ver}_${System.currentTimeMillis()}.txt")
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-            .edit().putString(K_FILE, f.absolutePath).commit()
+            .edit().putString(K_FILE, f.absolutePath).putString(K_SESSION, sessionId(ctx)).commit()
         cachedFile = f
         return f
     }
 
     private fun file(ctx: Context): java.io.File? = cachedFile ?: runCatching {
-        val saved = ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(K_FILE, null)
+        val sp = ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        val saved = sp.getString(K_FILE, null)
         val f = saved?.let { java.io.File(it) }
-        if (f != null && f.parentFile == dir(ctx) && f.exists()) f.also { cachedFile = it } else newFilePath(ctx)
+        val sameDir = f != null && f.parentFile == dir(ctx)
+        // ★ CHỈ tái dùng khi cùng thư mục VÀ cùng phiên (version+boot) VÀ file còn tồn tại — else FILE MỚI.
+        if (sameDir && shouldReuseFile(sp.getString(K_SESSION, null), sessionId(ctx), f!!.exists()))
+            f.also { cachedFile = it }
+        else newFilePath(ctx)
     }.getOrNull()
 
     /**

@@ -80,6 +80,18 @@ class NavProbeActivity : Activity() {
             NavProbeSnap.capture(applicationContext, "bấm tay")
             Toast.makeText(this, Lang.t("đang chụp qua loopback — không cần WiFi", "capturing over loopback — no WiFi needed"), Toast.LENGTH_SHORT).show()
         })
+        root.addView(bigBtn(Lang.t("🎯 CÔ LẬP: chỉ đo app ĐANG MỞ (force-stop nav khác)", "🎯 ISOLATE: probe only the FOREGROUND app (force-stop other nav)"), 0xFF2C6E49.toInt()) {
+            val keep = NavProbe.lastForeground
+            Toast.makeText(this, Lang.t("đang cô lập '${keep.ifBlank { "?" }}' qua loopback…", "isolating '${keep.ifBlank { "?" }}' over loopback…"), Toast.LENGTH_SHORT).show()
+            Thread {
+                val msg = runCatching {
+                    dadb.Dadb.create("localhost", 5555, com.byd.clusternav.AdbKeys.ensure(applicationContext)).use { adb ->
+                        NavProbe.isolateToApp(applicationContext, keep) { c -> adb.shell(c).output.trim() }
+                    }
+                }.getOrElse { Lang.t("không cô lập được qua dadb: ${it.message}", "couldn't isolate via dadb: ${it.message}") }
+                runOnUiThread { refresh(); Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+            }.apply { isDaemon = true }.start()
+        })
         root.addView(bigBtn(Lang.t("XEM TRƯỚC (đọc kỹ rồi hãy chia sẻ)", "PREVIEW (read carefully before sharing)"), 0xFF5B6470.toInt()) {
             val f = NavProbe.latestFile(this)
             out.text = if (f == null) Lang.t("chưa có dữ liệu", "no data yet")

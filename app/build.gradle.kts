@@ -19,8 +19,9 @@ android {
         applicationId = "com.byd.clusternav"
         minSdk = 29
         targetSdk = 34
-        versionCode = 57
-        versionName = "0.57"
+        versionCode = 60
+        versionName = "0.60"
+        manifestPlaceholders["appLabel"] = "ClusterNav"   // ★ nhãn launcher — bản debug đổi thành "ClusterNav DEBUG"
     }
 
     signingConfigs {
@@ -41,7 +42,16 @@ android {
         }
         getByName("debug") {
             isMinifyEnabled = false
+            // ★ v0.60-debug (RT2.6): bản DEBUG cài SONG SONG bản release (applicationId riêng) → log không lẫn,
+            //   dò nav trên xe mà vẫn giữ bản ổn định. versionName "-debug" + nhãn riêng để phân biệt.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            manifestPlaceholders["appLabel"] = "ClusterNav DEBUG"
         }
+    }
+
+    buildFeatures {
+        buildConfig = true   // ★ v0.60-debug: NavProbe gate BuildConfig.DEBUG (export external ở bản debug)
     }
 
     lint {

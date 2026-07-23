@@ -16,7 +16,12 @@ import android.util.Log
  */
 object NavConnect {
     private const val TAG = "NavConnect"
-    private const val COMP = "com.byd.clusternav/com.byd.clusternav.NavNotificationListener"
+    // ★ v0.60-debug (RT2.6): KHÔNG hardcode package. Bản .debug (applicationId com.byd.clusternav.debug) cài SONG
+    //   SONG bản release → nếu để chuỗi cứng "com.byd.clusternav/…" thì bản debug lại đi disallow/allow ĐÚNG
+    //   listener của BẢN RELEASE (rớt nav bản release đang chạy thật), còn listener của chính nó không hề rebind.
+    //   Tính từ packageName runtime: release vẫn ra "com.byd.clusternav/…" y như cũ, debug ra ".debug/…".
+    private fun comp(ctx: Context): String =
+        ComponentName(ctx, NavNotificationListener::class.java).flattenToString()
     private val reconnecting = java.util.concurrent.atomic.AtomicBoolean(false)   // single-flight: tap dồn dập / ensure trùng → 1 chu kỳ disallow→allow
 
     /** Reconnect NGAY qua dadb (chạy nền). An toàn gọi nhiều lần. */
@@ -54,9 +59,10 @@ object NavConnect {
             runCatching {
                 val keyPair = AdbKeys.ensure(app)   // key CHUNG, sinh nguyên tử + khóa chung (chống đua với MockLoc.selfGrant)
                 dadb.Dadb.create("localhost", 5555, keyPair).use { adb ->
-                    adb.shell("cmd notification disallow_listener $COMP")
+                    val comp = comp(app)
+                    adb.shell("cmd notification disallow_listener $comp")
                     Thread.sleep(1500)
-                    adb.shell("cmd notification allow_listener $COMP")
+                    adb.shell("cmd notification allow_listener $comp")
                 }
                 // Fallback cho chắc.
                 NotificationListenerService.requestRebind(ComponentName(app, NavNotificationListener::class.java))

@@ -35,6 +35,8 @@ class NavProbeAccessibility : AccessibilityService() {
         event ?: return
         if (!NavProbe.isOn(applicationContext)) return
         val pkg = event.packageName?.toString() ?: return
+        // ★ v0.60-debug (RT2.2): app foreground = app phát window-state → gắn context cho mỗi bản ghi broadcast.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) NavProbe.lastForeground = pkg
         val now = SystemClock.elapsedRealtime()
         if (now - (lastAt[pkg] ?: 0L) < THROTTLE_MS) return
         lastAt[pkg] = now
