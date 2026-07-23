@@ -59,3 +59,6 @@ Không có emulator BYD DiLink sẵn (cụm XDJA/AutoContainer/HAL proprietary).
 
 ## HARNESS
 `FakeShell` = `(String)->String` + `FakeDevice` state model: danh sách stack theo display, freeform-alive flag, VD size, cờ inject-fail. Đáp `am stack list` / `dumpsys display` / `dumpsys window displays` / `am display move-stack` (mutate) / `am task resize` (accept nếu freeform-alive) / `wm ...`. Fixture định dạng NGUYÊN VĂN Android 10.
+
+## Script verify trên xe
+`scripts/on-car-verify.sh [ip:port]` — TỰ ĐỘNG dò mồ côi (WM↔AM) + assert clean-release + watch-mode stress; HƯỚNG DẪN thao tác chiếu trong app. Chạy trước khi merge main.
