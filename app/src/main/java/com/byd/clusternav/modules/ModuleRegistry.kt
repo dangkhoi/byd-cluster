@@ -7,7 +7,6 @@ import com.byd.clusternav.modules.navaccess.NavAccessibilityModule
 import com.byd.clusternav.modules.navaudiocue.AudioCueModule
 import com.byd.clusternav.modules.navrealtime.NavRealtimeModule
 import com.byd.clusternav.modules.navremoteviews.RemoteViewsModule
-import com.byd.clusternav.modules.navtrace.NotifTraceModule
 import com.byd.clusternav.modules.vdmap.VdMapModule
 
 /**
@@ -22,7 +21,6 @@ object ModuleRegistry {
     val MODULES: List<ClusterModule> = listOf(
         NavRealtimeModule,  // nội suy cự ly-tới-rẽ theo tốc độ (hạ lag GMaps) — toggle + debug
         NavAccessibilityModule, // booster đọc UI GMaps trên màn -> tinh chỉnh cự ly (cần <service> Manifest + xml)
-        NotifTraceModule,   // soi nhịp noti + chứng minh noti SỐNG khi GMaps bị YouTube che
         RemoteViewsModule,  // vắt field ẩn trong RemoteViews noti GMaps (lever chưa khai thác)
         AudioCueModule,     // bắt xung audio dẫn đường (usage=12) — phần audio ăn được no-root
         MockLocModule,      // test mock-location có đè GMaps không (go/no-go dead-reckoning)

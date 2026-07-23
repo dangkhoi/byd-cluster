@@ -136,7 +136,6 @@ class NavNotificationListener : NotificationListenerService() {
 
         ClusterBroadcaster.emit(applicationContext, state)   // TẦNG 1: làn nav ZIN (giữ đồng hồ/ADAS)
         NavRepository.update(state)                          // TẦNG fallback: card (chỉ khi chiếm màn)
-        CollectStore.saveIconIfNew(applicationContext, arrow, state.road)   // gom mũi tên ra file -> dựng template
         Log.i(TAG, "nav dist='${state.distance}' road='${state.road}' eta='${state.eta}'")
     }
 

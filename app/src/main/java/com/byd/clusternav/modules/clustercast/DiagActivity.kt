@@ -68,13 +68,6 @@ class DiagActivity : Activity() {
         root.addView(bigBtn(com.byd.clusternav.Lang.t("CHIA SẺ FILE ĐẦY ĐỦ", "SHARE FULL FILE"), 0xFF5B6470.toInt()) { share() })
 
         // ── Đường trả lại cho state sống ngoài tiến trình (§5) — sửa lỗi "app bị scale ở màn chính" ──
-        // Lối vào DUY NHẤT của máy dò. Nó bật MẶC ĐỊNH mỗi lần nổ máy — bật sẵn mà không có nút xem/tắt
-        // thì không được phép ship.
-        root.addView(bigBtn(com.byd.clusternav.Lang.t("🔬 MÁY DÒ DẪN ĐƯỜNG (đang tự bật mỗi chuyến)", "🔬 NAVIGATION PROBE (auto-on every trip)"), 0xFF7B4EA8.toInt()) {
-            runCatching { startActivity(Intent(this, com.byd.clusternav.modules.navprobe.NavProbeActivity::class.java)) }
-                .onFailure { status.text = com.byd.clusternav.Lang.t("không mở được: ${it.message}", "can't open: ${it.message}") }
-        })
-
         root.addView(bigBtn(com.byd.clusternav.Lang.t("GỠ CHẾ ĐỘ CỬA SỔ NỔI (nếu app bị scale ở màn chính)", "REMOVE FLOATING-WINDOW MODE (if the app is scaled on the center screen)"), 0xFF9A3412.toInt()) {
             status.text = com.byd.clusternav.Lang.t("đang gỡ…", "removing…"); status.setTextColor(0xFF5B6470.toInt())
             ClusterCast.unseedFreeform(applicationContext) { line ->

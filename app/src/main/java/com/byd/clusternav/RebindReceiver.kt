@@ -52,8 +52,6 @@ class RebindReceiver : BroadcastReceiver() {
                 //   mà tự nhiên chiếu lên cụm là bất ngờ khó chịu, nên MY_PACKAGE_REPLACED KHÔNG gọi.
                 runCatching {
                     com.byd.clusternav.modules.clustercast.ClusterCast.autoCastOnBoot(context) { m -> Log.i(TAG, m) }
-                    // (máy dò lên nòng ở autoStartServices — gọi thêm ở đây là dư một kết nối dadb đúng lúc
-                    //  adbd bận nhất lúc boot)
                 }.onFailure { Log.e(TAG, "autoCast lỗi", it) }
             }
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
@@ -70,26 +68,6 @@ class RebindReceiver : BroadcastReceiver() {
         private const val TAG = "NavRebind"
         const val ACTION_WATCHDOG = "com.byd.clusternav.REBIND_WATCHDOG"
 
-        /**
-         * Lên nòng máy dò qua dadb (tự cấp quyền đọc thông báo + đọc màn hình).
-         * Chạy nền, nuốt mọi lỗi: đây là công cụ khảo sát, hỏng thì thôi, TUYỆT ĐỐI không được làm
-         * ngã đường chạy thật.
-         */
-        fun armProbe(context: android.content.Context) {
-            val app = context.applicationContext
-            if (!com.byd.clusternav.modules.navprobe.NavProbe.autoArmEnabled(app)) return
-            Thread {
-                runCatching {
-                    dadb.Dadb.create("localhost", 5555, com.byd.clusternav.AdbKeys.ensure(app)).use { adb ->
-                        com.byd.clusternav.modules.navprobe.NavProbe.autoArm(
-                            app, { c -> adb.shell(c).output.trim() }) { m -> Log.i(TAG, m) }
-                    }
-                }.onFailure {
-                    // không có dadb → vẫn bật máy dò, chỉ là không tự cấp được quyền
-                    runCatching { com.byd.clusternav.modules.navprobe.NavProbe.autoArm(app) { m -> Log.i(TAG, m) } }
-                }
-            }.apply { isDaemon = true }.start()
-        }
         private const val INTERVAL_MS = 60_000L
 
         /** Ép hệ thống bind lại nav listener (an toàn gọi nhiều lần; no-op nếu đã bound). */
@@ -112,7 +90,6 @@ class RebindReceiver : BroadcastReceiver() {
             //   app cũ dù app thật đã về màn giữa). Chạy nền, tự bỏ qua nếu chưa nối được dadb.
             runCatching {
                 com.byd.clusternav.modules.clustercast.ClusterCast.reconcileOnStart(context) { m -> Log.i(TAG, m) }
-                armProbe(context)
             }.onFailure { Log.e(TAG, "reconcile lỗi", it) }
             if (Prefs.gpsAuto(context) &&
                 context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
