@@ -1,5 +1,6 @@
 # ─── Android / Gradle build ───────────────────────────────
 build/
+.authorized-build/
 .gradle/
 *.apk
 # bản phát hành cho nhóm tải (release-signed, cùng chữ ký):
@@ -16,8 +17,31 @@ keystore.properties
 *.keystore
 *.jks
 *.p12
+*.pfx
 *.pem
 *.key
+*.crt
+*.cert
+*.csr
+.env
+.env.*
+!.env.example
+!.env.template
+**/credentials.json
+**/service-account*.json
+**/firebase-*-adminsdk-*.json
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.example.tfvars
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
 
 # ─── IDE / OS ─────────────────────────────────────────────
 .idea/
@@ -34,8 +58,28 @@ docs/diagnostics/carlog2/
 # ở trên không bắt được thư mục có ngày, nên carlog-2026-07-21/ từng lọt. Whitelist file phân tích nếu cần.
 docs/diagnostics/carlog-*/
 docs/diagnostics/log-nav-debug.txt
+# Dump/trace on-car theo phiên (WM NPE traces, castlog, IP nội bộ, tên app) — PII, TUYỆT ĐỐI không public
+oncar-*/
 
 # ─── Không thuộc ClusterNav (PoSound / tooling / audio / bên thứ 3) ──
 tools/
 *.wav
 apks/
+
+# ─── Local Kiro autonomous orchestrator state (session ID, locks, logs) ───
+.kiro/runtime/
+
+# Python tooling cache
+__pycache__/
+*.pyc
+
+# Local agent config (workspace steering/settings — not product source)
+.kiro/
+
+# APKs are build outputs / local evidence, not source. The 0.59 artifact predates this rule
+# and stays tracked; nothing new goes into history.
+apk/*.apk
+!apk/ClusterNav-0.59-release.apk
+
+# Written by the authorized build; regenerated every time, so it is never source.
+docs/_handoff/vehicle-candidate.json
