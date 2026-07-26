@@ -210,4 +210,67 @@ Stack id=2 bounds=[0,0][1920,1080] displayId=0 userId=0
         assertTrue(pkgs.contains("vn.vietmap.live"), "app THẬT trên cụm phải còn")
         assertFalse(pkgs.contains("com.byd.carplay.ui"), "mFocusedApp ngoài vùng token KHÔNG được tính là ở trên cụm")
     }
+
+    // ── isVisibleOn: OCCLUDE-VERIFY (T7 · D5 U3) — khoá cả nhánh mặc-định-an-toàn ──
+
+    /** Dựng 1 block token trên display [vd] cho [pkg] với hậu tố isVisible tuỳ chọn (mô phỏng dump thật/fake). */
+    private fun tokenBlock(vd: Int, pkg: String, task: Int, visSuffix: String) = """
+  Display: mDisplayId=$vd
+  Application tokens in top down Z order:
+    mStackId=$task
+      taskId=$task
+        appTokens=[AppWindowToken{a1 token=Token{a2 ActivityRecord{a3 u0 $pkg/.Main t$task}}}]$visSuffix
+    DockedStackDividerController
+""".trimIndent()
+
+    @Test
+    fun `isVisibleOn - token isVisible true tren vd`() {
+        val wm = tokenBlock(1, "vn.vietmap.live", 6, " isVisible=true")
+        assertTrue(WmParse.isVisibleOn(wm, "vn.vietmap.live", 1), "isVisible=true → visible")
+    }
+
+    @Test
+    fun `isVisibleOn - token isVisible false la occluded`() {
+        val wm = tokenBlock(1, "vn.vietmap.live", 6, " isVisible=false")
+        assertFalse(WmParse.isVisibleOn(wm, "vn.vietmap.live", 1), "isVisible=false → occluded (không visible)")
+    }
+
+    @Test
+    fun `isVisibleOn - pkg vang mat khoi vd la false`() {
+        val wm = tokenBlock(1, "app.other", 6, " isVisible=true")
+        assertFalse(WmParse.isVisibleOn(wm, "vn.vietmap.live", 1), "pkg không có token trên vd → false (vắng mặt/occluded hẳn)")
+    }
+
+    @Test
+    fun `isVisibleOn - MAC DINH AN TOAN khi token co mat ma khong doc duoc co (format la)`() {
+        // Đời xe/dump khác KHÔNG có `isVisible=` → PHẢI coi như VISIBLE (true) để caller KHÔNG gentle-move
+        // một task chưa-chắc-vô-hình (chống tái tạo orphan v0.67). Đây là mặc-định-an-toàn của occlude-verify.
+        val wm = tokenBlock(1, "vn.vietmap.live", 6, "")   // KHÔNG có isVisible=
+        assertTrue(WmParse.isVisibleOn(wm, "vn.vietmap.live", 1),
+            "token có mặt trên vd nhưng KHÔNG đọc được cờ → mặc định VISIBLE (an toàn, KHÔNG gentle-move)")
+    }
+
+    @Test
+    fun `isVisibleOn - vd khong hop le la false`() {
+        val wm = tokenBlock(1, "vn.vietmap.live", 6, " isVisible=true")
+        assertFalse(WmParse.isVisibleOn(wm, "vn.vietmap.live", 0), "vd<1 → false")
+    }
+
+    @Test
+    fun `isVisibleOn - target phu old (occlusion) - target visible old invisible`() {
+        // 2 token trên VD: target isVisible=true (trên đỉnh), old isVisible=false (bị phủ).
+        val wm = """
+  Display: mDisplayId=1
+  Application tokens in top down Z order:
+    mStackId=90
+      taskId=90
+        appTokens=[AppWindowToken{a1 token=Token{a2 ActivityRecord{a3 u0 app.revanced.android.apps.maps/.Main t90}}}] isVisible=true
+    mStackId=6
+      taskId=6
+        appTokens=[AppWindowToken{b1 token=Token{b2 ActivityRecord{b3 u0 vn.vietmap.live/.Main t6}}}] isVisible=false
+    DockedStackDividerController
+""".trimIndent()
+        assertTrue(WmParse.isVisibleOn(wm, "app.revanced.android.apps.maps", 1), "target trên đỉnh → visible")
+        assertFalse(WmParse.isVisibleOn(wm, "vn.vietmap.live", 1), "old bị target phủ → invisible → gentle-return an toàn")
+    }
 }

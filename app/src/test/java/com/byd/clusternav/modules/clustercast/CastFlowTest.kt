@@ -19,28 +19,37 @@ class CastFlowTest {
     private fun app(id: Int, task: Int, disp: Int, pkg: String = "vn.vietmap.live") =
         FakeStack(id, disp, task, "$pkg/.MainActivity")
 
-    // ───────── UC3: TEARDOWN-GUARD (P0) ─────────
+    // ───────── UC3: TEARDOWN-GUARD (P0) — v0.7x (T9): returnAppToMain (occlude→gentle | leave), KHÔNG move-stack…0 ─────────
+    /** KHÔNG có `am display move-stack <sid> 0` (primitive NPE B) ở đâu trên đường guard. */
+    private fun noMoveToZero(dev: FakeDevice) =
+        dev.commands.none { Regex("am display move-stack \\d+ 0(\\s|$)").containsMatchIn(it) }
+
     @Test
-    fun `UC3 guard be sink CP-AA khoi VD truoc khi teardown`() {
+    fun `UC3 sink OCCLUDED - gentle be off VD (giu phien), KHONG move-stack, KHONG force-stop`() {
         val dev = FakeDevice(vd = 1)
             .add(app(0, 5, 0, "com.android.launcher3"))
-            .add(sink(66, 71, 1))          // CarPlay đang bám VD cụm
-        val ok = ClusterCast.guardSinksOffVd(fakeShell(dev), vd = 1, keepPkg = "", log = silent)
-        assertTrue(ok, "guard phải thành công khi bê được sink")
-        assertEquals(1, dev.moveCount, "bê đúng 1 lần (move-stack)")
-        // sink giờ ở display 0, VD sạch → giữ phiên (không force-stop)
-        assertTrue(ClusterCast.phoneProjectionSinksOn(StackParse.parse(dev.amStackList()), 1).isEmpty())
-        assertEquals(0, dev.stacks.first { it.stackId == 66 }.displayId)
+            .add(sink(66, 71, 1))                                   // CarPlay bám VD (add TRƯỚC → front thấp)
+            .add(app(88, 90, 1, "vn.vietmap.live"))                 // keeper add SAU → front cao hơn → PHỦ (occlude) sink
+        val ok = ClusterCast.guardSinksOffVd(fakeShell(dev), vd = 1, keepPkg = "vn.vietmap.live", log = silent)
+        assertTrue(ok, "sink occluded → returnAppToMain gentle bê off VD → VD sạch sink → true")
+        assertTrue(ClusterCast.phoneProjectionSinksOn(StackParse.parse(dev.amStackList()), 1).isEmpty(), "VD sạch sink")
+        assertEquals(0, dev.stacks.first { it.stackId == 66 }.displayId, "sink về d0 (gentle, GIỮ phiên)")
+        assertFalse(dev.forceStoppedPkgs.contains("com.byd.carplay.ui"), "T9: sink KHÔNG force-stop (giữ phiên)")
+        assertEquals(0, dev.moveCount, "T9: KHÔNG move-stack (returnAppToMain gentle, không move-stack…0)")
+        assertTrue(noMoveToZero(dev))
     }
 
     @Test
-    fun `UC3 move-stack fail thi FAIL-SAFE (khong cho teardown)`() {
-        val dev = FakeDevice(vd = 1, moveFailStacks = mutableSetOf(66))
+    fun `UC3 sink CUONG LAI (visible) - DE YEN tren VD, false, KHONG force-stop, KHONG move-stack`() {
+        val dev = FakeDevice(vd = 1, resistReturnPkgs = mutableSetOf("com.byd.carplay.ui"))
             .add(app(0, 5, 0, "com.android.launcher3"))
-            .add(sink(66, 71, 1))
+            .add(sink(66, 71, 1))                                   // sink cưỡng lại, KHÔNG có gì phủ → visible
         val ok = ClusterCast.guardSinksOffVd(fakeShell(dev), vd = 1, keepPkg = "", log = silent)
-        assertFalse(ok, "move hụt → guard trả false → phía gọi KHÔNG teardown (chống mồ côi)")
-        assertEquals(1, dev.stacks.first { it.stackId == 66 }.displayId, "sink vẫn ở VD (không bị bỏ nửa vời)")
+        assertFalse(ok, "sink còn VISIBLE (cưỡng lại) → ĐỂ YÊN → VD còn sink → false (theo VD về d0 khi teardown, removeMode 0)")
+        assertEquals(1, dev.stacks.first { it.stackId == 66 }.displayId, "sink vẫn trên VD (leave-in-place, KHÔNG nửa vời)")
+        assertFalse(dev.forceStoppedPkgs.contains("com.byd.carplay.ui"), "T9/R11: KHÔNG force-stop sink (giữ phiên)")
+        assertEquals(0, dev.moveCount, "T9: KHÔNG move-stack")
+        assertTrue(noMoveToZero(dev))
     }
 
     @Test
@@ -53,11 +62,12 @@ class CastFlowTest {
     @Test
     fun `UC3 keepPkg duoc loai (dang chieu chinh sink do)`() {
         val dev = FakeDevice(vd = 1).add(sink(66, 71, 1))
-        // đang chiếu CHÍNH CarPlay lên cụm → guard với keepPkg=carplay KHÔNG được bê nó đi
+        // đang chiếu CHÍNH CarPlay lên cụm → guard với keepPkg=carplay KHÔNG được đụng nó
         val ok = ClusterCast.guardSinksOffVd(fakeShell(dev), 1, keepPkg = "com.byd.carplay.ui", log = silent)
         assertTrue(ok)
         assertEquals(0, dev.moveCount)
         assertEquals(1, dev.stacks.first { it.stackId == 66 }.displayId, "sink đích giữ nguyên trên VD")
+        assertFalse(dev.forceStoppedPkgs.contains("com.byd.carplay.ui"), "sink đích KHÔNG bị force-stop")
     }
 
     @Test

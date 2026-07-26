@@ -1,8 +1,6 @@
 package com.byd.clusternav.modules
 
 import com.byd.clusternav.modules.dash.DashModule
-import com.byd.clusternav.modules.deadreckon.DeadReckonModule
-import com.byd.clusternav.modules.mockloc.MockLocModule
 import com.byd.clusternav.modules.navaccess.NavAccessibilityModule
 import com.byd.clusternav.modules.navaudiocue.AudioCueModule
 import com.byd.clusternav.modules.navrealtime.NavRealtimeModule
@@ -23,8 +21,6 @@ object ModuleRegistry {
         NavAccessibilityModule, // booster đọc UI GMaps trên màn -> tinh chỉnh cự ly (cần <service> Manifest + xml)
         RemoteViewsModule,  // vắt field ẩn trong RemoteViews noti GMaps (lever chưa khai thác)
         AudioCueModule,     // bắt xung audio dẫn đường (usage=12) — phần audio ăn được no-root
-        MockLocModule,      // test mock-location có đè GMaps không (go/no-go dead-reckoning)
-        DeadReckonModule,   // service nền vá GPS trong hầm (dead-reckoning → mock-location)
         DashModule,         // bảng dữ liệu xe LIVE (TPMS 4 lốp + tốc độ/gear/nhiệt/pin) — đọc HAL no-root
         VdMapModule,        // chiếu map thật lên màn giữa (VirtualDisplay) — cần dadb shell-fallback
     )

@@ -6,6 +6,7 @@ import android.graphics.drawable.Drawable
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import com.byd.clusternav.navigation.NavigationPermission
 
 /**
  * Adapter MỎNG cho notification dẫn đường (Google Maps / ReVanced). Chỉ làm:
@@ -32,6 +33,8 @@ class NavNotificationListener : NotificationListenerService() {
     /** Hệ thống THẢ binding (head-unit hay làm lúc chạy) → yêu cầu bind lại NGAY, không thì nav "câm". */
     override fun onListenerDisconnected() {
         connected = false
+        runCatching { NavRepository.setPermission(applicationContext, NavigationPermission.UNKNOWN) }
+            .onFailure { Log.e(TAG, "permission state update failed", it) }
         runCatching {
             requestRebind(android.content.ComponentName(this, NavNotificationListener::class.java))
         }.onFailure { Log.e(TAG, "requestRebind on disconnect failed", it) }
@@ -41,10 +44,10 @@ class NavNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         connected = true
         if (!Prefs.enabled(applicationContext)) return
-        SourceArbiter.clear()        // tránh khoá nguồn kẹt ở pkg cũ sau khi (re)connect -> chặn GMaps mới
-        runCatching { ClusterBroadcaster.resetBydNaving(applicationContext) }
-            .onFailure { Log.e(TAG, "reset on connect failed", it) }
-        Log.i(TAG, "listener connected -> clear arbiter + reset cờ kẹt")
+        SourceArbiter.clear()
+        runCatching { NavRepository.setPermission(applicationContext, NavigationPermission.GRANTED) }
+            .onFailure { Log.e(TAG, "coordinator connect failed", it) }
+        Log.i(TAG, "listener connected -> authoritative coordinator ready")
         // QUAN TRỌNG: nav có thể ĐÃ dẫn trước khi listener bind (cài/mở app sau khi đang dẫn, hoặc xe đỗ
         // -> noti đứng yên, onNotificationPosted không kích hoạt). Quét noti hiện tại + bơm ngay.
         runCatching {
@@ -81,9 +84,8 @@ class NavNotificationListener : NotificationListenerService() {
         }
         // CHỈ tắt cụm nếu app vừa-gỡ chính là nguồn đang giữ khoá — gỡ noti app nền KHÔNG tắt nav app đang dẫn.
         if (SourceArbiter.release(sbn.packageName)) {
-            ClusterBroadcaster.stop(applicationContext)
-            NavRepository.clear()
-            Log.i(TAG, "nguồn ${sbn.packageName} dừng -> nhả khoá")
+            NavRepository.stop(applicationContext)
+            Log.i(TAG, "nguồn ${sbn.packageName} dừng -> stop authoritative session")
         }
     }
 
@@ -107,7 +109,8 @@ class NavNotificationListener : NotificationListenerService() {
                 maneuverText = "Đã đến", maneuverIcon = 15, eta = "",
                 updatedAt = System.currentTimeMillis()
             )
-            runCatching { ClusterBroadcaster.emit(applicationContext, arrived) }
+            runCatching { NavRepository.ingest(applicationContext, sbn.packageName, null, arrived) }
+                .onFailure { Log.e(TAG, "arrival ingest failed", it) }
             Log.i(TAG, "đã đến nơi (${sbn.packageName}) → cắm cờ đích (icon 15)")
             return
         }
@@ -134,8 +137,7 @@ class NavNotificationListener : NotificationListenerService() {
         val arrow = loadIconBitmap(n)
         val state = NotificationParser.parse(sbn.packageName, title, text, sub, big, arrow, manIcon) ?: return
 
-        ClusterBroadcaster.emit(applicationContext, state)   // TẦNG 1: làn nav ZIN (giữ đồng hồ/ADAS)
-        NavRepository.update(state)                          // TẦNG fallback: card (chỉ khi chiếm màn)
+        NavRepository.ingest(applicationContext, sbn.packageName, null, state)
         Log.i(TAG, "nav dist='${state.distance}' road='${state.road}' eta='${state.eta}'")
     }
 

@@ -16,49 +16,62 @@ class CastStressTest {
 
     private val silent: (String) -> Unit = {}
     private val N = 200
+    /** ★ v0.7x: guard-heavy loop đi qua GENTLE THẬT (Thread.sleep) → dùng N nhỏ để suite không chậm; đủ để stress bất biến. */
+    private val SL1_N = 20
 
     private fun sinkStack(id: Int, task: Int, disp: Int) =
         FakeStack(id, disp, task, "com.byd.carplay.ui/com.byd.carplay.ui.VideoActivity")
 
-    // SL1: đổi app qua lại liên tục — mỗi lần bê sink CP/AA cũ khỏi VD (giữ phiên) TRƯỚC khi đặt app mới.
+    // SL1: đổi app qua lại liên tục — target đặt LÊN TRÊN (occlude) sink CP/AA cũ → guard gentle bê sink khỏi VD
+    //   (giữ phiên, KHÔNG move-stack…0). N nhỏ hơn bản cũ (200) vì mỗi vòng đi qua gentle THẬT (Thread.sleep) —
+    //   giá trị stress = LẶP + bất biến (no-accumulate, no-move-stack, no-force-stop), không phải con số tuyệt đối.
     @Test
     fun `SL1 doi app lien tuc khong sinh mo coi`() {
         val dev = FakeDevice(vd = 1).add(FakeStack(3, 0, 5, "com.android.launcher3/.Launcher"))
+        val keeper = FakeStack(2, 1, 3, "vn.vietmap.live/.Main", mode = "freeform")
+        dev.add(keeper)                                    // target (keeper) trên VD
         var nextId = 100
-        repeat(N) { i ->
-            // giả lập: 1 sink CP/AA vừa bị đặt lên VD (rung R1/R2 của lượt trước)
+        repeat(SL1_N) { i ->
+            // giả lập: 1 sink CP/AA cũ vừa trên VD, rồi target được đặt LÊN TRÊN (occlude sink cũ)
             dev.add(sinkStack(nextId, nextId + 1000, 1)); nextId++
-            // đổi sang app mới → guard bê sink khỏi VD trước cmd16/teardown
+            keeper.front = dev.nextFront()                 // target re-front → phủ (occlude) sink cũ
             val ok = ClusterCast.guardSinksOffVd(fakeShell(dev), vd = 1, keepPkg = "vn.vietmap.live", log = silent)
-            assertTrue(ok, "vòng $i: guard phải bê được sink")
-            // sau mỗi lượt: VD KHÔNG còn sink chiếu-điện-thoại
+            assertTrue(ok, "vòng $i: sink occluded → gentle bê off VD → VD sạch sink")
             assertTrue(ClusterCast.phoneProjectionSinksOn(StackParse.parse(dev.amStackList()), 1).isEmpty(),
-                "vòng $i: VD phải sạch sink sau guard")
+                "vòng $i: VD sạch sink sau guard")
         }
-        assertEquals(N, dev.moveCount, "mỗi vòng bê đúng 1 sink → tổng $N")
-        // không stack mồ côi: mọi sink đã về display 0
-        assertTrue(dev.stacks.filter { it.comp.contains("carplay") }.all { it.displayId == 0 })
+        assertEquals(0, dev.moveCount, "T9: guard KHÔNG dùng move-stack (returnAppToMain gentle)")
+        assertTrue(dev.forceStoppedPkgs.isEmpty(), "sink giữ phiên — KHÔNG bao giờ force-stop")
+        // không stack mồ côi tích luỹ: mọi sink đã gentle về display 0
+        assertTrue(dev.stacks.filter { it.comp.contains("carplay") }.all { it.displayId == 0 }, "mọi sink đã gentle về d0")
     }
 
-    // SL3: guard gọi lặp trên state đã sạch → idempotent, không lệnh thừa.
+    // SL3: guard gọi lặp trên state đã sạch → idempotent, không lệnh thừa, không force-stop.
     @Test
     fun `SL3 guard idempotent - goi lai khong be thua`() {
-        val dev = FakeDevice(vd = 1).add(sinkStack(66, 71, 1))
-        assertTrue(ClusterCast.guardSinksOffVd(fakeShell(dev), 1, "", silent))
-        assertEquals(1, dev.moveCount)
-        // gọi lại nhiều lần: sink đã ở display 0 → không bê nữa
-        repeat(20) { assertTrue(ClusterCast.guardSinksOffVd(fakeShell(dev), 1, "", silent)) }
-        assertEquals(1, dev.moveCount, "không phát sinh move thừa")
+        val dev = FakeDevice(vd = 1)
+            .add(sinkStack(66, 71, 1))                                         // sink add trước
+            .add(FakeStack(2, 1, 3, "vn.vietmap.live/.Main", mode = "freeform")) // keeper add sau → phủ sink
+        assertTrue(ClusterCast.guardSinksOffVd(fakeShell(dev), 1, "vn.vietmap.live", silent), "sink occluded → gentle off VD")
+        assertEquals(0, dev.moveCount, "T9: gentle, KHÔNG move-stack")
+        assertEquals(0, dev.stacks.first { it.stackId == 66 }.displayId, "sink đã về d0")
+        // gọi lại nhiều lần: sink đã ở d0 → không còn sink trên VD → true, không đụng gì
+        repeat(20) { assertTrue(ClusterCast.guardSinksOffVd(fakeShell(dev), 1, "vn.vietmap.live", silent)) }
+        assertEquals(0, dev.moveCount, "không phát move-stack thừa")
+        assertTrue(dev.forceStoppedPkgs.isEmpty(), "idempotent — không force-stop lần nào (giữ phiên)")
     }
 
-    // SL5: move-stack fail ngẫu nhiên giữa stress → LUÔN fail-safe (không teardown), sink không bị bỏ nửa vời.
+    // SL5: sink CƯỠNG LẠI occlude (size-compat) LẶP giữa stress → LUÔN leave-in-place (KHÔNG force-stop, KHÔNG
+    //   move-stack, KHÔNG nửa vời). Đây là fail-"soft" mới: thà để sink sau target còn hơn tạo orphan (R11/OQ3).
     @Test
-    fun `SL5 move fail giua stress luon fail-safe`() {
-        repeat(50) { i ->
-            val dev = FakeDevice(vd = 1, moveFailStacks = mutableSetOf(66)).add(sinkStack(66, 71, 1))
+    fun `SL5 sink cuong lai giua stress luon leave-in-place khong force-stop`() {
+        repeat(30) { i ->
+            val dev = FakeDevice(vd = 1, resistReturnPkgs = mutableSetOf("com.byd.carplay.ui")).add(sinkStack(66, 71, 1))
             val ok = ClusterCast.guardSinksOffVd(fakeShell(dev), 1, "", silent)
-            assertFalse(ok, "vòng $i: move hụt → fail-safe false")
-            assertEquals(1, dev.stacks.first().displayId, "vòng $i: sink giữ nguyên trên VD, không nửa vời")
+            assertFalse(ok, "vòng $i: sink cưỡng lại (visible) → ĐỂ YÊN → false")
+            assertEquals(1, dev.stacks.first().displayId, "vòng $i: sink vẫn trên VD (leave-in-place, không nửa vời)")
+            assertFalse(dev.forceStoppedPkgs.contains("com.byd.carplay.ui"), "vòng $i: KHÔNG force-stop sink (giữ phiên)")
+            assertEquals(0, dev.moveCount, "vòng $i: KHÔNG move-stack")
         }
     }
 
@@ -89,10 +102,12 @@ class CastStressTest {
     @Test
     fun `SL4 divergence xen giua stress - chan luc orphan mo lai khi sach`() {
         val dev = FakeDevice(vd = 1).add(FakeStack(3, 0, 5, "com.android.launcher3/.Launcher"))
+        val keeper = FakeStack(2, 1, 3, "vn.vietmap.live/.Main", mode = "freeform")
+        dev.add(keeper)                                     // target (keeper) trên VD — để occlude sink cũ mỗi vòng
         var nextId = 300
         var blocked = 0
-        repeat(10) { i ->
-            if (i == 5) {
+        repeat(6) { i ->
+            if (i == 3) {
                 // ★ GIỮA stress: 1 sink hoá MỒ CÔI (WM thấy, `am stack list` không) → mọi thao tác cụm phải DỪNG.
                 dev.add(FakeStack(9000, 1, 9001, "com.byd.carplay.ui/com.byd.carplay.ui.VideoActivity", amVisible = false))
                 assertNotNull(ClusterCast.divergenceOn(fakeShell(dev), 1), "vòng $i: orphan xen giữa → PHẢI chặn")
@@ -101,15 +116,18 @@ class CastStressTest {
                 dev.stacks.removeAll { it.stackId == 9000 }
                 assertNull(ClusterCast.divergenceOn(fakeShell(dev), 1), "vòng $i: sau khi sạch → MỞ LẠI")
             } else {
-                // đổi app bình thường: cụm không lệch → không chặn, guard bê sink cũ khỏi VD (giữ phiên)
+                // đổi app bình thường: sink CP/AA cũ trên VD, target đặt LÊN TRÊN (occlude) → guard gentle bê sink off VD
                 dev.add(sinkStack(nextId, nextId + 1000, 1)); nextId++
+                keeper.front = dev.nextFront()             // target re-front → phủ (occlude) sink cũ
                 assertNull(ClusterCast.divergenceOn(fakeShell(dev), 1), "vòng $i: cụm sạch → KHÔNG được chặn")
                 assertTrue(ClusterCast.guardSinksOffVd(fakeShell(dev), 1, "vn.vietmap.live", silent),
-                    "vòng $i: guard bê được sink")
+                    "vòng $i: guard gentle bê được sink (occluded)")
                 assertTrue(ClusterCast.phoneProjectionSinksOn(StackParse.parse(dev.amStackList()), 1).isEmpty(),
                     "vòng $i: VD sạch sink sau guard")
             }
         }
         assertEquals(1, blocked, "đúng 1 lần chặn giữa chuỗi (khi có orphan), còn lại đều thông")
+        assertTrue(dev.forceStoppedPkgs.isEmpty(), "sink giữ phiên xuyên suốt — KHÔNG force-stop")
+        assertEquals(0, dev.moveCount, "T9: guard KHÔNG move-stack")
     }
 }

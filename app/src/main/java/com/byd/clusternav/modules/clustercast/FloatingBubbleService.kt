@@ -1,134 +1,203 @@
 package com.byd.clusternav.modules.clustercast
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.view.Gravity
-import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import kotlin.math.abs
+import com.byd.clusternav.R
+import com.byd.clusternav.modules.clustercast.v2.BubbleFocusTarget
+import com.byd.clusternav.modules.clustercast.v2.BubbleProjection
+import com.byd.clusternav.modules.clustercast.v2.BubbleStopControl
+import com.byd.clusternav.modules.clustercast.v2.CastAndroidLifecycle
+import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
+import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
+import com.byd.clusternav.modules.clustercast.v2.CastAppEntry
+import com.byd.clusternav.modules.clustercast.v2.CastBubbleProjection
+import com.byd.clusternav.modules.clustercast.v2.CastManualTargetReader
+import com.byd.clusternav.modules.clustercast.v2.CastRuntimeUi
+import com.byd.clusternav.modules.clustercast.v2.StoreRead
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * NÚT NỔI (bong bóng overlay) — bật/tắt chiếu app lên cụm mà không cần mở app.
- *  - CHẠM  = TOGGLE: đang chiếu → trả về màn chính; chưa → chiếu app gần nhất (lastCastApp / app đầu danh sách).
- *  - GIỮ   = MENU các app đã tick trong Cài đặt chiếu → chọn 1 để chiếu (KHÔNG mở Activity to khi đang lái).
- *  - KÉO   = di chuyển (nhớ vị trí).
- * Bong bóng PHẢN ÁNH TRẠNG THÁI: viền xanh (chưa chiếu, mũi tên ↑) ↔ đặc xanh (đang chiếu, mũi tên ↓) — hết "toggle mù".
+ * Presentation-only overlay host for the canonical Cast model.
+ *
+ * It renders the same [com.byd.clusternav.modules.clustercast.v2.CastRenderModel] the Activity uses,
+ * dispatches only currently exported canonical actions through the one process runtime, and sends at
+ * most one typed Stop request. It never infers policy from localized text and never opens the
+ * Activity to send a second Stop.
  */
 class FloatingBubbleService : Service() {
-    private var wm: WindowManager? = null
-    private var bubble: TextView? = null
-    private var lp: WindowManager.LayoutParams? = null
-    private var menu: View? = null
-    private val ui = Handler(Looper.getMainLooper())
+    private lateinit var runtime: CastAndroidRuntime.Runtime
+    private lateinit var catalog: CastAppCatalog
+    private var windowManager: WindowManager? = null
+    private var bubble: LinearLayout? = null
+    private var menuButton: TextView? = null
+    private var primaryButton: TextView? = null
+    private var stopButton: TextView? = null
+    private var statusLabel: TextView? = null
+    private var menuPanel: LinearLayout? = null
+    private var params: WindowManager.LayoutParams? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private val projecting = AtomicBoolean(false)
+    private val stopInFlight = AtomicBoolean(false)
+    private val dispatchInFlight = AtomicBoolean(false)
+    @Volatile private var stopRequestedAtMs = 0L
+    private val generation = AtomicLong(0)
+    @Volatile private var destroyed = false
+    @Volatile private var entries: List<CastAppEntry> = emptyList()
+    private var lastProjection: BubbleProjection? = null
+    private var foregroundStarted = false
+    private val refresh = object : Runnable {
+        override fun run() { projectState(); handler.postDelayed(this, REFRESH_INTERVAL_MS) }
+    }
 
-    private val BRAND = 0xFF1565C0.toInt()
-    private val BRAND_LIGHT = 0xFFE6F1FB.toInt()
-
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onCreate() {
+        super.onCreate()
+        runtime = CastAndroidRuntime.create(applicationContext)
+        catalog = CastAppCatalog(applicationContext) { runtime.gateway.connectedPhoneSession(it) }
+        if (!catalog.bubbleEnabled()) { stopSelf(); return }
+        if (!startForegroundOnce()) { stopSelf(); return }
+        if (!Settings.canDrawOverlays(this)) { stopSelf(); return }
+        showBubble()
+        Thread {
+            runCatching { CastAndroidLifecycle.rehydrate(applicationContext) }
+            val loaded = runCatching { catalog.installed(runtime.automation.config().defaultPackage) }
+                .getOrDefault(emptyList())
+            handler.post {
+                if (destroyed) return@post
+                entries = loaded
+                handler.post(refresh)
+            }
+        }.start()
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
-        startForeground(NOTIF_ID, buildNotif())
-        ClusterCast.loadPrefs(applicationContext)
-        // ★ W2-3: đây là entry point khởi-động-tiến-trình DUY NHẤT chưa dọn state phiên trước
-        //   (RebindReceiver và ClusterCastActivity đều đã gọi). Bong bóng lại hay là thứ chạy đầu tiên sau boot.
-        ClusterCast.reconcileOnStart(applicationContext)
-        if (bubble == null) {
-            if (Build.VERSION.SDK_INT >= 23 && !android.provider.Settings.canDrawOverlays(this)) { notifyNeedOverlay(); stopSelf(); return START_NOT_STICKY }
-            runCatching { addBubble() }.onFailure { notifyNeedOverlay(); stopSelf(); return START_NOT_STICKY }
-        }
-        // observer: đổi trạng thái chiếu → cập nhật bong bóng (post về UI thread vì cast/stop chạy nền)
-        ClusterCast.onCastingChanged = { ui.post { updateVisual() } }
-        updateVisual()
+        if (!catalog.bubbleEnabled()) { stopSelf(startId); return START_NOT_STICKY }
+        if (!startForegroundOnce()) { stopSelf(startId); return START_NOT_STICKY }
+        if (!Settings.canDrawOverlays(this)) { stopSelf(startId); return START_NOT_STICKY }
+        // An explicit Retry/Start after a permission grant may attach the overlay, still with zero dispatch.
+        showBubble()
         return START_STICKY
     }
 
-    private fun addBubble() {
-        wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val btn = TextView(this).apply { gravity = Gravity.CENTER; setTextColor(Color.WHITE) }
+    private fun startForegroundOnce(): Boolean = foregroundStarted || runCatching {
+        startForeground(NOTIFICATION_ID, notification())
+        foregroundStarted = true
+        true
+    }.getOrElse {
+        android.util.Log.e("ClusterCastBubble", "startForeground denied", it)
+        false
+    }
+
+    override fun onDestroy() {
+        destroyed = true
+        generation.incrementAndGet()
+        handler.removeCallbacksAndMessages(null)
+        closeMenu()
+        bubble?.let { view -> runCatching { windowManager?.removeView(view) } }
+        bubble = null
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun showBubble() {
+        if (bubble != null) return
+        val manager = getSystemService(WINDOW_SERVICE) as WindowManager
+        windowManager = manager
+        stopButton = bubbleText("Dừng chiếu", STOP_MIN_DP).apply {
+            id = STOP_VIEW_ID
+            visibility = View.GONE
+            setOnClickListener { requestStopOnce() }
+        }
+        menuButton = bubbleText("Cast · Menu", MENU_MIN_DP).apply {
+            id = MENU_BUTTON_ID
+            contentDescription = "Mở menu Cluster Cast"
+            setOnClickListener { toggleMenu() }
+        }
+        primaryButton = bubbleText("", MENU_MIN_DP).apply { visibility = View.GONE }
+        statusLabel = bubbleText("", 0).apply { textSize = 10f; visibility = View.GONE }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(0xE528323B.toInt())
+            addView(stopButton)
+            addView(primaryButton)
+            addView(menuButton)
+            addView(statusLabel)
+        }
         val type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                   else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
-        val sz = dp(56)
-        val p = WindowManager.LayoutParams(sz, sz, type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,   // không bắt cả màn hình đi composite bằng CPU
-            PixelFormat.TRANSLUCENT).apply {
+        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+        val saved = catalog.bubblePosition()
+        val layout = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
             gravity = Gravity.TOP or Gravity.START
-            alpha = IDLE_ALPHA        // ★ MỜ khi rảnh → không đè/che app đang dùng; chạm vào là rõ ngay
-            val pf = getSharedPreferences("bubble", MODE_PRIVATE)
-            x = pf.getInt("x", dp(12)); y = pf.getInt("y", dp(240))
+            x = clampX(saved?.first ?: dp(18))
+            y = clampY(saved?.second ?: dp(160))
         }
-        lp = p
-        btn.setOnTouchListener(makeDragTap())
-        wm?.addView(btn, p)
-        bubble = btn
-        scheduleFade()
+        params = layout
+        listOfNotNull<View>(root, stopButton, menuButton, statusLabel)
+            .forEach { attachDrag(it, root, layout, manager) }
+        primaryButton?.let { attachDrag(it, root, layout, manager) }
+        bubble = root
+        runCatching { manager.addView(root, layout) }
     }
 
-    // ── ĐỘ MỜ (user: "làm transparent để không đè lên app khác") ──
-    // Rảnh → mờ hẳn, chỉ còn thấy lờ mờ để biết nó ở đâu. Chạm/kéo → rõ ngay. Bỏ tay ra vài giây → mờ lại.
-    private val fade = Runnable { setBubbleAlpha(IDLE_ALPHA) }
-
-    private fun setBubbleAlpha(a: Float) {
-        val p = lp ?: return; val b = bubble ?: return
-        if (p.alpha == a) return
-        p.alpha = a
-        runCatching { wm?.updateViewLayout(b, p) }
-    }
-
-    /** Gọi khi có tương tác: rõ ngay, rồi hẹn mờ lại. */
-    private fun wake() { ui.removeCallbacks(fade); setBubbleAlpha(ACTIVE_ALPHA); scheduleFade() }
-    private fun scheduleFade() { ui.removeCallbacks(fade); ui.postDelayed(fade, FADE_DELAY_MS) }
-
-    /** Bong bóng đổi hình theo trạng thái chiếu — điểm mấu chốt để "1 chạm không nhầm". */
-    private fun updateVisual() {
-        val b = bubble ?: return
-        wake()      // đổi trạng thái chiếu = sự kiện đáng chú ý → sáng lên cho user thấy, rồi tự mờ lại
-        val casting = ClusterCast.casting
-        b.textSize = 24f
-        b.text = if (casting) "▣" else "▢"   // ô-màn-hình: đặc = đang chiếu, rỗng = chưa (tap = mở menu)
-        b.setTextColor(if (casting) Color.WHITE else BRAND)
-        b.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(if (casting) BRAND else BRAND_LIGHT)
-            setStroke(dp(2), BRAND)
-        }
-    }
-
-    private fun makeDragTap(): View.OnTouchListener {
-        var downX = 0f; var downY = 0f; var startX = 0; var startY = 0; var moved = false; var downAt = 0L
-        return View.OnTouchListener { v, e ->
-            val p = lp ?: return@OnTouchListener false
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> { wake(); downX = e.rawX; downY = e.rawY; startX = p.x; startY = p.y; moved = false; downAt = System.currentTimeMillis(); true }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX - downX; val dy = e.rawY - downY
-                    if (abs(dx) > 14 || abs(dy) > 14) moved = true
-                    p.x = startX + dx.toInt(); p.y = startY + dy.toInt()
-                    runCatching { wm?.updateViewLayout(v, p) }; true
+    /** Dragging changes only presentation preferences; the clamped position is persisted off-main. */
+    private fun attachDrag(
+        handle: View,
+        root: View,
+        layout: WindowManager.LayoutParams,
+        manager: WindowManager,
+    ) {
+        var downX = 0f
+        var downY = 0f
+        var originX = 0
+        var originY = 0
+        var dragging = false
+        handle.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX; downY = event.rawY
+                    originX = layout.x; originY = layout.y; dragging = false
+                    false
                 }
-                MotionEvent.ACTION_UP -> {
-                    if (!moved) { v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); showMenu() }   // TAP = MENU (bỏ long-press khó xài)
-                    else runCatching { getSharedPreferences("bubble", MODE_PRIVATE).edit().putInt("x", p.x).putInt("y", p.y).apply() }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - downX).toInt()
+                    val dy = (event.rawY - downY).toInt()
+                    if (!dragging && kotlin.math.abs(dx) + kotlin.math.abs(dy) < dp(8)) return@setOnTouchListener false
+                    dragging = true
+                    layout.x = clampX(originX + dx)
+                    layout.y = clampY(originY + dy)
+                    runCatching { manager.updateViewLayout(root, layout) }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (!dragging) return@setOnTouchListener false
+                    val x = layout.x
+                    val y = layout.y
+                    Thread { runCatching { catalog.setBubblePosition(x, y) } }.start()
                     true
                 }
                 else -> false
@@ -136,139 +205,292 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private fun toast(s: String) = runCatching { android.widget.Toast.makeText(this, s, android.widget.Toast.LENGTH_SHORT).show() }
-
-    private fun castApp(pkg: String) {
-        toast("Chiếu ${ClusterCast.labelOf(applicationContext, pkg)}…")
-        ClusterCast.cast(applicationContext, pkg) { android.util.Log.i("ClusterCast", it) }
+    private fun clampX(value: Int): Int {
+        val width = resources.displayMetrics.widthPixels
+        return value.coerceIn(0, (width - dp(72)).coerceAtLeast(0))
     }
 
-    /** TAP bong bóng = MENU: bảng app dễ nhấn (app đang chiếu tô xanh + ✓) + Về màn chính + Cấu hình. */
-    private fun showMenu() {
-        removeMenu()
-        val wmm = wm ?: return
-        val apps = ClusterCast.castableApps
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(Color.WHITE); cornerRadius = dp(16).toFloat(); setStroke(dp(1), 0xFFD3D1C7.toInt()) }
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-        }
-        panel.addView(TextView(this).apply { text = "Chiếu app lên cụm"; textSize = 15f; setTextColor(0xFF1A1F24.toInt()); setPadding(dp(4), dp(2), dp(4), dp(4)) })
-        panel.addView(TextView(this).apply {
-            text = if (ClusterCast.casting) "● Đang chiếu: ${ClusterCast.labelOf(applicationContext, ClusterCast.lastCastApp)}" else "○ Chưa chiếu"
-            textSize = 13f; setTextColor(if (ClusterCast.casting) 0xFF1D9E75.toInt() else 0xFF5B6470.toInt()); setPadding(dp(4), 0, dp(4), dp(8))
-        })
-        if (apps.isEmpty()) {
-            panel.addView(TextView(this).apply { text = "Chưa chọn app — mở Cấu hình để tick app"; textSize = 14f; setTextColor(0xFF5B6470.toInt()); setPadding(dp(4), dp(6), dp(4), dp(6)) })
-        } else {
-            var row: LinearLayout? = null
-            apps.forEachIndexed { i, p ->
-                if (i % 2 == 0) { row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }; panel.addView(row) }
-                val active = ClusterCast.casting && ClusterCast.lastCastApp == p
-                row!!.addView(appTile(p, active))
+    private fun clampY(value: Int): Int {
+        val height = resources.displayMetrics.heightPixels
+        return value.coerceIn(0, (height - dp(72)).coerceAtLeast(0))
+    }
+
+    /** Bounded worker projection fenced by lifecycle generation, so stale callbacks cannot paint. */
+    private fun projectState() {
+        if (destroyed || !projecting.compareAndSet(false, true)) return
+        val token = generation.get()
+        Thread {
+            try {
+                runCatching { project(token) }
+                    .onFailure { android.util.Log.e("ClusterCastBubble", "projection failed", it) }
+            } finally {
+                projecting.set(false)
             }
-            if (apps.size % 2 == 1) row!!.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })   // ô trống cho cân cột lẻ
-        }
-        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(8), 0, 0) }
-        actions.addView(actBtn("⏹ Về màn chính", 0xFF8A1C1C.toInt()) { removeMenu(); toast("Trả về…"); ClusterCast.stop(applicationContext) { android.util.Log.i("ClusterCast", it) } })
-        actions.addView(actBtn("⚙ Cấu hình", 0xFF37474F.toInt()) { removeMenu(); openSettings() })
-        panel.addView(actions)
-
-        val backdrop = FrameLayout(this).apply { setBackgroundColor(0x66000000); setOnClickListener { removeMenu() } }
-        val p = lp; val w = dp(300)
-        val maxLeft = (resources.displayMetrics.widthPixels - w).coerceAtLeast(dp(8))
-        val margin = FrameLayout.LayoutParams(w, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
-            leftMargin = (p?.x ?: dp(12)).coerceIn(dp(8), maxLeft)
-            topMargin = ((p?.y ?: dp(240)) + dp(64)).coerceIn(dp(8), (resources.displayMetrics.heightPixels - dp(340)).coerceAtLeast(dp(8)))
-        }
-        backdrop.addView(panel, margin)
-        val type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
-        val blp = WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, type,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT)
-        runCatching { wmm.addView(backdrop, blp); menu = backdrop }
+        }.start()
     }
 
-    /** 1 ô app trong bảng 2 cột: ICON + tên — nhấn = chiếu (cold re-cast nếu đang chiếu). Ô đang chiếu tô nền xanh + ✓. */
-    private fun appTile(pkg: String, active: Boolean): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; minimumHeight = dp(78)
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE; cornerRadius = dp(10).toFloat()
-            setColor(if (active) 0xFFE6F1FB.toInt() else 0xFFF4F6F8.toInt()); setStroke(dp(if (active) 2 else 1), if (active) 0xFF378ADD.toInt() else 0xFFD3D1C7.toInt())
+    private fun project(token: Long) {
+        val read = runtime.store.locked { read() }
+        val envelope = (read as? StoreRead.Loaded)?.envelope
+        val durableStop = envelope?.stopRequested == true
+        val model = CastRuntimeUi.render(read, runtime.coordinator.observe())
+        val projection = CastBubbleProjection.project(
+            model,
+            entries.map { it.row() },
+            envelope?.automationConfig?.defaultPackage,
+            localStopRequested = localAckActive(durableStop) || durableStop,
+            activeTargetPackage = envelope?.stableSession?.activeTarget?.packageName,
+        )
+        handler.post { applyProjection(projection, token) }
+    }
+
+    /**
+     * The local acknowledgement latch releases as soon as durable truth owns the Stop or the 500 ms
+     * acknowledgement budget expires, so the canonical control can never be pinned disabled.
+     */
+    private fun localAckActive(durableStop: Boolean): Boolean {
+        if (!stopInFlight.get()) return false
+        if (durableStop) { stopInFlight.set(false); return false }
+        if (android.os.SystemClock.elapsedRealtime() - stopRequestedAtMs > STOP_ACK_DEADLINE_MS) {
+            stopInFlight.set(false)
+            return false
         }
-        setPadding(dp(6), dp(8), dp(6), dp(8))
-        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) }
-        addView(ImageView(this@FloatingBubbleService).apply {
-            val s = dp(36); layoutParams = LinearLayout.LayoutParams(s, s)
-            ClusterCast.iconOf(applicationContext, pkg)?.let { setImageDrawable(it) } ?: setImageResource(android.R.drawable.sym_def_app_icon)
+        return true
+    }
+
+    private fun applyProjection(projection: BubbleProjection, token: Long) {
+        if (destroyed || token != generation.get() || bubble == null) return
+        lastProjection = projection
+        stopButton?.apply {
+            visibility = if (projection.stop == BubbleStopControl.HIDDEN) View.GONE else View.VISIBLE
+            isEnabled = projection.stop == BubbleStopControl.AVAILABLE
+            alpha = if (isEnabled) 1f else .65f
+            text = projection.stopLabel
+            contentDescription = "${projection.stopLabel}. ${projection.status}"
+        }
+        menuButton?.apply {
+            text = projection.menuLabel
+            contentDescription = projection.contentDescription
+        }
+        statusLabel?.apply {
+            text = projection.status
+            visibility = if (projection.stop == BubbleStopControl.HIDDEN) View.VISIBLE else View.GONE
+            contentDescription = projection.status
+        }
+        primaryButton?.apply {
+            val target = projection.primary
+            visibility = if (target == null) View.GONE else View.VISIBLE
+            text = target?.let { "Chiếu ${it.label.removeSuffix(" · mặc định")}" }.orEmpty()
+            contentDescription = text
+            setOnClickListener { target?.let { dispatchTarget(it.packageName) } }
+        }
+        if (menuPanel != null) renderMenu(projection)
+        applyFocusOrder(projection)
+    }
+
+    /** Deterministic Stop → apps → settings traversal for keyboard, rotary and TalkBack. */
+    private fun applyFocusOrder(projection: BubbleProjection) {
+        val views = projection.focusOrder.mapNotNull { target ->
+            when (target) {
+                BubbleFocusTarget.STOP -> stopButton
+                BubbleFocusTarget.APPS -> menuButton
+                BubbleFocusTarget.SETTINGS -> menuPanel?.findViewById<View>(SETTINGS_VIEW_ID)
+            }
+        }
+        views.forEachIndexed { index, view ->
+            view.isFocusable = true
+            view.nextFocusForwardId = views.getOrNull(index + 1)?.id ?: View.NO_ID
+        }
+    }
+
+    /** One tap renders local acknowledgement immediately and dispatches exactly one typed Stop. */
+    private fun requestStopOnce() {
+        val button = stopButton ?: return
+        if (!button.isEnabled) return
+        if (!stopInFlight.compareAndSet(false, true)) return
+        stopRequestedAtMs = android.os.SystemClock.elapsedRealtime()
+        button.isEnabled = false
+        button.alpha = .65f
+        button.text = "Đã yêu cầu dừng"
+        closeMenu()
+        val token = generation.get()
+        Thread {
+            val accepted = runCatching { runtime.coordinator.requestStop() }.getOrNull()
+            handler.post {
+                if (destroyed || token != generation.get()) return@post
+                if (accepted == null) {
+                    stopInFlight.set(false)
+                    stopButton?.apply { isEnabled = true; alpha = 1f; text = "Không lưu được Stop" }
+                }
+                projectState()
+            }
+        }.start()
+    }
+
+    private fun toggleMenu() {
+        if (menuPanel != null) { closeMenu(); return }
+        val manager = windowManager ?: return
+        val panel = LinearLayout(this).apply {
+            id = MENU_VIEW_ID
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xF21C2329.toInt())
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            isFocusableInTouchMode = true
+            setOnKeyListener { _, keyCode, event ->
+                if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { closeMenu(); true } else false
+            }
+        }
+        val layout = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = params?.x ?: dp(18)
+            y = (params?.y ?: dp(160)) + dp(76)
+        }
+        panel.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) { closeMenu(); true } else false
+        }
+        menuPanel = panel
+        val attached = runCatching { manager.addView(panel, layout) }.isSuccess
+        if (!attached) { menuPanel = null; return }
+        lastProjection?.let { renderMenu(it) }
+        panel.post { if (menuPanel === panel) panel.requestFocus() }
+        projectState()
+    }
+
+    private fun renderMenu(projection: BubbleProjection) {
+        val panel = menuPanel ?: return
+        panel.removeAllViews()
+        projection.menu.forEach { item ->
+            val entry = entries.firstOrNull { it.packageName == item.packageName }
+            panel.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(MENU_MIN_DP)
+                isFocusable = true
+                isEnabled = item.enabled
+                alpha = if (item.enabled) 1f else .55f
+                contentDescription = buildString {
+                    append(item.label)
+                    if (!item.enabled) item.disabledReason?.let {
+                        append(". Không khả dụng: ").append(CastBubbleProjection.unavailable(it))
+                    }
+                }
+                entry?.icon?.let { icon ->
+                    addView(ImageView(this@FloatingBubbleService).apply {
+                        setImageDrawable(icon)
+                        layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
+                            .apply { rightMargin = dp(10) }
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    })
+                }
+                addView(TextView(this@FloatingBubbleService).apply {
+                    text = item.label
+                    textSize = 13f
+                    setTextColor(Color.WHITE)
+                })
+                if (item.enabled) setOnClickListener { dispatchTarget(item.packageName) }
+            })
+        }
+        panel.addView(TextView(this).apply {
+            id = SETTINGS_VIEW_ID
+            text = "Mở điều khiển Cluster Cast"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            minimumHeight = dp(MENU_MIN_DP)
+            isFocusable = true
+            contentDescription = "Mở điều khiển Cluster Cast"
+            setOnClickListener { closeMenu(); openCastControls() }
         })
-        addView(TextView(this@FloatingBubbleService).apply {
-            text = (if (active) "✓ " else "") + ClusterCast.labelOf(applicationContext, pkg)
-            textSize = 12f; gravity = Gravity.CENTER; maxLines = 2; setPadding(0, dp(4), 0, 0)
-            setTextColor(if (active) 0xFF185FA5.toInt() else 0xFF1A1F24.toInt())
-        })
-        setOnClickListener { removeMenu(); castApp(pkg) }
+        if (projection.menu.isEmpty()) {
+            panel.addView(TextView(this).apply { text = "Chưa có ứng dụng yêu thích hoặc mặc định"; textSize = 12f; setTextColor(Color.WHITE) })
+        }
     }
 
-    private fun actBtn(label: String, color: Int, onClick: () -> Unit): TextView = TextView(this).apply {
-        text = label; textSize = 14f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); minHeight = dp(52)
-        background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(10).toFloat(); setColor(color) }
-        setPadding(dp(8), dp(8), dp(8), dp(8))
-        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(3), 0, dp(3), 0) }
-        setOnClickListener { runCatching(onClick) }
-    }
-    private fun removeMenu() { menu?.let { m -> runCatching { wm?.removeView(m) } }; menu = null }
-
-    private fun openSettings() = runCatching { startActivity(Intent(this, ClusterCastActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    override fun onDestroy() {
-        ClusterCast.onCastingChanged = null
-        ui.removeCallbacks(fade)
-        removeMenu()
-        runCatching { bubble?.let { wm?.removeView(it) } }; bubble = null
-        super.onDestroy()
+    private fun closeMenu() {
+        val panel = menuPanel ?: return
+        menuPanel = null
+        runCatching { windowManager?.removeView(panel) }
+        params?.let { layout ->
+            layout.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            bubble?.let { view -> runCatching { windowManager?.updateViewLayout(view, layout) } }
+        }
     }
 
-    private fun notifyNeedOverlay() {
-        val i = Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val pi = PendingIntent.getActivity(this, 0, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val n = Notification.Builder(this, ensureChannel())
-            .setContentTitle("Nút nổi cần quyền hiển thị")
-            .setContentText("Chạm để cấp quyền 'Hiển thị trên ứng dụng khác'")
-            .setSmallIcon(android.R.drawable.ic_menu_mapmode).setContentIntent(pi).setAutoCancel(true).build()
-        runCatching { (getSystemService(NotificationManager::class.java)).notify(NOTIF_ID + 1, n) }
+    /** Exported canonical action dispatch through the one process runtime and manual-intent owner. */
+    private fun dispatchTarget(packageName: String) {
+        closeMenu()
+        if (!dispatchInFlight.compareAndSet(false, true)) return
+        val token = generation.get()
+        Thread {
+            runCatching {
+                runtime.coordinator.runManualIntent(
+                    packageName,
+                    runtime.vehicleFacts,
+                    CastManualTargetReader { catalog.snapshot(it, runtime.gateway.connectedPhoneSession(it)) },
+                    preferredDensityDpi = catalog.clusterDensityDpi(packageName),
+                    clusterStyle = catalog.clusterStyle(packageName),
+                )
+            }
+            dispatchInFlight.set(false)
+            handler.post { if (!destroyed && token == generation.get()) projectState() }
+        }.start()
     }
 
-    private fun ensureChannel(): String {
-        val ch = "cluster_bubble"
+    private fun openCastControls() = startActivity(
+        Intent(this, ClusterCastActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+    )
+
+    private fun bubbleText(value: String, minDp: Int) = TextView(this).apply {
+        text = value
+        textSize = 12f
+        setTextColor(Color.WHITE)
+        gravity = Gravity.CENTER
+        isFocusable = true
+        minimumWidth = dp(minDp)
+        minimumHeight = dp(minDp)
+        setPadding(dp(12), dp(8), dp(12), dp(8))
+    }
+
+    private fun notification(): android.app.Notification {
+        val channel = "cluster_cast_v2"
         if (Build.VERSION.SDK_INT >= 26) {
-            val nm = getSystemService(NotificationManager::class.java)
-            if (nm.getNotificationChannel(ch) == null)
-                nm.createNotificationChannel(NotificationChannel(ch, "Nút nổi Map-cluster", NotificationManager.IMPORTANCE_LOW))
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
+                NotificationChannel(channel, "Cluster Cast", NotificationManager.IMPORTANCE_LOW),
+            )
         }
-        return ch
+        val pending = PendingIntent.getActivity(
+            this, 0, Intent(this, ClusterCastActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        @Suppress("DEPRECATION")
+        return android.app.Notification.Builder(this, channel)
+            .setSmallIcon(R.drawable.ic_launcher)
+            .setContentTitle("Cluster Cast V2")
+            .setContentText("Nhấn để mở điều khiển")
+            .setOngoing(true)
+            .setContentIntent(pending)
+            .build()
     }
 
-    private fun buildNotif(): Notification {
-        val stopI = Intent(this, FloatingBubbleService::class.java).setAction(ACTION_STOP)
-        val stopPi = PendingIntent.getService(this, 1, stopI, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        return Notification.Builder(this, ensureChannel())
-            .setContentTitle("Nút nổi Chiếu-cụm đang bật")
-            .setContentText("Chạm bong bóng → menu chọn app / về màn chính")
-            .setSmallIcon(android.R.drawable.ic_menu_mapmode)
-            .addAction(Notification.Action.Builder(null, "Tắt nút nổi", stopPi).build())
-            .setOngoing(true).build()
-    }
+    private fun dp(value: Int) = (value * resources.displayMetrics.density + .5f).toInt()
 
     companion object {
-        // Bong bóng luôn nổi trên mọi app nên PHẢI mờ lúc rảnh, không thì nó che nội dung app đang dùng.
-        private const val IDLE_ALPHA = 0.35f     // rảnh: chỉ đủ thấy nó ở đâu
-        private const val ACTIVE_ALPHA = 1.0f    // đang chạm/kéo, hoặc vừa đổi trạng thái chiếu
-        private const val FADE_DELAY_MS = 2500L
-        private const val NOTIF_ID = 4720
-        private const val ACTION_STOP = "com.byd.clusternav.BUBBLE_STOP"
-        fun start(ctx: Context) { runCatching { ctx.startForegroundService(Intent(ctx, FloatingBubbleService::class.java)) } }
-        fun stop(ctx: Context) { runCatching { ctx.stopService(Intent(ctx, FloatingBubbleService::class.java)) } }
+        private val STOP_VIEW_ID = View.generateViewId()
+        private val MENU_BUTTON_ID = View.generateViewId()
+        private const val NOTIFICATION_ID = 1042
+        private const val REFRESH_INTERVAL_MS = 15_000L
+        private const val STOP_MIN_DP = 64
+        private const val MENU_MIN_DP = 56
+        private val MENU_VIEW_ID = View.generateViewId()
+        private val SETTINGS_VIEW_ID = View.generateViewId()
+        internal const val STOP_ACK_DEADLINE_MS = 500L
     }
 }

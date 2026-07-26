@@ -55,9 +55,9 @@ object ClusterBroadcaster {
         Log.i(TAG, "resetBydNaving (10019/STATE=9: true->false)")
     }
 
-    /** Bắn 1 frame guidance từ NavState (TYPE=1 — live-confirmed Seal DL3). */
-    fun emit(ctx: Context, s: NavState, byd: Boolean = false) {
-        if (!s.active) { stop(ctx); return }
+    /** Deliver one frame to the Cluster lane only. HUD delivery has a separate adapter entry point. */
+    fun emitLane(ctx: Context, s: NavState, byd: Boolean = false) {
+        if (!s.active) { stopLane(ctx); return }
         val clean = NavFormat.cleanRoadName(s.road)
         if (clean != lastCleanRoad) { lastCleanRoad = clean; scrollTick = 0 }   // đổi đường -> cuộn lại từ đầu
         val seg = NavParse.parseMeters(s.distance)
@@ -102,20 +102,28 @@ object ClusterBroadcaster {
                 TurnDistanceInterpolator.closingRate(), SpeedProvider.mps(), s.road, lastCleanRoad + "|" + s.maneuverText)
         }
         send(ctx, frame)
-        Log.i(TAG, "emit icon=${frame.getIntExtra("NEW_ICON", -1)} seg=${frame.getIntExtra("SEG_REMAIN_DIS", -1)} " +
+        Log.i(TAG, "emit lane icon=${frame.getIntExtra("NEW_ICON", -1)} seg=${frame.getIntExtra("SEG_REMAIN_DIS", -1)} " +
             "raw='${s.distance}' road='${frame.getStringExtra("NEXT_ROAD_NAME")}' byd=$byd")
-        // ── HUD kính lái (thử nghiệm): ghi thẳng CAN instrument register (raw + dedup) như DashCast → firmware animate.
-        // Bật → đẩy; TẮT giữa phiên → clearHud NGAY (else) để kính không kẹt frame cũ (clearHud tự no-op nếu chưa active).
-        if (Prefs.hud(ctx)) pushHud(ctx, s, if (hasDist) rawMeters else -1) else clearHud(ctx)
+    }
+
+    /** Deliver one frame to HUD only; it never broadcasts, resets or backpressures the Cluster lane. */
+    fun emitHud(ctx: Context, s: NavState) {
+        val cleanRoad = NavFormat.cleanRoadName(s.road)
+        val meters = NavParse.parseMeters(s.distance).takeIf { it >= 0 } ?: -1
+        pushHud(ctx, s, meters, cleanRoad)
     }
 
     /** Ghi 1 frame nav lên HUD qua CAN instrument (BydHal.writeNavFrame) — RAW distance, dedup, chạy FIFO qua hudExec. */
-    private fun pushHud(ctx: Context, s: NavState, seg: Int) {
-        val icon = bydIcon(s); val road = lastCleanRoad
-        if (icon == lastHudIcon && seg == lastHudSeg && road == lastHudRoad) return   // không đổi → thôi (đỡ spam HAL)
-        lastHudIcon = icon; lastHudSeg = seg; lastHudRoad = road; hudActive = true
+    private fun pushHud(ctx: Context, s: NavState, seg: Int, cleanRoad: String) {
+        val icon = bydIcon(s)
+        // HUD buffer nhỏ (cùng họ ô cụm) → đẩy tên VIẾT TẮT theo ngân sách HUD, KHÔNG full name:
+        //   full name tràn buffer → firmware BỎ tên (chỉ còn mũi tên) = bug đang chữa (D4/F7/F8).
+        // Dedup + lastHudRoad theo BẢN VIẾT TẮT (đúng cái GHI lên kính) → nhất quán, đỡ spam HAL.
+        val hudRoad = NavFormat.fitRoadName(cleanRoad, NavFormat.HUD_ROAD_MAX_UNITS)
+        if (icon == lastHudIcon && seg == lastHudSeg && hudRoad == lastHudRoad) return   // không đổi → thôi (đỡ spam HAL)
+        lastHudIcon = icon; lastHudSeg = seg; lastHudRoad = hudRoad; hudActive = true
         val app = ctx.applicationContext
-        hudExec.execute { Log.i(TAG, "HUD icon=$icon seg=$seg road='$road' → " + runCatching { BydHal.writeNavFrame(app, icon, seg, road) }.getOrElse { "EXC ${it.message}" }) }
+        hudExec.execute { Log.i(TAG, "HUD icon=$icon seg=$seg road='$hudRoad' → " + runCatching { BydHal.writeNavFrame(app, icon, seg, hudRoad) }.getOrElse { "EXC ${it.message}" }) }
     }
 
     /** Tắt HUD (status=4 + clear) — gọi khi hết nav HOẶC khi tắt toggle HUD giữa phiên. */
@@ -126,8 +134,11 @@ object ClusterBroadcaster {
         hudExec.execute { Log.i(TAG, "HUD clear → " + runCatching { BydHal.clearNavFrame(app) }.getOrElse { "EXC ${it.message}" }) }
     }
 
-    /** Tắt HUD tức thì khi user bỏ tick toggle (MainActivity gọi) — khỏi đợi heartbeat/nav-stop. */
-    fun onHudOff(ctx: Context) = clearHud(ctx)
+    /** Stop HUD only; Cluster-lane delivery/session state is untouched. */
+    fun stopHud(ctx: Context) = clearHud(ctx)
+
+    @Deprecated("Use stopHud")
+    fun onHudOff(ctx: Context) = stopHud(ctx)
 
     /** BYD turn-icon (1-49, CanBusController enum) từ maneuver text — map đơn giản; đủ cho HUD (cự ly là chính). */
     private fun bydIcon(s: NavState): Int {
@@ -150,16 +161,22 @@ object ClusterBroadcaster {
         }
     }
 
-    /** Dừng dẫn đường — idle cụm sạch + tắt nhịp tim + cho phép reset lại ở phiên sau. */
-    fun stop(ctx: Context) {
+    /** Stop Cluster lane only; HUD state and executor are untouched. */
+    fun stopLane(ctx: Context) {
         cancelHeartbeat()
         sessionReset = false
         lastState = null
         lastCleanRoad = ""; scrollTick = 0
         TurnDistanceInterpolator.reset()
-        resetBydNaving(ctx)        // 10019/STATE=9 true->false: idle cả mIsBYDMapNaving lẫn mIsGAODENaving
-        clearHud(ctx)             // tắt HUD kính lái (nếu đang bật)
-        Log.i(TAG, "stop")
+        resetBydNaving(ctx)
+        Log.i(TAG, "stop lane")
+    }
+
+    /** Whole Navigation Stop clears both physical outputs. */
+    fun stop(ctx: Context) {
+        stopLane(ctx)
+        stopHud(ctx)
+        Log.i(TAG, "stop navigation")
     }
 
     private fun send(ctx: Context, intent: Intent) {
@@ -191,8 +208,8 @@ object ClusterBroadcaster {
         lastState = null
         TurnDistanceInterpolator.reset()
         SourceArbiter.clear()
-        ctx?.let { resetBydNaving(it); clearHud(it) }
-        Log.i(TAG, "idle self-heal (stale/disabled)")
+        ctx?.let { resetBydNaving(it) }
+        Log.i(TAG, "lane idle self-heal (stale/disabled); HUD remains independently owned")
     }
 
     private fun cancelHeartbeat() {

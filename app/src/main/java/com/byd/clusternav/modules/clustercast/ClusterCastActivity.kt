@@ -1,489 +1,493 @@
 package com.byd.clusternav.modules.clustercast
 
 import android.app.Activity
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.view.Gravity
-import android.view.View
-import android.view.ViewGroup
+import android.provider.Settings
 import android.widget.Button
-import android.widget.EditText
-import android.widget.ImageView
-import android.widget.LinearLayout
+import android.widget.GridLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import com.byd.clusternav.Lang
-import com.byd.clusternav.Prefs
 import com.byd.clusternav.R
+import com.byd.clusternav.modules.clustercast.v2.CastAction
+import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
+import com.byd.clusternav.modules.clustercast.v2.CastAndroidLifecycle
+import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
+import com.byd.clusternav.modules.clustercast.v2.CastManualIntentResult
+import com.byd.clusternav.modules.clustercast.v2.CastManualTargetReader
+import com.byd.clusternav.modules.clustercast.v2.CastRolloutRegistry
+import com.byd.clusternav.modules.clustercast.v2.EngineVersion
+import com.byd.clusternav.modules.clustercast.v2.CastIntent
+import com.byd.clusternav.modules.clustercast.v2.CastIntentKind
+import com.byd.clusternav.modules.clustercast.v2.ExecutionResult
+import com.byd.clusternav.modules.clustercast.v2.StoreRead
+import com.byd.clusternav.modules.clustercast.v2.TargetEvidence
 
-/** Debounce áp-live (ms): gộp loạt nhấn nút scale dồn dập thành 1 lần [ClusterCast.applyScaleLive]. */
-private const val SCALE_APPLY_DEBOUNCE_MS = 350L
-
-/**
- * MÀN "CHIẾU APP LÊN CỤM" — 2 tầng:
- *  • Tầng ĐIỀU KHIỂN (khi lái): trạng thái + CHIẾU / TẮT.
- *  • Tầng CÀI ĐẶT (khi đỗ): tick app cho menu nút nổi · kiểu cong-km/h ↔ thẳng · SCALE PER-APP (nút mũi tên, T-C) ·
- *    Hồ sơ cụm đa-model (export/import, T-F) · log (gập).
- * Chế độ chiếu per-app (long-press tile): T1 mặc định (giữ dẫn) ↔ ⊞ T3 (daemon, chắc-ăn).
- * exported=false; mở từ Card "Chiếu app lên cụm" hoặc giữ nút nổi (khi chưa có app nào).
- */
+/** Cluster Cast V2 controller. All mutations route through the durable coordinator. */
 class ClusterCastActivity : Activity() {
-
-    private lateinit var log: TextView
-    private lateinit var statusLine: TextView
-    private lateinit var kmhLabel: TextView
-    private var profileLabel: TextView? = null
-    private var profileEdit: EditText? = null
-    private var logBtn: Button? = null
-    private val chosen = HashSet<String>()
-    // ★ DEBOUNCE áp-live (fix LAG trên xe): nhấn nút scale → chỉ ClusterCast.setScale local + cập nhật nhãn tức thì;
-    //   hoãn applyScaleLive SCALE_APPLY_DEBOUNCE_MS, gộp loạt nhấn dồn dập thành 1 lần áp qua dadb (tránh mở N kết
-    //   nối + `am task resize`/`wm density` mạng ~1-2s bị single-flight DROP → hết lag/nhấn-không-ăn/CarPlay-nháy-đen).
-    private val scaleApplyHandler = Handler(Looper.getMainLooper())
-    /** Vẽ lại các ô app khi trạng thái chiếu đổi (đánh dấu app ĐANG chiếu). */
-    private val repaintTiles = mutableListOf<() -> Unit>()
-
-    override fun onCreate(saved: Bundle?) {
-        super.onCreate(saved)
-        Lang.load(this)   // nạp ngôn ngữ TRƯỚC khi dựng UI để t() trả đúng tiếng
-        ClusterCast.loadPrefs(this)
-        // ★ W2-5: đo kích cụm THẬT ngay khi mở màn — để nút chỉnh khung không tính theo con số đoán
-        ClusterCast.measureClusterInProcess(this)
-        ClusterCast.repairLegacyAnim(applicationContext) { s -> runOnUiThread { logln(s) } }
-        ClusterCast.reconcileOnStart(applicationContext) { s -> runOnUiThread { logln(s) } }
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)); setBackgroundColor(0xFFF4F6F8.toInt()) }
-        setContentView(ScrollView(this).apply { addView(root) })
-
-        // ★ v0.38: DÁN SỐ HIỆU BUILD lên tiêu đề. Bài học 21/07: cùng một tên "v0.37" từng được dùng cho 3 bản
-        //   khác nhau, và một lần đoán nhầm phiên bản xe đang chạy đã làm cả buổi chẩn đoán đi sai hướng.
-        //   Ảnh chụp màn hình hay log hiện trường từ giờ luôn tự mang theo version.
-        val ver = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"
-        root.addView(TextView(this).apply { text = Lang.t("Chiếu app lên cụm  ·  v$ver", "Cast app to cluster  ·  v$ver"); textSize = 20f; setTextColor(0xFF1A1F24.toInt()) })
-        root.addView(TextView(this).apply { text = Lang.t("Mở app + đưa về trạng thái cần xem ở màn giữa TRƯỚC (vd Maps: chọn tuyến), rồi CHIẾU. Cụm không cảm ứng nên chỉ để NGÓ.", "Open the app and set it to the state you want to view on the center screen FIRST (e.g. Maps: pick a route), then CAST. The cluster is not touch, so it is for viewing only."); textSize = 13f; setTextColor(0xFF5B6470.toInt()); setPadding(0, dp(4), 0, dp(10)) })
-
-        // ── TẦNG ĐIỀU KHIỂN ──
-        statusLine = TextView(this).apply { textSize = 15f; setTextColor(0xFF1A1F24.toInt()); setPadding(0, dp(2), 0, dp(8)) }
-        root.addView(statusLine)
-        root.addView(primaryBtn(Lang.t("CHIẾU LÊN CỤM", "CAST TO CLUSTER")) {
-            logln("=== CHIẾU (v$ver) ==="); showLog()   // chuỗi chiếu mất ~10-15s: không mở log thì người thử tưởng máy treo
-            ClusterCast.cast(applicationContext, "") { s -> runOnUiThread { logln(s); refresh() } }
-        })
-        root.addView(warnBtn(Lang.t("TẮT — trả đồng hồ", "STOP — restore gauges")) {
-            logln("=== TẮT (v$ver) ==="); showLog()
-            ClusterCast.stop(applicationContext) { s -> runOnUiThread { logln(s); refresh() } }
-        })
-
-        // ── TẦNG CÀI ĐẶT ──
-        root.addView(sectionTitle(Lang.t("Cài đặt chiếu (khi đỗ)", "Cast settings (when parked)")))
-
-        // kiểu cong / thẳng
-        kmhLabel = TextView(this).apply { textSize = 13f; setTextColor(0xFF5B6470.toInt()); setPadding(0, dp(4), 0, dp(2)) }
-        // ★ v0.37: kiểu cụm giờ theo TỪNG APP (nút nằm trong panel kích thước của app). Cờ toàn cục cũ làm
-        //   app sau dính kiểu của app trước — đúng lỗi "chuyển app không clear mode".
-        root.addView(kmhLabel)
-
-        // "Mượt UI head-unit": set 3 animation scale = 0.5 global (tweak hội BYD). Bật/tắt, tự áp qua dadb.
-        root.addView(outlineBtn(Lang.t("Mượt UI head-unit (animation 0.5) — bật/tắt", "Smooth head-unit UI (animation 0.5) — on/off")) {
-            val v = !Prefs.animOpt(applicationContext); Prefs.setAnimOpt(applicationContext, v)
-            ClusterCast.applyGlobalAnim(applicationContext, if (v) "0.5" else "1.0") { s -> runOnUiThread { logln(s) } }
-            logln(if (v) "Mượt UI: BẬT (animation 0.5)" else "Mượt UI: TẮT (về 1.0)")
-        })
-
-        // ── DANH SÁCH APP (1 CỘT): tick app cho menu nút nổi · panel scale hiện INLINE ngay dưới app đã tick ──
-        root.addView(sectionTitle(Lang.t("App được chiếu (hiện trong menu nút nổi)", "Apps to cast (shown in the floating-button menu)")))
-        root.addView(TextView(this).apply { text = Lang.t("Tick app muốn chiếu lên cụm (nên chọn app ĐỂ NGÓ: nav, nhạc, đồng hồ, video). Tick xong → nút chỉnh kích thước hiện gọn ngay dưới app đó.", "Tick the apps you want to cast to the cluster (pick apps for VIEWING: nav, music, clock, video). After ticking → the adjust-size button appears neatly right under that app."); textSize = 12f; setTextColor(0xFF5B6470.toInt()); setPadding(0, 0, 0, dp(6)) })
-        chosen.clear(); chosen.addAll(ClusterCast.castableApps)
-        val gridBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = card(); setPadding(dp(6), dp(6), dp(6), dp(6)) }
-        val loadingTv = TextView(this).apply { text = Lang.t("Đang tải danh sách app…", "Loading app list…"); textSize = 14f; setTextColor(0xFF5B6470.toInt()); setPadding(dp(10), dp(12), dp(10), dp(12)) }
-        gridBox.addView(loadingTv)
-        root.addView(gridBox)
-        root.addView(TextView(this).apply { text = Lang.t("Giữ nhấn 1 app = xoay vòng chế độ: (trống) chạy đủ 3 rung, rung cuối được mở lại app → ◈ GIỮ PHIÊN, không bao giờ force-stop (chọn cho Android Auto/CarPlay/app đang dẫn) → ⊞ cho daemon ép freeform sau khi đã bám cụm", "Long-press an app = cycle modes: (empty) runs all 3 shakes, the last shake may reopen the app → ◈ KEEP SESSION, never force-stop (pick for Android Auto/CarPlay/an app that is navigating) → ⊞ let the daemon force freeform after it has attached to the cluster"); textSize = 12f; setTextColor(0xFF5B6470.toInt()); setPadding(0, dp(4), 0, dp(2)) })
-        // ★ đọc app + loadLabel/loadIcon CHẠY NỀN (nhiều app → tránh giật/ANR trong onCreate), dựng block trên UI thread
-        Thread {
-            val apps = ClusterCast.listInstalledApps(applicationContext)
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                gridBox.removeView(loadingTv)
-                if (apps.isEmpty()) { gridBox.addView(TextView(this).apply { text = Lang.t("(không đọc được danh sách app)", "(could not read app list)"); textSize = 13f; setPadding(dp(10), dp(10), dp(10), dp(10)) }); return@runOnUiThread }
-                apps.forEach { a -> gridBox.addView(appBlock(a)) }   // 1 CỘT: mỗi app = block dọc [tile full-width] + [holder scale inline]
-            }
-        }.start()
-
-        // ── HỒ SƠ CỤM ĐA-MODEL (T-F): auto-detect + override + export/import ──
-        root.addView(sectionTitle(Lang.t("Hồ sơ cụm (đa-model — chia sẻ nhóm)", "Cluster profile (multi-model — share with group)")))
-        profileLabel = TextView(this).apply { textSize = 12f; setTextColor(0xFF5B6470.toInt()); setPadding(0, 0, 0, dp(4)) }
-        root.addView(profileLabel)
-        root.addView(outlineBtn(Lang.t("Xuất hồ sơ (copy để chia sẻ)", "Export profile (copy to share)")) {
-            val p = ClusterProfile.resolve(this); logln("Hồ sơ hiện tại (copy dòng dưới để share):"); logln(p.export()); showLog()
-        })
-        profileEdit = EditText(this).apply {
-            hint = Lang.t("dán chuỗi hồ sơ để nhập (id;diLink;W;H;cast;tear;hint)", "paste a profile string to import (id;diLink;W;H;cast;tear;hint)"); textSize = 13f
-            setBackgroundColor(Color.WHITE); setPadding(dp(10), dp(10), dp(10), dp(10))
+    private lateinit var runtime: CastAndroidRuntime.Runtime
+    private lateinit var catalog: CastAppCatalog
+    private lateinit var scroll: ScrollView
+    private lateinit var status: TextView
+    private lateinit var selected: TextView
+    private lateinit var apps: GridLayout
+    private lateinit var castButton: Button
+    private lateinit var stopButton: Button
+    private lateinit var adjustButton: Button
+    private lateinit var appManagerButton: Button
+    private lateinit var diagnosticsButton: Button
+    private lateinit var retryButton: Button
+    private lateinit var phoneDisconnectButton: Button
+    private lateinit var recoverOnceButton: Button
+    private lateinit var physicalInstructionButton: Button
+    private lateinit var profileSetupButton: Button
+    private lateinit var refreshReader: CastActivityRefreshReader
+    private var selectedPackage: String? = null
+    private val operationStatus = CastOperationStatus()
+    private val work = CastActivityWork()
+    private lateinit var appBinding: CastAppManagerBinding
+    @Volatile private var castActionExported = false
+    @Volatile private var selectionExplicit = false
+    private val statusTimers = CastActivityStatusTimers(operationStatus, ::refresh)
+    @Volatile private var destroyed = false
+    private var stopSequence = 0L
+    @Volatile private var stopRequestedAt: java.time.Instant? = null
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        catalog = CastAppCatalog(applicationContext)
+        runtime = CastAndroidRuntime.create(applicationContext)
+        refreshReader = CastActivityRefreshReader(runtime, catalog, operationStatus)
+        appBinding = CastAppManagerBinding(applicationContext, catalog, runtime.automation, { work.misc(it) }, ::executeCast)
+        setContentView(R.layout.activity_cluster_cast)
+        scroll = findViewById(R.id.cast_scroll)
+        status = findViewById(R.id.cast_status)
+        selected = findViewById(R.id.cast_selected)
+        apps = findViewById<GridLayout>(R.id.cast_apps).apply { columnCount = resources.getInteger(R.integer.cast_app_columns) }
+        castButton = findViewById<Button>(R.id.cast_start).apply { setOnClickListener { selectedPackage?.let(::executeCast) ?: show("Chọn app trước") } }
+        stopButton = findViewById<Button>(R.id.cast_stop).apply { setOnClickListener { executeStop() } }
+        adjustButton = findViewById<Button>(R.id.cast_adjust).apply { setOnClickListener { openAdjustment() } }
+        appManagerButton = findViewById<Button>(R.id.cast_app_manager).apply { setOnClickListener { openAppManager() } }
+        diagnosticsButton = findViewById<Button>(R.id.cast_diagnostics).apply { setOnClickListener { startActivity(android.content.Intent(this@ClusterCastActivity, DiagActivity::class.java)) } }
+        retryButton = findViewById<Button>(R.id.cast_retry).apply { setOnClickListener { retryConnect() } }
+        phoneDisconnectButton = findViewById<Button>(R.id.cast_phone_disconnect).apply { setOnClickListener { showPhoneDisconnectGuidance() } }
+        recoverOnceButton = findViewById<Button>(R.id.cast_recover_once).apply { setOnClickListener { confirmEligibleRecovery() } }
+        physicalInstructionButton = findViewById<Button>(R.id.cast_physical_instruction).apply { setOnClickListener { showPhysicalInstruction() } }
+        profileSetupButton = findViewById<Button>(R.id.cast_profile_setup).apply { setOnClickListener { openProfileSetup() } }
+        selectedPackage = savedInstanceState?.getString(STATE_SELECTED_PACKAGE)
+        selectionExplicit = selectedPackage != null
+        selectedPackage?.let { selected.text = "Đã chọn: $it" }
+        val savedScrollY = savedInstanceState?.getInt(STATE_SCROLL_Y, 0) ?: 0
+        val savedFocusId = savedInstanceState?.getInt(STATE_FOCUS_ID, android.view.View.NO_ID)
+            ?: android.view.View.NO_ID
+        scroll.post {
+            if (destroyed || isFinishing || isDestroyed) return@post
+            scroll.scrollTo(0, savedScrollY)
+            if (savedFocusId != android.view.View.NO_ID) findViewById<android.view.View>(savedFocusId)?.requestFocus()
         }
-        root.addView(profileEdit, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
-        val profRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        profRow.addView(smallBtn(Lang.t("Nhập & áp hồ sơ", "Import & apply profile")) {
-            // ★ v0.36: ô TRỐNG không còn báo "sai định dạng" (dọa người dùng vô cớ) — điền sẵn hồ sơ hiện tại để
-            //   thấy mẫu. Và MỌI nhánh đều showLog(), vì panel log mặc định ẩn → trước đây bấm xong tưởng máy đơ.
-            val raw = profileEdit?.text?.toString().orEmpty()
-            if (raw.isBlank()) {
-                val cur = ClusterProfile.resolve(this).export()
-                profileEdit?.setText(cur)
-                logln("Ô nhập đang trống — đã điền sẵn hồ sơ HIỆN TẠI: $cur\n(chỉ dán vào đây khi nhận được hồ sơ từ nhóm)")
-                showLog(); return@smallBtn
+        loadApps()
+        listOf(castButton, stopButton, adjustButton, appManagerButton, diagnosticsButton, retryButton,
+            phoneDisconnectButton, recoverOnceButton, physicalInstructionButton, profileSetupButton)
+            .forEach { it.isEnabled = false }
+        work.misc {
+            runCatching {
+                runtime.coordinator.initialize(bootId())
+                runtime.coordinator.applyRollout(CastRolloutRegistry.vehicleTestCandidate)
+                CastAndroidLifecycle.rehydrate(applicationContext)
             }
-            val p = ClusterProfile.parse(raw)
-            if (p == null) logln("❌ hồ sơ sai định dạng: '${raw.trim().take(60)}' — cần đúng 7 phần id;diLink;W;H;cast;tear;hint")
-            else { ClusterProfile.saveOverride(applicationContext, p); logln("✅ đã áp hồ sơ override: ${p.summary()}"); refresh() }
-            showLog()
-        }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
-        profRow.addView(smallBtn(Lang.t("Về auto-detect", "Back to auto-detect")) {
-            ClusterProfile.clearOverride(applicationContext); logln("đã xoá override — về auto-detect theo model xe"); showLog(); refresh()
-        }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
-        root.addView(profRow)
-
-        // ── CHẨN ĐOÁN (tách hẳn ra màn riêng) ──
-        root.addView(outlineBtn(Lang.t("🩺 Chẩn đoán · lấy log gửi dev", "🩺 Diagnostics · grab log for devs")) {
-            startActivity(android.content.Intent(this, DiagActivity::class.java))
-        })
-
-        // ── LOG (gập) ──
-        val lb = outlineBtn(Lang.t("Chi tiết kỹ thuật ▾", "Technical details ▾")) {}
-        logBtn = lb; root.addView(lb)
-        log = TextView(this).apply {
-            textSize = 12f; setTextColor(Color.parseColor("#1A1F24")); setBackgroundColor(Color.parseColor("#F1EFE8"))
-            setPadding(dp(12), dp(12), dp(12), dp(12)); setTextIsSelectable(true); visibility = View.GONE
-            movementMethod = android.text.method.ScrollingMovementMethod()   // hộp log cao cố định 240dp → phải tự cuộn được
+            postUi {
+                handleIntent(intent)
+                refresh()
+                reconcileSelectionAndDrain()
+            }
         }
-        lb.setOnClickListener { log.visibility = if (log.visibility == View.GONE) View.VISIBLE else View.GONE; lb.text = if (log.visibility == View.VISIBLE) Lang.t("Chi tiết kỹ thuật ▴", "Technical details ▴") else Lang.t("Chi tiết kỹ thuật ▾", "Technical details ▾") }
-        root.addView(log, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(240)).apply { topMargin = dp(6) })
-
-        refresh()
-        // auto-cast nếu gọi kèm --ez cast true
-        if (intent.getBooleanExtra("cast", false)) ClusterCast.cast(applicationContext, "") { s -> runOnUiThread { logln(s); refresh() } }
     }
-
+    override fun onNewIntent(intent: android.content.Intent?) { super.onNewIntent(intent); setIntent(intent); handleIntent(intent) }
+    private fun handleIntent(value: android.content.Intent?) {
+        if (value?.action == ACTION_STOP) {
+            value.action = null
+            executeStop()
+        }
+    }
     override fun onResume() { super.onResume(); refresh() }
-    override fun onDestroy() { super.onDestroy(); scaleApplyHandler.removeCallbacksAndMessages(null) }   // hủy debounce đang chờ khi thoát màn
-
-    /** 1 BLOCK dọc (lưới 1 cột): [tile app full-width] + [holder panel scale inline]. Tick app → holder hiện panel. */
-    private fun appBlock(a: ClusterCast.AppInfo): View {
-        val block = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        val holder = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        block.addView(pickTile(a, holder))
-        block.addView(holder)
-        refreshScaleHolder(a.pkg, holder)   // app đã tick từ trước → hiện panel ngay (giữ lựa chọn cũ)
-        return block
+    override fun onDestroy() { destroyed = true; statusTimers.close(); operationStatus.clearAll(); work.close(); super.onDestroy() }
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_SELECTED_PACKAGE, selectedPackage)
+        outState.putInt(STATE_SCROLL_Y, scroll.scrollY)
+        outState.putInt(STATE_FOCUS_ID, currentFocus?.id ?: android.view.View.NO_ID)
+        super.onSaveInstanceState(outState)
     }
-
-    /** Hiện/ẩn panel scale INLINE trong holder của 1 block: tick → thêm panel · bỏ tick → xoá. Chỉ đụng block đó (giữ scroll). */
-    private fun refreshScaleHolder(pkg: String, holder: LinearLayout) {
-        holder.removeAllViews()
-        if (chosen.contains(pkg)) holder.addView(scalePanel(pkg))
+    private fun loadApps() {
+        work.misc {
+            val values = catalog.installed(runtime.automation.config().defaultPackage)
+            val preselected = appBinding.preselect(selectedPackage, values)
+            postUi {
+                apps.removeAllViews()
+                values.forEach { app ->
+                    apps.addView(appButton(app.label) {}.also { CastAppTiles.bind(it, app) { selectApp(app.label, app.packageName) } })
+                }
+                if (values.isEmpty()) apps.addView(text("Không đọc được danh sách app", 13f, 0xFF555555.toInt()))
+                if (selectedPackage == null && preselected != null) {
+                    selectedPackage = preselected
+                    selected.text = "Mặc định: " + (values.firstOrNull { it.packageName == preselected }?.label ?: preselected)
+                }
+                refresh()
+            }
+        }
     }
-
-    /** 1 ô app (full-width, lưới 1 cột): icon + tên, chạm = chọn/bỏ (nền xanh + ✓ khi chọn). Marker ⊞ = T3. */
-    private fun pickTile(a: ClusterCast.AppInfo, scaleHolder: LinearLayout): View {
-        val lbl = TextView(this).apply {
-            textSize = 15f; maxLines = 2; setPadding(dp(10), 0, 0, 0)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        val icon = ImageView(this).apply {
-            val s = dp(40); layoutParams = LinearLayout.LayoutParams(s, s)
-            a.icon?.let { setImageDrawable(it) } ?: setImageResource(android.R.drawable.sym_def_app_icon)
-        }
-        val tile = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(64)
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) }
-            addView(icon); addView(lbl)
-        }
-        fun paint() {
-            val on = chosen.contains(a.pkg)
-            // marker chế độ chiếu: ◈ = giữ phiên (cấm force-stop) · ⊞ = cho daemon ép freeform · (không) = đầy đủ
-            val marker = when {
-                ClusterCast.isKeepSession(a.pkg) -> "◈ "
-                ClusterCast.isT3(a.pkg) -> "⊞ "
-                else -> ""
+    private fun selectApp(label: String, packageName: String) {
+        selectionExplicit = true
+        selectedPackage = packageName
+        selected.text = "Đã chọn: $label"
+        refresh()
+        work.selection { revision ->
+            val queued = runtime.coordinator.queueLatestTarget(packageName)
+            postUi {
+                if (!work.isCurrentSelection(revision) || selectedPackage != packageName) return@postUi
+                if (queued) toast("Đã cập nhật lựa chọn mới nhất: $label"); refresh()
             }
-            tile.background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE; cornerRadius = dp(12).toFloat()
-                setColor(if (on) 0xFFE6F1FB.toInt() else Color.WHITE); setStroke(dp(if (on) 2 else 1), if (on) 0xFF378ADD.toInt() else 0xFFE3E6EB.toInt())
-            }
-            val live = ClusterCast.casting && ClusterCast.lastCastApp == a.pkg
-            lbl.setTextColor(if (live) 0xFF1B7A34.toInt() else if (on) 0xFF185FA5.toInt() else 0xFF1A1F24.toInt())
-            lbl.text = (if (live) Lang.t("● ĐANG CHIẾU · ", "● NOW CASTING · ") else if (on) "✓ " else "") + marker + a.label
         }
-        paint()
-        repaintTiles.add { paint() }
-        tile.setOnClickListener {
-            if (!chosen.remove(a.pkg)) chosen.add(a.pkg)
-            paint(); ClusterCast.setCastableApps(applicationContext, chosen.toList())
-            refreshScaleHolder(a.pkg, scaleHolder)   // chỉ cập nhật block này (đừng rebuild cả lưới → giữ scroll)
-        }
-        // long-press: XOAY VÒNG 3 chế độ — (trống) đầy đủ ↔ ◈ giữ phiên ↔ ⊞ ép freeform
-        tile.setOnLongClickListener {
-            val keep = ClusterCast.isKeepSession(a.pkg); val t3 = ClusterCast.isT3(a.pkg)
-            when {
-                !keep && !t3 -> { ClusterCast.setKeepSession(applicationContext, a.pkg, true) }
-                keep -> { ClusterCast.setKeepSession(applicationContext, a.pkg, false); ClusterCast.setT3(applicationContext, a.pkg, true) }
-                else -> { ClusterCast.setT3(applicationContext, a.pkg, false) }
-            }
-            logln("${a.label}: " + when {
-                ClusterCast.isKeepSession(a.pkg) -> "◈ GIỮ PHIÊN — không bao giờ force-stop (thà không lên cụm còn hơn mất phiên Android Auto/dẫn đường)"
-                ClusterCast.isT3(a.pkg) -> "⊞ cho phép daemon ép freeform SAU KHI đã bám VD (chỉ có tác dụng sau khi tắt-mở máy xe)"
-                else -> "mặc định — chạy đủ 3 rung, rung cuối được phép mở lại app (mất phiên)"
-            })
-            showLog(); paint(); true
-        }
-        return tile
     }
-
-    /** DEBOUNCE áp-live: hoãn SCALE_APPLY_DEBOUNCE_MS rồi gọi 1 lần [ClusterCast.applyScaleLive] cho [pkg] (nó tự đọc scale mới nhất). */
-    private fun scheduleApplyLive(pkg: String) {
-        // ★ v0.37: debounce theo TOKEN = tên gói. Bản cũ dùng removeCallbacksAndMessages(null) — xoá SẠCH hàng đợi,
-        //   nên chạm panel app A rồi chạm panel app B trong 350ms là lệnh của A BỊ HUỶ và không bao giờ chạy.
-        //   Đúng hiện tượng "bấm app này app kia lần lượt thì loạn".
-        scaleApplyHandler.removeCallbacksAndMessages(pkg)
-        scaleApplyHandler.postDelayed({
-            if (isFinishing || isDestroyed) return@postDelayed
-            ClusterCast.applyScaleLive(applicationContext, pkg) { s ->
-                runOnUiThread {
-                    logln(s)
-                    // ★ mọi kết quả KHÔNG-phải-đã-áp phải hiện ra ngoài, không được chỉ nằm trong panel log đang gập
-                    if (!s.startsWith("đã áp scale")) {
-                        android.widget.Toast.makeText(this, s.take(120), android.widget.Toast.LENGTH_LONG).show()
-                        showLog()
+    private fun openAppManager() = work.misc { val model = appBinding.model(castActionExported)
+        postUi { CastAppManagerDialog.show(this, model, appBinding) { loadApps() } } }
+    private fun executeCast(pkg: String) { executeCast(pkg, destructive = false) }
+    private fun executeCast(pkg: String, destructive: Boolean): Unit = runOperation(
+        if (destructive) "Đang tắt app rồi chiếu lại…" else "Đang xác minh target và chuẩn bị Cluster Cast…",
+        block = {
+            val r = runtime.coordinator.runManualIntent(pkg, runtime.vehicleFacts, manualTargetReader(), allowDestructive = destructive, preferredDensityDpi = catalog.clusterDensityDpi(pkg), clusterStyle = catalog.clusterStyle(pkg))
+            if (!destructive && CastRetryPrompt.escalatable(r, protectedTarget(pkg))) {
+                postUi { if (!destroyed) CastRetryPrompt.show(this, pkg) { executeCast(pkg, true) } }
+            }
+            r.statusMessage()
+        }, after = { drainPendingTarget() },
+    )
+    private fun protectedTarget(pkg: String): Boolean =
+        catalog.evidence(pkg, runtime.gateway.connectedPhoneSession(pkg)).projectionComponent == true
+    private fun reconcileSelectionAndDrain() {
+        if (!selectionExplicit) return drainPendingTarget()
+        val packageName = selectedPackage ?: return drainPendingTarget()
+        work.selection { revision -> val queued = runtime.coordinator.queueLatestTarget(packageName)
+            postUi { if (queued && work.isCurrentSelection(revision) && selectedPackage == packageName) refresh(); drainPendingTarget() }
+        } }
+    private fun drainPendingTarget() {
+        val mutationRevision = work.beginMutation()
+        refresh()
+        work.operation {
+            val pending = (runtime.store.locked { read() } as? StoreRead.Loaded)?.envelope?.pendingPackage
+            if (pending == null) {
+                work.finishMutation(mutationRevision)
+                postUi { refresh() }
+                return@operation
+            }
+            val token = operationStatus.begin("Đang tiếp tục lựa chọn mới nhất: $pending…")
+            postUi { statusTimers.cancelStatusExpiry(); refresh() }
+            val selectionRevision = work.currentSelectionRevision()
+            val result = runCatching { runtime.coordinator.resumePendingIntent(manualTargetReader()) }
+                .getOrElse {
+                    work.finishMutation(mutationRevision)
+                    completeOperation(token, "Lỗi: ${it.message}")
+                    return@operation
+                }
+            work.finishMutation(mutationRevision)
+            if (result == null) {
+                if (operationStatus.clear(token)) postUi { refresh() }
+                return@operation
+            }
+            completeOperation(token, result.statusMessage()) {
+                val target = (result as? CastManualIntentResult.Succeeded)?.stableSession?.activeTarget?.packageName
+                if (work.isCurrentSelection(selectionRevision) && target == pending &&
+                    (selectedPackage == null || selectedPackage == pending)
+                ) {
+                    selectedPackage = target
+                    selected.text = "Đã chọn: $target"
+                }
+            }
+        }
+    }
+    private fun manualTargetReader() = CastManualTargetReader { catalog.snapshot(it, runtime.gateway.connectedPhoneSession(it)) }
+    private fun openAdjustment() {
+        work.misc {
+            val observed = (runtime.coordinator.observe() as? com.byd.clusternav.modules.clustercast.v2.ObservationValue.Known)?.value
+            val result = observed?.let(runtime.adjustment::open)
+                ?: com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected("Không đọc được target/geometry")
+            postUi {
+                when (result) {
+                    is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected -> show("Không thể điều chỉnh: ${result.reason}")
+                    is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Ready -> showAdjustment(result.draft)
+                }
+            }
+        }
+    }
+    private fun showAdjustment(draft: com.byd.clusternav.modules.clustercast.v2.AdjustmentDraft) {
+        CastAdjustmentDialog.show(
+            this,
+            draft,
+            onApply = { applyGeometry(it) },
+            onUndo = { editAdjustment(runtime.adjustment::undoLast) },
+            onRestore = { editAdjustment(runtime.adjustment::restoreEntry, cancelAfterVerified = true) },
+            onReset = { editAdjustment(mutation = {
+                val envelope = (runtime.store.locked { read() } as? StoreRead.Loaded)?.envelope
+                runtime.adjustment.resetDefault(envelope?.stableSession?.baseline?.geometry ?: draft.entrySnapshot)
+            }) },
+            onDone = { finishAdjustment() },
+        )
+    }
+    private fun editAdjustment(mutation: () -> com.byd.clusternav.modules.clustercast.v2.AdjustmentResult,
+        cancelAfterVerified: Boolean = false) = work.misc {
+        when (val result = mutation()) {
+            is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Ready ->
+                postUi { applyGeometry(result.draft.localDraft, cancelAfterVerified) }
+            is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected -> postUi { show(result.reason) }
+        }
+    }
+    private fun applyGeometry(geometry: com.byd.clusternav.modules.clustercast.v2.AcceptedGeometry,
+        cancelAfterVerified: Boolean = false) = runOperation("Đang áp geometry…", {
+        val observed = (runtime.coordinator.observe() as? com.byd.clusternav.modules.clustercast.v2.ObservationValue.Known)?.value
+            ?: return@runOperation "Không đọc được target hiện tại"
+        val edited = runtime.adjustment.edit(geometry)
+        if (edited is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected) return@runOperation edited.reason
+        val applying = runtime.adjustment.beginApply(observed)
+        if (applying is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected) return@runOperation applying.reason
+        val pkg = observed.target?.packageName ?: return@runOperation "Target không xác định"
+        val plan = runtime.coordinator.plan(
+            CastIntent(CastIntentKind.APPLY_GEOMETRY, pkg, geometry = geometry, expectedTarget = observed.target),
+            catalog.evidence(pkg, runtime.gateway.connectedPhoneSession(pkg)),
+            installed = runCatching { packageManager.getPackageInfo(pkg, 0) }.isSuccess,
+            hasLauncher = packageManager.getLaunchIntentForPackage(pkg) != null,
+        )
+        when (val execution = runtime.coordinator.execute(plan, pkg)) {
+            is ExecutionResult.AwaitingVerification -> {
+                val bound = runtime.adjustment.bindExecution(execution.operationId, execution.epoch)
+                if (bound is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected) {
+                    return@runOperation "Không bind được geometry transaction: ${bound.reason}"
+                }
+                Thread.sleep(250)
+                if (!runtime.coordinator.observeAndComplete(execution.operationId)) {
+                    runtime.adjustment.markApplyFailed("Geometry chưa hội tụ")
+                    "Geometry chưa xác minh"
+                } else {
+                    val first = (runtime.coordinator.observe() as? com.byd.clusternav.modules.clustercast.v2.ObservationValue.Known)?.value
+                    val second = (runtime.coordinator.observe() as? com.byd.clusternav.modules.clustercast.v2.ObservationValue.Known)?.value
+                    if (first == null || second == null || runtime.adjustment.recordVerifiedApply(first, second) is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected) {
+                        runtime.adjustment.markApplyFailed("Read-back geometry thất bại")
+                        "Geometry chưa xác minh"
+                    } else {
+                        if (cancelAfterVerified) runtime.adjustment.cancelAfterRestore(first, second)
+                        "Đã áp và xác minh geometry"
                     }
                 }
             }
-        }, pkg, SCALE_APPLY_DEBOUNCE_MS)
+            is ExecutionResult.RecoveryRequired -> {
+                runtime.adjustment.markApplyFailed(execution.reason)
+                "Geometry cần phục hồi: ${execution.reason}"
+            }
+            is ExecutionResult.Blocked -> {
+                runtime.adjustment.markApplyFailed(execution.reason)
+                "Geometry bị chặn: ${execution.reason}"
+            }
+        }
+    }, after = { if (!cancelAfterVerified) openAdjustment() })
+    private fun finishAdjustment() = runOperation("Đang chốt geometry…", {
+        val first = (runtime.coordinator.observe() as? com.byd.clusternav.modules.clustercast.v2.ObservationValue.Known)?.value
+            ?: return@runOperation "Không đọc được geometry"
+        val second = (runtime.coordinator.observe() as? com.byd.clusternav.modules.clustercast.v2.ObservationValue.Known)?.value
+            ?: return@runOperation "Không đọc được geometry lần hai"
+        when (val result = runtime.adjustment.done(first, second)) {
+            is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Ready -> "Đã lưu geometry"
+            is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected -> "Chưa thể lưu: ${result.reason}"
+        }
+    })
+    private fun retryConnect() {
+        selectedPackage?.let { executeCast(it); return }
+        work.misc {
+            val envelope = (runtime.store.locked { read() } as? StoreRead.Loaded)?.envelope
+            val pkg = envelope?.pendingPackage ?: envelope?.stableSession?.activeTarget?.packageName
+            postUi { if (pkg == null) show("Chọn ứng dụng để thử kết nối lại") else executeCast(pkg) }
+        }
     }
-
-    /**
-     * Panel scale INLINE (dưới tile app đã tick) — UXUI GỌN 1 HÀNG, nút LỚN dễ nhấn (tận dụng bề ngang màn 15.6").
-     * Mô hình TRỰC QUAN move+resize (thay 8 nút cạnh khó hiểu Trái◀/Phải▶…): 4 nhóm nút lớn có nhãn —
-     *   • Kích thước: Hẹp/Rộng/Thấp/Cao  → [AppScale.nudgeRect] nới/thu QUANH TÂM (±2·STEP_WH mỗi nhấn).
-     *   • Vị trí:     ◀ ▲ ▼ ▶            → [AppScale.nudgeMove] dời khung GIỮ CỠ (±STEP_WH).
-     *   • Chữ:  nhỏ / to  → [AppScale.nudgeDpi] (±STEP_DPI). ⚠ ĐÚNG CHIỀU: px = dp × density/160 nên
-     *     **DPI CAO = chữ/nội dung TO hơn** (ít nội dung lọt màn). Ba chỗ tài liệu cũ ghi ngược, đã sửa.
-     *   • Khôi phục:  ↺                  → [AppScale] auto (full cụm).
-     * Mỗi nhấn = [ClusterCast.setScale] + cập nhật nhãn TỨC THÌ + DEBOUNCE áp-live ([scheduleApplyLive]) —
-     * KHÔNG gọi applyScaleLive ngay (fix lag/nhấn-không-ăn/CarPlay-nháy-đen). Áp-live path GIỮ NGUYÊN.
-     */
-    private fun scalePanel(pkg: String): View {
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; background = card(); setPadding(dp(12), dp(10), dp(12), dp(12))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(4), 0, dp(4), dp(6)) }
-        }
-        val info = TextView(this).apply { textSize = 13f; setTextColor(0xFF5B6470.toInt()); text = scaleSummary(pkg); setPadding(dp(2), 0, dp(2), dp(4)) }
-        col.addView(info)
-        // ★ v0.37 — GỐC CỦA "LOẠN XẠ": panel hiện dưới MỌI app đã tick, nhưng applyScaleLive chỉ áp cho app ĐANG
-        //   CHIẾU rồi lặng lẽ bỏ qua phần còn lại. Người dùng bấm nút ở panel app KHÔNG chiếu → nhãn vẫn đổi (vì
-        //   nhãn đọc từ prefs) mà cụm không nhúc nhích → tưởng "nút chết / app này không chỉnh được".
-        //   Giờ nói thẳng panel này đang có tác dụng hay không, và cho chiếu ngay tại chỗ.
-        val liveNote = TextView(this).apply { textSize = 12f; setPadding(dp(2), 0, dp(2), dp(8)) }
-        col.addView(liveNote)
-        fun paintLive() {
-            val live = ClusterCast.casting && ClusterCast.lastCastApp == pkg
-            liveNote.text = if (live) Lang.t("● Đang chiếu app này — nút bên dưới áp thẳng lên cụm", "● Casting this app — the buttons below apply straight to the cluster")
-                else Lang.t("Chưa chiếu app này — chỉnh ở đây chỉ LƯU LẠI, bấm \"CHIẾU APP NÀY\" để thấy trên cụm", "Not casting this app — changes here are only SAVED, press \"CAST THIS APP\" to see it on the cluster")
-            liveNote.setTextColor(if (live) 0xFF1B7A34.toInt() else 0xFFB25000.toInt())
-        }
-        paintLive(); repaintTiles.add { paintLive(); info.text = scaleSummary(pkg) }
-        // ★ v0.42 — TỰ CHIẾU KHI NỔ MÁY (chỉ MỘT app duy nhất trong toàn app).
-        val autoBtn = outlineBtn("") {}
-        fun paintAuto() {
-            val on = ClusterCast.isAutoCast(pkg)
-            autoBtn.text = if (on) Lang.t("⏱ ĐANG tự chiếu app này khi nổ máy — chạm để tắt", "⏱ NOW auto-casting this app on engine start — tap to turn off")
-                           else Lang.t("⏱ Tự chiếu app này khi nổ máy", "⏱ Auto-cast this app on engine start")
-            autoBtn.setTextColor(if (on) 0xFF1B7A34.toInt() else 0xFF1565C0.toInt())
-        }
-        autoBtn.setOnClickListener {
-            val turnOn = !ClusterCast.isAutoCast(pkg)
-            val prev = ClusterCast.autoCastPkg
-            ClusterCast.setAutoCast(applicationContext, if (turnOn) pkg else "")
-            logln(if (!turnOn) "⏱ đã tắt tự chiếu khi nổ máy"
-                  else "⏱ nổ máy sẽ tự mở ${ClusterCast.labelOf(this, pkg)} rồi đẩy sang cụm với kích thước đã lưu" +
-                       (if (prev.isNotBlank() && prev != pkg) "\n   (thay cho ${ClusterCast.labelOf(this, prev)} — chỉ đặt được 1 app)" else ""))
-            showLog(); refresh()
-        }
-        paintAuto(); repaintTiles.add { paintAuto() }
-        col.addView(autoBtn.apply { minHeight = dp(44); textSize = 13f })
-        col.addView(outlineBtn(Lang.t("🩺 Chụp chẩn đoán app này (không cần WiFi)", "🩺 Capture diagnostics for this app (no WiFi needed)")) {
-            // ★ Chạy được NGAY CẢ KHI đang cắm CarPlay/AA (lúc đó xe tắt WiFi, adb ngoài vào không được):
-            //   app nối dadb qua localhost, loopback trong máy, không đụng mạng.
-            logln("🩺 đang chụp chẩn đoán ${ClusterCast.labelOf(this, pkg)}…"); showLog()
-            val stamp = java.text.SimpleDateFormat("MMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
-            Thread {
-                val vd = ClusterCast.lastDisplayId
-                val (path, sum) = ClusterDiag.capture(applicationContext, pkg, vd, stamp)
-                runOnUiThread {
-                    logln(sum); logln("→ đã lưu: $path")
-                    android.widget.Toast.makeText(this, Lang.t("Đã lưu chẩn đoán:\n$path", "Diagnostics saved:\n$path"), android.widget.Toast.LENGTH_LONG).show()
-                }
-            }.start()
-        }.apply { minHeight = dp(44); textSize = 13f })
-        col.addView(primaryBtn(Lang.t("CHIẾU APP NÀY LÊN CỤM", "CAST THIS APP TO CLUSTER")) {
-            logln("=== CHIẾU ${ClusterCast.labelOf(this, pkg)} (v${appVersion()}) ==="); showLog()
-            ClusterCast.cast(applicationContext, pkg) { m -> runOnUiThread { logln(m); refresh() } }
-        }.apply { minHeight = dp(48); textSize = 14f })
-
-        fun after() { info.text = scaleSummary(pkg); scheduleApplyLive(pkg) }   // cập nhật nhãn local + áp-live qua DEBOUNCE
-        fun resize(dW: Int, dH: Int) { val (w, h) = clusterRef(); ClusterCast.setScale(applicationContext, pkg, seedOf(pkg).nudgeRect(w, h, dW, dH)); after() }
-        fun move(dx: Int, dy: Int) { val (w, h) = clusterRef(); ClusterCast.setScale(applicationContext, pkg, seedOf(pkg).nudgeMove(w, h, dx, dy)); after() }
-        fun dpi(d: Int) { ClusterCast.setScale(applicationContext, pkg, ClusterCast.scaleOf(pkg).nudgeDpi(d)); after() }
-        // ★ v0.42: preset theo PHẦN TRĂM cụm THẬT, không theo tỉ lệ TV. Cụm là dải 2.667:1 nên 16:9/21:9 chỉ biết
-        //   cắt hai bên, không bao giờ tạo viền trên/dưới → anh em phản ánh đúng là vô nghĩa.
-        fun preset(pct: Int) { val (w, h) = clusterRef(); ClusterCast.setScale(applicationContext, pkg, ClusterCast.scaleOf(pkg).scaled(w, h, pct)); after() }
-
-        val S = AppScale.STEP_WH
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        // ★ v0.36: KHUNG SẴN đứng ĐẦU — 1 chạm là ra tỉ lệ dùng được, khỏi bấm "Hẹp" 20 lần.
-        //   16:9 cho video (YouTube khỏi bị bóp thành mini-player) · 21:9 cho nav/dashboard cần bề ngang.
-        row.addView(ctrlGroup(clusterCaption(), listOf(
-            "100%" to { ClusterCast.setScale(applicationContext, pkg, AppScale(dpi = ClusterCast.scaleOf(pkg).dpi)); after() },
-            "90%" to { preset(90) }, "80%" to { preset(80) }, "70%" to { preset(70) })), groupLp(4f))
-        row.addView(ctrlGroup(Lang.t("Kích thước", "Size"), listOf(
-            Lang.t("Hẹp", "Narrow") to { resize(-2 * S, 0) }, Lang.t("Rộng", "Wide") to { resize(2 * S, 0) },
-            Lang.t("Thấp", "Short") to { resize(0, -2 * S) }, Lang.t("Cao", "Tall") to { resize(0, 2 * S) })), groupLp(4f))
-        row.addView(ctrlGroup(Lang.t("Vị trí", "Position"), listOf(
-            "◀" to { move(-S, 0) }, "▲" to { move(0, -S) },
-            "▼" to { move(0, S) }, "▶" to { move(S, 0) })), groupLp(4f))
-        // nhãn theo Ý ĐỊNH thay vì số kỹ thuật — "－/＋" trên một đại lượng mà tài liệu từng ghi ngược chiều
-        // là công thức chắc chắn gây nhầm.
-        row.addView(ctrlGroup(Lang.t("Chữ", "Text"), listOf(
-            Lang.t("nhỏ", "small") to { dpi(-AppScale.STEP_DPI) }, Lang.t("to", "large") to { dpi(AppScale.STEP_DPI) })), groupLp(2f))
-        // ★ W2-6: đời xe không đổi kiểu được thì ẨN hẳn nút — thà không có còn hơn có mà bấm không ăn.
-        if (ClusterProfile.resolve(this).supportsStyle) row.addView(ctrlGroup(Lang.t("Kiểu", "Style"), listOf(
-            (if (ClusterCast.isRectProfile(pkg)) "▭" else "◠") to {
-                ClusterCast.setRectProfile(applicationContext, pkg, !ClusterCast.isRectProfile(pkg))
-                info.text = scaleSummary(pkg)
-                logln("${ClusterCast.labelOf(this, pkg)}: kiểu cụm = " +
-                    if (ClusterCast.isRectProfile(pkg)) "▭ THẲNG (ảnh full, mất km/h)" else "◠ CONG (giữ km/h gốc)")
-                showLog()
-            })), groupLp(1.4f))
-        row.addView(ctrlGroup(Lang.t("Khôi phục", "Reset"), listOf(
-            "↺" to { ClusterCast.setScale(applicationContext, pkg, AppScale()); after() })), groupLp(1.4f))
-        col.addView(row)
-        return col
+    private fun showPhoneDisconnectGuidance() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Ngắt kết nối điện thoại")
+            .setMessage("Ngắt CarPlay/Android Auto trên điện thoại hoặc rút cáp. Quay lại đây sau khi phiên báo đã ngắt; ClusterNav không tự tắt phiên điện thoại.")
+            .setPositiveButton("Đã hiểu", null)
+            .show()
     }
-
-    /**
-     * ★ AppScale để NUDGE (v0.36). Khung đang AUTO thì [AppScale.nudgeRect] materialize từ FULL VD [0,0,w,h] —
-     * tức là nhấn "Hẹp" phát đầu tiên VỨT LUÔN inset dọc 90px đang hiển thị, cửa sổ đột nhiên CAO LÊN rồi chui
-     * xuống dưới thanh OEM. Ở đây seed đúng khung ĐANG NHÌN THẤY (insetH/insetV) để nhấn phát đầu không nhảy.
-     */
-    private fun seedOf(pkg: String): AppScale {
-        val s = ClusterCast.scaleOf(pkg)
-        if (!s.isAuto) return s
-        val (w, h) = clusterRef()
-        return s.copy(
-            rectL = ClusterCast.insetH.coerceIn(0, w), rectT = ClusterCast.insetV.coerceIn(0, h),
-            rectR = (w - ClusterCast.insetH).coerceIn(0, w), rectB = (h - ClusterCast.insetV).coerceIn(0, h),
+    private fun confirmEligibleRecovery() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Phục hồi một lần?")
+            .setMessage("Chỉ tiếp tục sau khi điện thoại đã ngắt. Thao tác có thể force-stop đúng tiến trình projection bị kẹt và không được lặp lại trong transaction này.")
+            .setNegativeButton("Hủy", null)
+            .setPositiveButton("Xác nhận phục hồi") { _, _ -> executeEligibleRecovery() }
+            .show()
+    }
+    private fun executeEligibleRecovery() = runOperation("Đang xác minh điều kiện phục hồi…", {
+        val first = (runtime.coordinator.observe() as? com.byd.clusternav.modules.clustercast.v2.ObservationValue.Known)?.value
+            ?: return@runOperation "Không đọc được mẫu WM/AM thứ nhất"
+        Thread.sleep(250)
+        val second = (runtime.coordinator.observe() as? com.byd.clusternav.modules.clustercast.v2.ObservationValue.Known)?.value
+            ?: return@runOperation "Không đọc được mẫu WM/AM thứ hai"
+        if (first != second) return@runOperation "Hai mẫu chưa ổn định; không phát lệnh phục hồi"
+        val pkg = second.protectedResidue?.packageName ?: second.target?.packageName
+            ?: return@runOperation "Không xác định được owner projection"
+        val disconnected = runtime.gateway.connectedPhoneSession(pkg)
+        if (disconnected != false) return@runOperation "Chưa chứng minh phiên điện thoại đã ngắt"
+        val proof = com.byd.clusternav.modules.clustercast.v2.DisconnectedSinkRecoveryProof(
+            pkg, first, second, phoneDisconnected = true,
+            projectionComponent = true, consequenceConfirmed = true,
         )
+        val plan = runtime.coordinator.plan(
+            CastIntent(CastIntentKind.RECOVER, pkg, recoveryProof = proof),
+            catalog.evidence(pkg, disconnected), installed = true, hasLauncher = true,
+        )
+        when (val result = runtime.coordinator.execute(plan, pkg)) {
+            is ExecutionResult.AwaitingVerification -> {
+                Thread.sleep(250)
+                if (runtime.coordinator.observeAndComplete(result.operationId)) "Đã phục hồi và xác minh"
+                else "Phục hồi chưa hội tụ; transaction được giữ để xử lý an toàn"
+            }
+            is ExecutionResult.RecoveryRequired -> "Cần phục hồi an toàn: ${result.reason}"
+            is ExecutionResult.Blocked -> "Phục hồi bị chặn: ${result.reason}"
+        }
+    })
+    private fun showPhysicalInstruction() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Khôi phục thủ công")
+            .setMessage("Dừng xe ở vị trí an toàn, dùng nút nguồn vật lý của màn hình để power-cycle hoàn toàn, sau đó mở lại Chẩn đoán. Không dùng adb reboot làm bằng chứng.")
+            .setPositiveButton("Đã hiểu", null)
+            .show()
     }
-
-    /** Nhãn nhóm preset: nói rõ đang tính theo cụm NÀO, và cụm đó đã ĐO được hay mới chỉ theo hồ sơ. */
-    private fun clusterCaption(): String {
-        val (w, h) = clusterRef()
-        val g = gcd(w, h)
-        val measured = ClusterCast.lastClusterW > 0
-        return Lang.t("Khung · ${w}×$h (${w / g}:${h / g})", "Frame · ${w}×$h (${w / g}:${h / g})") + if (measured) "" else Lang.t(" — chưa đo", " — not measured")
+    private fun openProfileSetup() {
+        val intent = android.content.Intent("android.settings.USER_SETTINGS")
+        val opened = runCatching { startActivity(intent) }.recoverCatching {
+            startActivity(android.content.Intent(Settings.ACTION_SETTINGS))
+        }.isSuccess
+        if (!opened) show("Thiết bị không cung cấp màn hình thiết lập hồ sơ")
     }
-    private fun gcd(a: Int, b: Int): Int = if (b == 0) a.coerceAtLeast(1) else gcd(b, a % b)
-
-    /** Kích thước cụm tham chiếu để tính rect quanh tâm: ưu tiên VD THẬT auto-detect (lần chiếu gần nhất), else profile. */
-    private fun clusterRef(): Pair<Int, Int> {
-        if (ClusterCast.lastClusterW > 0 && ClusterCast.lastClusterH > 0) return ClusterCast.lastClusterW to ClusterCast.lastClusterH
-        return ClusterProfile.resolve(this).let { it.clusterW to it.clusterH }
+    private fun executeStop() {
+        operationStatus.clearAll(); statusTimers.cancelStatusExpiry()
+        status.text = "Đã nhận yêu cầu dừng · đang fence transport…"
+        val requestedAt = java.time.Instant.now(); val requestSequence = ++stopSequence
+        stopRequestedAt = requestedAt; statusTimers.scheduleStopAckRefresh(requestedAt) { stopRequestedAt == it }
+        refresh()
+        work.stop {
+            val accepted = runCatching { runtime.coordinator.requestStop() }.getOrNull()
+            if (accepted == null) {
+                postUi {
+                    if (requestSequence != stopSequence) return@postUi
+                    if (stopRequestedAt == requestedAt) stopRequestedAt = null
+                    statusTimers.cancelStopAckRefresh(); show("Không thể lưu yêu cầu Stop")
+                }
+                return@stop
+            }
+            postUi {
+                if (requestSequence != stopSequence) return@postUi
+                if (stopRequestedAt == requestedAt) stopRequestedAt = null
+                statusTimers.cancelStopAckRefresh(); toast("Đã ghi yêu cầu Stop"); refresh()
+            }
+            val message = if (accepted.transaction != null) "Đã ghi Stop · đang chờ hiệu ứng lệnh cũ hội tụ"
+                else continueStopAfterAcknowledgement()
+            postUi { if (requestSequence == stopSequence) toast(message); refresh() }
+        }
     }
-
-    private fun scaleSummary(pkg: String): String {
-        val s = ClusterCast.scaleOf(pkg)
-        val kieu = if (ClusterCast.isRectProfile(pkg)) Lang.t("▭ thẳng", "▭ flat") else Lang.t("◠ cong (giữ km/h)", "◠ curved (keep km/h)")
-        return Lang.t("Đã lưu — ", "Saved — ") + (if (s.isAuto) Lang.t("kích thước auto (full cụm) · DPI ${s.dpi}", "auto size (full cluster) · DPI ${s.dpi}")
-        else Lang.t("khung ${s.rectR - s.rectL}×${s.rectB - s.rectT} tại (${s.rectL},${s.rectT}) · DPI ${s.dpi}", "frame ${s.rectR - s.rectL}×${s.rectB - s.rectT} at (${s.rectL},${s.rectT}) · DPI ${s.dpi}")) + " · $kieu"
+    private fun continueStopAfterAcknowledgement(): String {
+        val envelope = (runtime.store.locked { read() } as? StoreRead.Loaded)?.envelope
+        val pkg = envelope?.stableSession?.activeTarget?.packageName
+        if (envelope == null) return "Durable store unavailable"
+        val rollout = CastRolloutRegistry.resolve(envelope, CastRolloutRegistry.vehicleTestCandidate)
+        if (rollout.actionOwner != EngineVersion.V2) return "Stop owner is not V2"
+        val evidence = pkg?.let { catalog.evidence(it, runtime.gateway.connectedPhoneSession(it)) }
+            ?: TargetEvidence(false, null, false)
+        val plan = runtime.coordinator.plan(
+            CastIntent(CastIntentKind.STOP, pkg),
+            evidence,
+            installed = true,
+            hasLauncher = true,
+        )
+        return when (val result = runtime.coordinator.execute(plan, pkg)) {
+            is ExecutionResult.AwaitingVerification -> {
+                Thread.sleep(250)
+                if (runtime.coordinator.observeAndComplete(result.operationId)) "Đã trả đồng hồ" else "Stop chưa xác minh"
+            }
+            is ExecutionResult.RecoveryRequired -> "Stop cần phục hồi: ${result.reason}"
+            is ExecutionResult.Blocked -> "Stop bị chặn: ${result.reason}"
+        }
     }
-
+    private fun runOperation(initial: String, block: () -> String, after: () -> Unit = {}) {
+        val token = operationStatus.begin(initial)
+        val mutationRevision = work.beginMutation()
+        statusTimers.cancelStatusExpiry()
+        refresh()
+        work.operation {
+            val message = runCatching(block).getOrElse { "Lỗi: ${it.message}" }
+            work.finishMutation(mutationRevision)
+            completeOperation(token, message, after)
+        }
+    }
+    private fun completeOperation(token: CastOperationToken, message: String, after: () -> Unit = {}) {
+        if (!operationStatus.complete(token, message, java.time.Instant.now())) return
+        postUi {
+            val snapshot = operationStatus.snapshot(token, java.time.Instant.now())
+                ?.takeIf { it.phase == CastOperationStatusPhase.COMPLETED }
+                ?: return@postUi
+            after()
+            if (!operationStatus.isCurrent(token, java.time.Instant.now())) return@postUi
+            refresh()
+            snapshot.expiresAt?.let { statusTimers.scheduleStatusExpiry(token, it) }
+        }
+    }
     private fun refresh() {
-        repaintTiles.forEach { runCatching(it) }
-        val casting = ClusterCast.casting
-        val app = ClusterCast.lastCastApp
-        statusLine.text = "● " + if (casting) Lang.t("Đang chiếu: ${if (app.isBlank()) "app" else ClusterCast.labelOf(this, app)}", "Casting: ${if (app.isBlank()) "app" else ClusterCast.labelOf(this, app)}") else Lang.t("Chưa chiếu", "Not casting")
-        statusLine.setTextColor(if (casting) 0xFF2E7D32.toInt() else 0xFF5B6470.toInt())
-        kmhLabel.text = Lang.t("Kiểu cụm đặt riêng cho từng app — xem nút \"Kiểu\" trong phần chỉnh kích thước của app đó.", "Cluster style is set per app — see the \"Style\" button in that app's size-adjust section.")
-        profileLabel?.text = Lang.t("Hồ sơ: ", "Profile: ") + ClusterProfile.resolve(this).summary()
-    }
-
-    private fun appVersion(): String =
-        runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"
-
-    private fun logln(s: String) {
-        if (isFinishing || isDestroyed || !::log.isInitialized) return
-        log.append(s + "\n")
-        // luôn cuộn tới dòng mới nhất — ladder in cả chục dòng trong hộp cao cố định, không tự cuộn thì người thử
-        // chỉ đọc được mấy dòng đầu và không bao giờ thấy kết luận R1/R2/R3.
-        log.post {
-            val lay = log.layout ?: return@post
-            val d = lay.getLineBottom(log.lineCount - 1) - (log.height - log.paddingTop - log.paddingBottom)
-            log.scrollTo(0, d.coerceAtLeast(0))
+        val selectedSnapshot = selectedPackage
+        val stopSnapshot = stopRequestedAt
+        val mutationSnapshot = work.mutationSnapshot()
+        work.refresh { revision ->
+            val result = refreshReader.read(selectedSnapshot, stopSnapshot)
+            val model = result.model
+            postUi {
+                if (!work.isCurrentRefresh(revision) || !work.isCurrentMutation(mutationSnapshot) ||
+                    selectedPackage != selectedSnapshot || stopRequestedAt != stopSnapshot
+                ) return@postUi
+                status.text = result.visibleStatus
+                val effectiveActions = model.activityActions(mutationSnapshot)
+                fun enabled(action: CastAction) = action in effectiveActions
+                castActionExported = enabled(CastAction.CAST) || enabled(CastAction.SWITCH)
+                castButton.isEnabled = castActionExported && result.selectedEligible
+                stopButton.isEnabled = enabled(CastAction.STOP)
+                adjustButton.isEnabled = enabled(CastAction.ADJUST)
+                diagnosticsButton.isEnabled = enabled(CastAction.OPEN_DIAGNOSTICS)
+                appManagerButton.isEnabled = enabled(CastAction.OPEN_APP_MANAGER)
+                retryButton.isEnabled = enabled(CastAction.RETRY_CONNECT)
+                phoneDisconnectButton.isEnabled = enabled(CastAction.REQUEST_PHONE_DISCONNECT)
+                recoverOnceButton.isEnabled = enabled(CastAction.TRY_ELIGIBLE_RECOVERY_ONCE)
+                physicalInstructionButton.isEnabled = enabled(CastAction.SHOW_PHYSICAL_INSTRUCTION)
+                profileSetupButton.isEnabled = enabled(CastAction.OPEN_PROFILE_SETUP)
+                val appManagementEnabled = enabled(CastAction.OPEN_APP_MANAGER) || enabled(CastAction.CHOOSE_ANOTHER_APP)
+                for (index in 0 until apps.childCount) apps.getChildAt(index).isEnabled = appManagementEnabled
+                if (stopSnapshot != null && model.operationAcknowledged) {
+                    stopRequestedAt = null
+                    statusTimers.cancelStopAckRefresh()
+                }
+            }
         }
     }
-    private fun showLog() {
-        if (!::log.isInitialized) return
-        log.visibility = View.VISIBLE
-        logBtn?.text = Lang.t("Chi tiết kỹ thuật ▴", "Technical details ▴")
+    private fun postUi(block: () -> Unit) = runOnUiThread { if (!destroyed && !isFinishing && !isDestroyed) block() }
+    private fun toast(message: String) = android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show(); private fun show(message: String) { toast(message); refresh() }
+    private fun bootId(): String = Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, 0).toString()
+    private fun text(value: String, size: Float, color: Int) = TextView(this).apply {
+        text = value; textSize = size; setTextColor(color); setPadding(0, dp(6), 0, dp(8))
     }
-
-    // ── helpers dựng nút (dùng drawable/màu app cho nhất quán) ──
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-    private fun card() = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(Color.WHITE); cornerRadius = dp(12).toFloat(); setStroke(dp(1), 0xFFE3E6EB.toInt()) }
-    private fun sectionTitle(t: String) = TextView(this).apply { text = t; textSize = 13f; setTextColor(0xFF5B6470.toInt()); setPadding(0, dp(16), 0, dp(6)) }
-
-    private fun baseBtn(t: String, onClick: () -> Unit) = Button(this).apply {
-        text = t; isAllCaps = false; textSize = 15f; minHeight = dp(56)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
-        setOnClickListener { runCatching(onClick) }
-    }
-    private fun primaryBtn(t: String, onClick: () -> Unit) = baseBtn(t, onClick).apply { setBackgroundResource(R.drawable.btn_primary); setTextColor(Color.WHITE) }
-    private fun warnBtn(t: String, onClick: () -> Unit) = baseBtn(t, onClick).apply { setBackgroundResource(R.drawable.btn_warning_outline); setTextColor(0xFFE08600.toInt()) }
-    private fun outlineBtn(t: String, onClick: () -> Unit) = baseBtn(t, onClick).apply { setBackgroundResource(R.drawable.btn_outline); setTextColor(0xFF1565C0.toInt()); textSize = 14f; minHeight = dp(48) }
-    private fun smallBtn(t: String, onClick: () -> Unit) = Button(this).apply {
-        text = t; isAllCaps = false; textSize = 13f; minHeight = dp(48); setBackgroundResource(R.drawable.btn_outline); setTextColor(0xFF1565C0.toInt())
-        setOnClickListener { runCatching(onClick) }
-    }
-    /** Nút điều khiển scale LỚN, dễ nhấn trên màn 15.6" (cao ≥54dp, chữ 16f, bo tròn) — thay tinyBtn cũ (bé, khó nhấn). */
-    private fun bigBtn(t: String, onClick: () -> Unit) = Button(this).apply {
-        text = t; isAllCaps = false; textSize = 16f; minHeight = dp(54); minWidth = 0; minimumWidth = 0
-        setPadding(dp(2), dp(8), dp(2), dp(8)); setBackgroundResource(R.drawable.btn_outline); setTextColor(0xFF1565C0.toInt())
-        setOnClickListener { runCatching(onClick) }
-    }
-
-    /** LayoutParams cho 1 nhóm nút trong hàng điều khiển (weight = tỉ lệ bề ngang, margin tách nhóm). */
-    private fun groupLp(weight: Float) = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight).apply { setMargins(dp(3), 0, dp(3), 0) }
-
-    /** 1 NHÓM nút điều khiển: caption nhỏ ở trên + hàng nút LỚN (chia đều bằng weight), nền bo tròn để tách nhóm rõ ràng. */
-    private fun ctrlGroup(caption: String, items: List<Pair<String, () -> Unit>>): View {
-        val g = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(14).toFloat(); setColor(0xFFF7F9FB.toInt()); setStroke(dp(1), 0xFFE3E6EB.toInt()) }
-            setPadding(dp(8), dp(6), dp(8), dp(8))
+    private fun appButton(label: String, action: () -> Unit) = Button(this).apply {
+        text = label; isAllCaps = false; isEnabled = false; minimumHeight = dp(56)
+        contentDescription = label
+        setOnClickListener { action() }
+        layoutParams = GridLayout.LayoutParams().apply {
+            width = 0; height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+            setMargins(dp(4), dp(4), dp(4), dp(4))
         }
-        g.addView(TextView(this).apply { text = caption; textSize = 11f; setTextColor(0xFF8A929C.toInt()); gravity = Gravity.CENTER; setPadding(0, 0, 0, dp(5)) })
-        val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for ((lbl, act) in items)
-            btnRow.addView(bigBtn(lbl, act), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
-        g.addView(btnRow)
-        return g
+    }
+    private fun dp(value: Int) = (value * resources.displayMetrics.density + .5f).toInt()
+    companion object {
+        const val ACTION_STOP = "com.byd.clusternav.action.CAST_V2_STOP"
+        private const val STATE_SELECTED_PACKAGE = "cast-selected-package"
+        private const val STATE_SCROLL_Y = "cast-scroll-y"
+        private const val STATE_FOCUS_ID = "cast-focus-id"
     }
 }
