@@ -1,5 +1,8 @@
 # DashCast cluster-projection — cách cast ANY app (YouTube/GMaps) lên cụm
 
+> [!CAUTION]
+> **ARCHIVED RESEARCH RECIPE — NOT A CURRENT IMPLEMENTATION OR SAFETY CONTRACT.** Commands and conclusions below are historical inputs only. Do not execute them on a vehicle or treat them as V2 evidence. The canonical current design is `docs/specs/cluster-cast-rebaseline.html`; build/install/car mutation remains separately authorized and exact-build gated.
+
 > RE từ source DashCast (`jadx-dashcast` + `dashcast-src`) 2026-07-14. Trả lời: vì sao DashCast cast YouTube/Doraemon
 > full mượt lên cluster mà ClusterNav lại **trắng / nhỏ / ADAS đen / kẹt khi tắt**.
 
