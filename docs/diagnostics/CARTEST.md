@@ -1,5 +1,8 @@
 # ClusterNav — Checklist test trên xe (đỗ P, có người phụ)
 
+> [!CAUTION]
+> **ARCHIVED HISTORICAL CHECKLIST — DO NOT EXECUTE.** This file predates the two-track re-baseline, advertises unsupported APK/install/mock-location behavior, and contains unrun Dead Reckon cases. It grants no build/install/car authorization. Dead Reckon remains REMOVE; C1–C4 are NOT STARTED. Any future vehicle run must name an exact APK SHA and approved case set; a real reboot uses the physical power button, not `adb reboot`.
+
 > Cài 1 lệnh, cấp quyền 1 lần, rồi đi theo 3 khối A/B/C. Mỗi mục ghi rõ **PASS = gì**.
 > Kết nối: `adb connect YOUR-CAR-IP:5555` (wifi) hoặc cáp USB.
 

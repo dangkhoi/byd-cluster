@@ -1,104 +1,68 @@
-# Hướng dẫn sử dụng ClusterNav
+# ClusterNav — Hướng dẫn lịch sử đã lưu trữ
 
-> Ảnh minh hoạ giao diện app (chụp từ emulator, dữ liệu demo). Trên xe thật giao diện y hệt; phần chiếu sẽ hiện trên **cụm đồng hồ**.
+> [!CAUTION]
+> **ARCHIVED / UNSUPPORTED — KHÔNG PHẢI HƯỚNG DẪN CÀI ĐẶT HIỆN TẠI.** Tài liệu và ảnh dưới đây mô tả giao diện emulator/legacy quanh v0.35–v0.36. Không APK nào trong repo hiện được công bố là bản hỗ trợ. Không dùng tài liệu này để cài lên xe, bật mock location, xác nhận T1/T3, hoặc suy ra bản hiện tại đã an toàn/hoàn tác được.
 
-## 1. Cài đặt
+## 1. Trạng thái hiện tại
 
-1. Tải APK: [`apk/ClusterNav-0.35-release.apk`](../apk/ClusterNav-0.35-release.apk) → cài:
-   ```bash
-   adb install -r ClusterNav-0.35-release.apk
-   ```
-   (hoặc copy vào máy bấm cài — cho phép "cài từ nguồn không xác định").
-2. Trên xe bật một lần: **Developer options → USB debugging** + **adb tcp 5555**.
-3. Cấp quyền cho ClusterNav:
-   - **Notification access** (để đọc dẫn đường Google Maps) — *bắt buộc*.
-   - **Mock location app = ClusterNav** (Developer options) — cho GPS hầm.
-   - **Hiển thị trên ứng dụng khác** (overlay) — cho nút nổi (bubble).
+ClusterNav đang re-baseline về đúng **hai track độc lập**:
 
-## 2. Màn hình chính
+1. **Navigation + HUD** — một nguồn/phiên dẫn đường, hai đầu ra Cluster-lane và HUD độc lập.
+2. **Cluster Cast** — state/journal/execution/recovery/UI riêng.
 
-![Màn hình chính](images/man-hinh-chinh.png)
+Runtime mục tiêu vẫn **NO-GO**; car hiện không truy cập được; direct UX/on-car evidence là **NOT STARTED**. Vì vậy link tải và lệnh `adb install` cũ đã bị rút khỏi hướng dẫn công khai. Chỉ một release tương lai gắn exact source + APK SHA/signature/version/flags + off-car evidence + exact-build on-car PASS mới được phép có hướng dẫn cài.
 
-- **Bật/Tắt** (góc phải): bật ClusterNav.
-- **Trạng thái**: "Đang chờ — mở Google Maps để dẫn đường" → khi bắt đầu dẫn sẽ đổi.
-- **Kết nối lại nav**: khi nav trên cụm không lên, bấm để bind lại.
-- **GPS trong hầm**: bật/tắt dịch vụ bù GPS.
-- **Chiếu app lên cụm**: nút chiếu + vào Cài đặt chiếu.
+**Dead Reckon/GPS hầm đã REMOVE khỏi product baseline.** Không chọn ClusterNav làm mock-location app cho target product. Legacy code/provider cleanup chưa được phép thực hiện cho tới khi hoàn tất review và kế hoạch retirement riêng.
 
-## 3. Đưa dẫn đường lên cụm (giữ nguyên đồng hồ)
+## 2. Ảnh giao diện lịch sử
 
-Bật app → mở **Google Maps** dẫn đường như bình thường. Mũi tên rẽ + khoảng cách + tên đường + ETA sẽ hiện trên cụm, **đồng hồ gốc vẫn còn**:
+Các ảnh sau là artifact emulator lịch sử, không phải target UX và không chứng minh hành vi trên xe:
 
-![Nav card trên cụm](images/nav-card.png)
+- `images/man-hinh-chinh.png` — dashboard trộn nhiều chức năng; target mới chỉ còn hai Home cards.
+- `images/nav-card.png` — minh hoạ Nav-lane lịch sử; chưa phải exact-build evidence.
+- `images/cai-dat-chieu.png` — màn Cast legacy; không phải V2 durable-state UI.
+- `images/nut-noi.png` — Bubble legacy với toggle/long-press; target mới dùng menu xác định và Stop chỉ khi `StopDisposition=AVAILABLE`.
+- `images/chinh-scale.png` — điều chỉnh legacy; target mới yêu cầu workspace riêng, target/epoch binding và verified apply.
 
-> Không chiếm màn — chỉ thêm dải chỉ dẫn. Đây là cách nhẹ nhất, khuyên dùng khi chỉ cần mũi tên + km.
+![Màn hình chính lịch sử](images/man-hinh-chinh.png)
 
-## 4. Chiếu nguyên app lên cụm (giữ phiên dẫn — T1)
+![Nav card lịch sử](images/nav-card.png)
 
-Khi muốn xem **nguyên bản đồ** (Google Maps / VietMap / Waze / Apple CarPlay) trên cụm mà **vẫn giữ tuyến đang dẫn**:
+![Cài đặt chiếu lịch sử](images/cai-dat-chieu.png)
 
-### 4.1. Chọn app sẽ chiếu
-Mở **Cài đặt chiếu** → kéo xuống phần **"App được chiếu"** → **tick (chạm)** các app muốn đưa lên cụm. App đã tick hiện **✓ + viền xanh** và xuất hiện trong menu nút nổi.
+![Bubble lịch sử](images/nut-noi.png)
 
-![Cài đặt chiếu — tick app](images/cai-dat-chieu.png)
+![Scale lịch sử](images/chinh-scale.png)
 
-- **Giữ-nhấn** 1 app đã tick để đổi **chế độ chiếu**: **T1 mặc định** (giữ dẫn) ↔ **⊞ T3** (dự phòng khi T1 hụt).
-- Mỗi app chỉnh **kích thước riêng** — xem [mục 5](#5-chỉnh-kích-thước-từng-app-scale).
+## 3. Hành vi legacy đã rút claim
 
-### 4.2. Chiếu (thứ tự quan trọng)
-1. Mở app (Maps / VietMap / CarPlay…) ở **màn giữa** và **bắt đầu dẫn TRƯỚC**.
-2. Chiếu bằng **nút nổi** (mục 4.3) hoặc nút **"Chiếu lên cụm"**.
+Các mô tả sau chỉ là lịch sử và **không được coi là tính năng hiện tại**:
 
-> ⚠️ **Quan trọng:** phải để app **đang dẫn** rồi mới chiếu — chưa dẫn mà chiếu thì app mở lại từ đầu (mất tuyến).
->
-> **Đổi kiểu** (khi đỗ): *cong (giữ km/h)* ↔ *thẳng (full màn)*. **TẮT — trả đồng hồ** để về đồng hồ gốc.
+- T1 “giữ dẫn”, T3 fallback, long-press đổi policy và bubble toggle mù.
+- Scale/DPI/overscan áp trực tiếp hoặc cờ global tự áp.
+- CarPlay/Android Auto “giữ phiên” không kèm durable V2 baseline và exact-build continuity evidence.
+- GPS hầm/Dead Reckon bơm mock location và các câu “tự về GPS thật”, “failsafe”, “gỡ sạch”.
+- Tự nhận mọi model hoặc tuyên bố UI trên xe giống emulator.
+- `install -r`/“cùng chữ ký” như hướng dẫn nâng cấp chung; mỗi APK phải được xác minh chữ ký và provenance riêng.
 
-### 4.3. Nút nổi (bubble) — chiếu nhanh, không cần mở app
-Bật bằng nút **"Hiện nút nổi"** ở màn chính (cần quyền **Hiển thị trên ứng dụng khác**). Nút lơ lửng trên mọi màn:
+## 4. Target UX được duyệt về tài liệu
 
-![Nút nổi (bubble) ▢ lơ lửng trên màn hình](images/nut-noi.png)
+- Home có đúng hai cards: **Navigation + HUD** và **Cluster Cast**.
+- Navigation chia sẻ source/session nhưng lane và HUD có queue/executor/deadline/health riêng.
+- Cast render canonical immutable `CastUiStateV2`; UI recreation phát zero mutation.
+- Stop tương tác chỉ tồn tại khi authoritative `StopDisposition=AVAILABLE`.
+- Interaction context PARKED/MOVING/UNKNOWN chỉ là metadata chẩn đoán và không khóa chức năng. Destructive recovery vẫn fail closed nếu thiếu owner/session-loss/two-sample/confirmation/one-attempt proof.
+- Diagnostics read-only, bounded, partial-capable và không phải runtime pipeline thứ ba.
+- Dead Reckon không có card/state/setup/action trong target UX.
 
-- **Chạm** = bật/tắt chiếu app gần nhất. Biểu tượng đổi theo trạng thái: **▢** = chưa chiếu · **▣** = đang chiếu.
-- **Giữ (long-press)** = hiện **menu các app đã tick** → chọn 1 app để chiếu (tiện khi đang lái, khỏi mở app to).
-- **Kéo** = di chuyển vị trí (tự nhớ).
+Đây là contract hiện hành. Source/JVM off-car đã được implement và kiểm thử; exact-build/on-car vẫn chưa bắt đầu.
 
-> Mở app ClusterNav là bubble **tự hiện** (nếu đã cấp quyền overlay).
+## 5. Nguồn tài liệu hiện hành
 
-## 5. Chỉnh kích thước từng app (scale)
+- [`specs/cluster-cast-rebaseline.html`](specs/cluster-cast-rebaseline.html)
+- [`specs/clusternav-uxui-rebaseline.html`](specs/clusternav-uxui-rebaseline.html)
+- [`specs/clusternav-two-track-final-plan.html`](specs/clusternav-two-track-final-plan.html)
+- [`specs/dead-reckon-revalidation.html`](specs/dead-reckon-revalidation.html)
+- [`HISTORICAL-ARTIFACTS.md`](HISTORICAL-ARTIFACTS.md)
 
-Mỗi app một tỷ lệ khác nhau → chỉnh riêng bằng **các nút LỚN, gom gọn 1 hàng** hiện ngay dưới app đã tick (nút to, dễ nhấn trên màn 15.6"). Nhấn tới khi vừa mắt (tự lưu; **ngừng nhấn ~0.3s mới áp lên cụm** cho mượt, khỏi giật). Chia 4 nhóm:
-
-![Chỉnh scale](images/chinh-scale.png)
-
-- **Kích thước** — `Hẹp` / `Rộng` (thu/nới chiều ngang), `Thấp` / `Cao` (thu/nới chiều dọc). Co giãn **quanh tâm**.
-- **Vị trí** — `◀ ▲ ▼ ▶` dời **cả khung** sang trái / lên / xuống / phải, **giữ nguyên kích thước**.
-- **Chữ** — `nhỏ / to` chỉnh độ lớn nội dung (**DPI cao = chữ/nội dung TO hơn, ít nội dung lọt màn**; gốc của cụm là 320, app đặt 200).
-- **Khôi phục** — `↺` về full cụm (auto).
-
-> Cách nhanh: chỉnh **Kích thước** cho vừa trước, rồi **Vị trí** (◀▲▼▶) dời cho cân. Ví dụ CarPlay bị rộng → bấm **Hẹp** vài nhịp cho gọn, rồi **◀ / ▶** đẩy khung về đúng chỗ trên cụm.
-
-> **Ghi chú kỹ thuật (v0.36):** khi mới cài, nút kích thước chạy qua đường "overscan" (co vùng hiển thị) — hoạt động ngay. App đồng thời bật cờ hệ thống `enable_freeform_support` (chỉ có tác dụng từ lần **tắt máy xe hẳn** rồi mở lại — sau đó nút chuyển sang đường resize "xịn" mượt hơn, xem log trong màn chiếu). Cờ này **giữ nguyên kể cả gỡ app**; muốn trả về mặc định: `adb shell settings delete global enable_freeform_support && adb shell settings delete global development_enable_freeform_windows_support && adb shell settings delete global force_resizable_activities` rồi tắt máy xe 1 lần.
-
-## 6. GPS trong hầm (dead-reckon)
-
-Bật ở màn chính. Khi mất GPS (hầm, gầm cầu), app bù vị trí bằng **tốc độ + góc lái** để Google Maps đi tiếp; ra hầm tự về GPS thật. Cần chọn ClusterNav làm *mock location app*.
-
-## 7. Nhiều dòng xe (Seal / SL6 / Han / Tang)
-
-Phần **Hồ sơ cụm** (trong Cài đặt chiếu) tự nhận diện kích thước cụm. Nếu xe lạ hiển thị sai:
-- **Xuất hồ sơ** → copy chuỗi chia sẻ trong nhóm.
-- **Nhập & áp hồ sơ** → dán chuỗi của người đã chỉnh đúng cho dòng xe bạn.
-- **Về auto-detect** → quay lại tự dò.
-
-## 8. Gỡ lỗi thường gặp
-
-| Hiện tượng | Cách xử |
-|---|---|
-| Nav không lên cụm | Bấm **Kết nối lại nav**; vẫn không thì **reboot đầu xe** (AmapService kẹt). |
-| Chiếu xong mất tuyến dẫn | Phải **bắt đầu dẫn TRƯỚC** khi chiếu; dùng **T1** (không phải mở mới). |
-| App chiếu bị méo/lệch | Chỉnh ở mục 5: **Hẹp/Rộng/Thấp/Cao** cho vừa, **◀▲▼▶** dời cho cân, **DPI** chỉnh độ lớn. |
-| Cài bản mới báo lỗi chữ ký | Dùng bản **release** (`install -r`) — cùng chữ ký, khỏi gỡ. |
-| Sau khi cài đè, nav mất | Tắt/bật lại **Notification access** cho ClusterNav. |
-
----
-Chi tiết kỹ thuật (cơ chế chiếu, AutoContainer, dead-reckon): xem `docs/reference/` và mã nguồn `app/src`.
+Các recipe/checklist cũ trong `docs/reference/`, `docs/diagnostics/` và `docs/review/` là historical context. Không chạy lệnh mutating/on-car từ các file đó nếu chưa có execution stage, exact APK SHA, install authorization và car case được phê duyệt riêng.
