@@ -13,6 +13,12 @@ object NavFormat {
     //    ĐO TRÊN XE (2026-06-23): ô hiện ~7 ký tự rồi "…" -> đặt 7 cho hiện gọn, không bị "…".
     const val ROAD_MAX_UNITS = 7
 
+    // ── HUD kính lái: ngân sách ký tự cho tên đường đẩy lên HUD (INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_SET,
+    //    buffer BYTE cố định nhỏ). Đặt = ROAD_MAX_UNITS (7) vì ô HUD CÙNG HỌ buffer với ô cụm.
+    //    ⚠ CHỈ nâng lên 8 SAU KHI trace buffer HUD THẬT trên xe CÓ HUD mới (OQ2 chưa đo). Tràn buffer
+    //      = firmware BỎ luôn tên (chỉ còn mũi tên) = ĐÚNG bug đang chữa (D4/F7). Thà "VNG" còn hơn mất tên.
+    const val HUD_ROAD_MAX_UNITS = 7
+
     // tiền tố động từ rẽ + FILLER vô nghĩa ("về hướng"...) — bỏ để chỉ còn tên đường.
     private val MANEUVER_PREFIX = Regex(
         "^(rẽ phải vào|rẽ trái vào|re phai vao|re trai vao|đi thẳng( trên)?|di thang( tren)?|" +
@@ -70,25 +76,32 @@ object NavFormat {
         return s.replace(RE_WS, " ").trim().ifEmpty { road.trim() }
     }
 
-    /** Rút gọn cho ô cụm khi KHÔNG cuộn (~7 ký tự). "Nguyễn Hữu Cảnh"->"NHC"; "hầm X Y"->"hầm XY". */
-    fun fitRoadName(road: String): String {
-        val s = cleanRoadName(road)
-        if (s.length <= ROAD_MAX_UNITS) return s
+    /** Rút gọn cho ô cụm/HUD khi KHÔNG cuộn. "Nguyễn Hữu Cảnh"->"NHC"; "hầm X Y"->"hầm XY".
+     *  [maxUnits] = ngân sách UTF-16 code-unit (mặc định ô cụm [ROAD_MAX_UNITS]; HUD truyền [HUD_ROAD_MAX_UNITS]).
+     *  Giữ default → caller cụm (roadWindow/marquee) KHÔNG đổi hành vi (backward-compat).
+     *  NFC-normalize TRƯỚC khi đo length / take() / dựng dạng viết tắt (F8): buffer đích là BYTE, quan hệ
+     *  "1 ký tự = 1 code-unit = 2 byte" CHỈ đúng với text BMP dạng NFC. Input NFD (dấu tách rời) → 1 ký tự =
+     *  ≥2 code-unit = ≥4 byte (phá quan hệ 2×) và take()/take(1) cắt GIỮA base + dấu kết hợp → rác hiển thị.
+     *  Chuẩn hoá SỚM (trước cả cleanRoadName) cũng giúp regex loại-đường (viết theo NFC) khớp input NFD. */
+    fun fitRoadName(road: String, maxUnits: Int = ROAD_MAX_UNITS): String {
+        val nfc = java.text.Normalizer.normalize(road, java.text.Normalizer.Form.NFC)
+        val s = cleanRoadName(nfc)
+        if (s.length <= maxUnits) return s
         val words = s.split(" ")
         // giữ nguyên từ-loại có nghĩa ở đầu (hầm/cầu) + viết tắt phần còn lại: "hầm Nguyễn Hữu Cảnh" -> "hầm NHC"
         if (words.size >= 2 && words[0].lowercase() in KEEP_CLASS) {
             val acr = words.drop(1).joinToString("") { it.take(1) }
             val cand = "${words[0]} $acr"
-            return if (cand.length <= ROAD_MAX_UNITS) cand else cand.take(ROAD_MAX_UNITS)
+            return if (cand.length <= maxUnits) cand else cand.take(maxUnits)
         }
         if (words.size >= 2) {
             val dotted = words.dropLast(1).joinToString("") { it.take(1) + "." } + words.last()
-            if (dotted.length <= ROAD_MAX_UNITS) return dotted        // "Trần Trọng Kim" -> "T.T.Kim"
+            if (dotted.length <= maxUnits) return dotted        // "Trần Trọng Kim" -> "T.T.Kim"
             val acronym = words.joinToString("") { it.take(1) }       // dài hơn -> "NHC"/"CMTT"
-            if (acronym.length <= ROAD_MAX_UNITS) return acronym
-            return dotted.take(ROAD_MAX_UNITS)
+            if (acronym.length <= maxUnits) return acronym
+            return dotted.take(maxUnits)
         }
-        return s.take(ROAD_MAX_UNITS)
+        return s.take(maxUnits)
     }
 
     /** MARQUEE: cửa sổ [width] ký tự của [name], trượt theo [tick] (mỗi nhịp +1). Tên ngắn -> trả nguyên. */

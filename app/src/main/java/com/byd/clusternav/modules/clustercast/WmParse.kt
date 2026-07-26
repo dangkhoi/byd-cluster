@@ -33,6 +33,8 @@ object WmParse {
     // ActivityRecord{... u0 com.pkg/.Cls t13}  → bắt "com.pkg" đứng trước dấu '/'
     private val RE_PKG = Regex("ActivityRecord\\{\\S+ u\\d+ ([A-Za-z][A-Za-z0-9_.]*)/")
     private val RE_DEFER = Regex("^mDeferRemoval=(\\w+)")
+    /** Cờ hiển thị của MỘT app-token (`dumpsys window displays`) — nguồn sự thật cho OCCLUDE-VERIFY (D5 U3). */
+    private val RE_TOKEN_VIS = Regex("isVisible=(true|false)")
     /** Mở vùng liệt kê stack. Ngoài vùng này, `ActivityRecord{...}` còn xuất hiện ở mFocusedApp/DisplayPolicy… */
     private val RE_TOKENS_BEGIN = Regex("^Application tokens in top down Z order:")
     /** Các mục ĐỒNG CẤP đóng vùng token lại (đọc từ dump thật: đây là các block anh em của "Application tokens"). */
@@ -98,6 +100,46 @@ object WmParse {
     /** Gói WM thấy trên display [vd] — dùng để báo cho người dùng biết CÁI GÌ đang kẹt ở đó. */
     fun pkgsOn(dump: String, vd: Int): List<String> =
         stacks(dump).filter { it.displayId == vd }.flatMap { it.pkgs }.distinct()
+
+    /**
+     * ★ v0.7x (T7 · D5 U3) — OCCLUDE-VERIFY: [pkg] có app-token đang HIỂN THỊ (isVisible==true) trên [vd] không?
+     *
+     * Vì sao cần (CP/AA orphan v0.67): trước khi gentle-move app cũ khỏi VD ([CastShell.returnAppToMain]), phải
+     * xác nhận app cũ ĐÃ bị target (fresh-launch full-VD) PHỦ LÊN → `isVisible==false`. Gentle-move một task
+     * size-compat/sink CÒN VISIBLE vượt ranh freeform → `AppWindowToken.initializeChangeTransition` (research
+     * #2 RISKY) → reparent nửa vời → cửa sổ MỒ CÔI (brick tới reboot). Chỉ khi app cũ vô hình thì gentle mới
+     * né được change-transition (snapshot-free). PURE → unit-test off-device.
+     *
+     * ★★ MẶC ĐỊNH AN TOÀN (khi thiếu bằng chứng xe — MUST-VALIDATE-ON-CAR §3.3): nếu tìm THẤY token của [pkg]
+     *   trên [vd] nhưng KHÔNG đọc được cờ `isVisible=` (format dump đời xe khác) → COI NHƯ VISIBLE (true). Nhờ vậy
+     *   occlude-verify KHÔNG xác nhận invisible → oldOccluded=false → caller KHÔNG gentle-move (sink để yên / app
+     *   thường force-stop) → tuyệt đối KHÔNG bao giờ gentle-move một task chưa-chắc-vô-hình (chống tái tạo orphan).
+     *
+     * @return true nếu token của [pkg] trên [vd] `isVisible==true` (hoặc có mặt mà không xác định được cờ);
+     *   false CHỈ KHI: [pkg] KHÔNG có token trên [vd] (vắng mặt/occluded hẳn), HOẶC token có cờ `isVisible=false`; hoặc [vd] không hợp lệ.
+     */
+    fun isVisibleOn(dump: String, pkg: String, vd: Int): Boolean {
+        if (vd < 1) return false
+        var cur = -1
+        var foundOnVd = false
+        var explicitFalse = false
+        for (raw in dump.lineSequence()) {
+            val line = raw.trim()
+            RE_DISPLAY.find(line)?.let { cur = it.groupValues[1].toIntOrNull() ?: cur }
+            if (cur != vd) continue
+            val m = RE_PKG.find(line) ?: continue
+            if (m.groupValues[1] != pkg) continue
+            foundOnVd = true
+            when (RE_TOKEN_VIS.find(line)?.groupValues?.get(1)) {
+                "true" -> return true                 // rõ ràng đang hiển thị
+                "false" -> explicitFalse = true       // token này invisible — quét tiếp (token khác của pkg có thể visible)
+                else -> {}                            // token có mặt mà không đọc được cờ → xét mặc-định-an-toàn bên dưới
+            }
+        }
+        // Không có token trên vd → vắng mặt (false). Có token + đọc được toàn 'false' → occluded (false).
+        // Có token nhưng KHÔNG đọc được cờ nào (format lạ) → MẶC ĐỊNH AN TOÀN = VISIBLE (true) → KHÔNG gentle-move.
+        return foundOnVd && !explicitFalse
+    }
 
     /**
      * Stack MỒ CÔI trên [vd]: WM thấy mà AM không thấy.

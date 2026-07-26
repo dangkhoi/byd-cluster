@@ -1,17 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Dead-reckoning vá GPS trong hầm: đọc trạng thái GNSS thật (số vệ tinh) + bơm mock-location cho GMaps.
-         ACCESS_MOCK_LOCATION không enforce runtime; phải chọn app làm "mock location app" trong Developer Options
-         (no-root). FINE_LOCATION cấp runtime cho registerGnssStatusCallback. -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_MOCK_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- WAKE_LOCK: giữ CPU thức cho dead-reckon tick khi màn tắt (postDelayed uptimeMillis dừng lúc deep-sleep). -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- R7: targetSdk 34 → FGS type=location cần perm riêng trên API 34+ (Seal API29 không enforce, khai cho đúng/khỏi crash nếu cài máy đời mới). -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Tự rebind nav listener sau khi khởi động lại máy (RebindReceiver). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -74,6 +64,7 @@
         <activity
             android:name=".modules.clustercast.ClusterCastActivity"
             android:exported="false"
+            android:launchMode="singleTask"
             android:label="Map lên cluster" />
 
         <!-- Nút nổi (bubble): chạm đưa GMaps lên cluster. Foreground specialUse (không có type nào khớp hơn). -->
@@ -86,6 +77,16 @@
                 android:value="cluster_map_bubble" />
         </service>
 
+        <!-- Bounded visible host for one claimed boot auto-cast request (0.71). Never exported. -->
+        <service
+            android:name=".modules.clustercast.CastAutomationService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="cluster_cast_boot_automation" />
+        </service>
+
         <!-- MODULE vdmap (ngoại lệ: cần Activity riêng). Xoá module vdmap → xoá luôn dòng này. -->
         <activity
             android:name=".modules.vdmap.VdMapActivity"
@@ -95,12 +96,6 @@
             android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|screenLayout|density|smallestScreenSize|keyboardHidden"
             android:theme="@style/ClusterTheme" />
-
-        <!-- Service NỀN dead-reckoning vá GPS hầm (foreground type=location). Xoá module deadreckon → xoá dòng này. -->
-        <service
-            android:name=".modules.deadreckon.DeadReckonService"
-            android:exported="false"
-            android:foregroundServiceType="location" />
 
         <!-- Lắng nghe notification dẫn đường -->
         <service
@@ -115,6 +110,14 @@
 
         <!-- SELF-HEAL: tự bind lại nav listener sau khi cài đè / cập nhật / khởi động máy
              → KHÔNG còn phải mở app hay disallow→allow tay để lấy lại nav. -->
+        <receiver
+            android:name=".modules.clustercast.CastLifecycleReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.byd.clusternav.action.CAST_V2_REVALIDATE" />
+            </intent-filter>
+        </receiver>
+
         <receiver
             android:name=".RebindReceiver"
             android:exported="false">

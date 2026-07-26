@@ -1,0 +1,223 @@
+package com.byd.clusternav.modules.clustercast.v2
+
+import dadb.Dadb
+
+private const val NO_OP = "echo cast-v2-noop"
+private const val FREEFORM_MODE = 5
+private const val FULLSCREEN_MODE = 1
+private const val LAUNCH_PREFIX =
+    "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER"
+private val PIP_MODES = setOf("allow", "ignore", "deny", "default", "foreground")
+
+/** Left,top,right,bottom insets used only when freeform is not alive, matching the V1 default. */
+private const val OVERSCAN_FALLBACK = "0,90,0,90"
+private val PLACEMENT_PACKAGE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
+private val PLACEMENT_COMPONENT = Regex("[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+")
+
+/**
+ * The single place that turns a typed [CommandKind] into the exact shell string dispatched on the
+ * vehicle. Keeping the field-proven recipe here — freeform launch, reparent, reassert, fit — makes
+ * the placement ladder auditable in one file instead of being spread through the runtime.
+ */
+internal object CastPlacementCommands {
+
+    fun of(
+        adb: Dadb,
+        request: CastMutationRequest,
+        cancelled: () -> Boolean,
+        isDisplayClean: (Int, () -> Boolean) -> Boolean,
+        measuredCluster: () -> NamedClusterDisplay? = { null },
+    ): String? {
+        if (cancelled()) return null
+        fixedSealDl3BootstrapCommand(request.kind)?.let { return it }
+        val pkg = request.targetPackage?.takeIf(PLACEMENT_PACKAGE::matches)
+        if (request.kind in DISPLAY_FREE_KINDS) return displayFreeCommand(adb, request, pkg, cancelled)
+        val display = discoverCastDisplay(adb, cancelled)
+            ?: measuredCluster()?.id?.takeUnless { cancelled() }
+            ?: return null
+        return when (request.kind) {
+            // R3 (destructive, opt-in): the task must be gone before --display is honoured at all.
+            CommandKind.START_FRESH_NORMAL -> pkg?.let { resolveComponent(adb, it, cancelled) }?.let {
+                "$LAUNCH_PREFIX --display $display --windowingMode $FREEFORM_MODE --activity-clear-task -n '$it'"
+            }
+
+            // R1: keep the running session. No clear-task, freeform mode so the cluster can composite.
+            CommandKind.RESUME_PROTECTED, CommandKind.PLACE_KEEP_SESSION, CommandKind.REASSERT_ON_CLUSTER ->
+                pkg?.let { resolveComponent(adb, it, cancelled) }?.let {
+                    "$LAUNCH_PREFIX --display $display --windowingMode $FREEFORM_MODE -n '$it'"
+                }
+
+            // R2: the decisive rung. reparent bypasses ActivityStarter display gating entirely.
+            CommandKind.MOVE_STACK_TO_CLUSTER -> when {
+                pkg == null -> NO_OP
+                landedStack(adb, pkg, display, cancelled) != null -> NO_OP
+                else -> sourceStack(adb, pkg, display, cancelled)
+                    ?.let { "am display move-stack $it $display" }
+                    // Nothing to reparent is not a failed mutation; R1 or the next rung decides.
+                    ?: NO_OP
+            }
+
+            // Composite fix: a task carried over from display 0 keeps the old config until resized.
+            CommandKind.FIT_CLUSTER_COMPOSITE -> (pkg ?: return@of NO_OP).let { target ->
+                // The app not being on the cluster, or an unreadable size, is not a failed mutation:
+                // verification owns that verdict. Tearing down a landed cast here was the old bug.
+                val landed = landedStack(adb, target, display, cancelled) ?: return@let NO_OP
+                val size = clusterRealSize(adb, display, cancelled, measuredCluster) ?: return@let NO_OP
+                val density = request.geometry?.densityDpi?.takeIf { it in 80..640 }
+                buildString {
+                    if (density != null) append("wm density $density -d $display; ")
+                    // V1's proven fallback: task resize needs freeform alive. When it is not, the
+                    // artistic overscan frame keeps the cast usable instead of tearing down a cast
+                    // that did land, and Stop resets overscan with the rest of the display state.
+                    append("am task resize ${landed.taskId} 0 0 ${size.first} ${size.second}")
+                    append(" || wm overscan $OVERSCAN_FALLBACK -d $display")
+                }
+            }
+            CommandKind.APPLY_TASK_GEOMETRY -> request.expectedTarget?.takeIf { it.displayId == display }?.let { target ->
+                request.geometry?.let { CastGeometryCommandEncoder.taskBounds(target, request.expectedDisplayIdentity, it) }
+            }
+            CommandKind.APPLY_DISPLAY_GEOMETRY -> request.expectedTarget?.takeIf { it.displayId == display }?.let { target ->
+                request.geometry?.let { CastGeometryCommandEncoder.displayDensity(target, request.expectedDisplayIdentity, it) }
+            }
+            CommandKind.RESET_CLEAN_DISPLAY ->
+                // A foreign occupant must not be clobbered, but skipping is success, not a failure.
+                if (isDisplayClean(display, cancelled)) {
+                    request.geometry?.let {
+                        CastGeometryCommandEncoder.restoreDisplay(display, request.expectedDisplayIdentity, it)
+                    } ?: NO_OP
+                } else NO_OP
+            else -> null
+        }
+    }
+
+    /**
+     * Kinds that never reference the cluster display. Resolving the display first made Stop's own
+     * restore steps, the gentle return to display 0 and the centre-screen pre-open fail whenever the
+     * cluster had already disappeared — exactly the disconnected-sink case they exist for.
+     */
+    private val DISPLAY_FREE_KINDS = setOf(
+        CommandKind.FORCE_STOP_NORMAL,
+        CommandKind.DISCONNECTED_SINK_RECOVERY_ONCE,
+        CommandKind.SET_FORCE_RESIZABLE,
+        CommandKind.DISABLE_TRANSITION_ANIMATION,
+        CommandKind.RESTORE_TRANSITION_ANIMATION,
+        CommandKind.BLOCK_PIP,
+        CommandKind.RESTORE_PIP,
+        CommandKind.RETURN_NORMAL_TO_MAIN,
+        CommandKind.RETURN_PROTECTED_GENTLY,
+        CommandKind.PRE_OPEN_ON_MAIN,
+    )
+
+    private fun displayFreeCommand(
+        adb: Dadb,
+        request: CastMutationRequest,
+        pkg: String?,
+        cancelled: () -> Boolean,
+    ): String? = when (request.kind) {
+        // A task launched in freeform stays a floating window after it returns to the centre screen;
+        // V1 proved `am start --windowingMode 1` is the only shell verb that restores fullscreen.
+        // A protected sink is returned gently, without touching its windowing mode.
+        CommandKind.RETURN_NORMAL_TO_MAIN ->
+            pkg?.let { resolveComponent(adb, it, cancelled) }
+                ?.let { "am start --display 0 --windowingMode $FULLSCREEN_MODE -n '$it'" }
+        CommandKind.RETURN_PROTECTED_GENTLY ->
+            pkg?.let { resolveComponent(adb, it, cancelled) }?.let { "am start --display 0 -n '$it'" }
+
+        // A never-started app has no task to relocate, so open it on the centre screen first.
+        CommandKind.PRE_OPEN_ON_MAIN -> when {
+            pkg == null -> NO_OP
+            hasTask(adb, pkg, cancelled) -> NO_OP
+            else -> resolveComponent(adb, pkg, cancelled)?.let { "$LAUNCH_PREFIX -n '$it'" } ?: NO_OP
+        }
+
+        CommandKind.FORCE_STOP_NORMAL, CommandKind.DISCONNECTED_SINK_RECOVERY_ONCE ->
+            // Nothing to force-stop is not a failed mutation; the launch rung still fails closed.
+            pkg?.let { "am force-stop $it" } ?: NO_OP
+
+        // V1's proven precondition: the global force-resize flag is turned OFF (0) before the
+        // freeform launch. Forcing every activity resizable is what produced the blank cluster.
+        CommandKind.SET_FORCE_RESIZABLE -> "settings put global force_resizable_activities 0"
+
+        // Transition animation is silenced for the placement window and restored on Stop.
+        CommandKind.DISABLE_TRANSITION_ANIMATION ->
+            "settings put global window_animation_scale 0; settings put global transition_animation_scale 0"
+        CommandKind.RESTORE_TRANSITION_ANIMATION -> restoreAnimationCommand(request)
+
+        // Our own launches set supportsEnterPipOnTaskSwitch, which would drop the app into PIP.
+        CommandKind.BLOCK_PIP -> pkg?.let { "appops set $it PICTURE_IN_PICTURE ignore" } ?: NO_OP
+        CommandKind.RESTORE_PIP ->
+            pkg?.let { "appops set $it PICTURE_IN_PICTURE ${restorePipMode(request)}" } ?: NO_OP
+
+        else -> null
+    }
+
+    /** Restores the animation scales captured in the operation baseline, never to an unsafe zero. */
+    private fun restoreAnimationCommand(request: CastMutationRequest): String {
+        fun safe(key: String): String =
+            request.baseline?.animationPerKey?.get(key)?.toFloatOrNull()?.takeIf { it > 0f }?.toString() ?: "1.0"
+        return "settings put global window_animation_scale ${safe("window_animation_scale")}; " +
+            "settings put global transition_animation_scale ${safe("transition_animation_scale")}"
+    }
+
+    /** Restores the exact app-op mode observed before the cast rather than a guessed default. */
+    private fun restorePipMode(request: CastMutationRequest): String =
+        request.baseline?.pipMode?.takeIf { it in PIP_MODES } ?: "allow"
+
+    private fun amStacks(adb: Dadb, cancelled: () -> Boolean): CastAmStackSnapshot? {
+        if (cancelled()) return null
+        val result = adb.shell("am stack list")
+        if (result.exitCode != 0 || result.errorOutput.isNotBlank()) return null
+        return (CastAmStackParser.parse(result.output) as? CastDumpParse.Known)?.value
+    }
+
+    private fun hasTask(adb: Dadb, pkg: String, cancelled: () -> Boolean): Boolean =
+        amStacks(adb, cancelled)?.tasks?.any { it.packageName == pkg } == true
+
+    private fun landedStack(
+        adb: Dadb,
+        pkg: String,
+        display: Int,
+        cancelled: () -> Boolean,
+    ): CastAmTaskRecord? = amStacks(adb, cancelled)
+        ?.tasks?.firstOrNull { it.packageName == pkg && it.displayId == display }
+
+    /** The stack still holding the target somewhere other than the cluster, preferring display 0. */
+    private fun sourceStack(adb: Dadb, pkg: String, display: Int, cancelled: () -> Boolean): Int? {
+        val tasks = amStacks(adb, cancelled)?.tasks?.filter { it.packageName == pkg && it.displayId != display }
+            ?: return null
+        return (tasks.firstOrNull { it.displayId == 0 } ?: tasks.firstOrNull())?.stackId
+    }
+
+    private fun clusterRealSize(
+        adb: Dadb,
+        display: Int,
+        cancelled: () -> Boolean,
+        measuredCluster: () -> NamedClusterDisplay?,
+    ): Pair<Int, Int>? {
+        if (cancelled()) return null
+        val result = adb.shell("dumpsys display")
+        if (result.exitCode != 0 || result.errorOutput.isNotBlank()) return null
+        val named = discoverClusterDisplay(result.output)?.takeIf { it.id == display }
+            ?: measuredCluster()?.takeIf { it.id == display }
+            ?: return null
+        return named.appWidth to named.appHeight
+    }
+
+    private fun resolveComponent(adb: Dadb, pkg: String, cancelled: () -> Boolean): String? {
+        if (cancelled()) return null
+        val result = adb.shell(
+            "cmd package resolve-activity --brief -a android.intent.action.MAIN " +
+                "-c android.intent.category.LAUNCHER $pkg"
+        )
+        if (result.exitCode != 0 || result.errorOutput.isNotBlank()) return null
+        return result.output.lineSequence().map(String::trim)
+            .firstOrNull { it.startsWith("$pkg/") && PLACEMENT_COMPONENT.matches(it) }
+    }
+
+    private fun discoverCastDisplay(adb: Dadb, cancelled: () -> Boolean): Int? {
+        if (cancelled()) return null
+        val result = adb.shell("dumpsys display")
+        if (result.exitCode != 0 || result.errorOutput.isNotBlank()) return null
+        return discoverClusterDisplayId(result.output)
+    }
+}

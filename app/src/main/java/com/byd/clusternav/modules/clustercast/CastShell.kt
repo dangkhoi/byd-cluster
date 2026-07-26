@@ -176,9 +176,15 @@ internal object CastShell {
      */
     fun pipCmd(pkg: String, mode: String) = "cmd appops set --user 0 $pkg PICTURE_IN_PICTURE $mode 2>&1"
     /** component launcher "pkg/cls" của [pkg] (dòng cuối có dấu '/'), null nếu app không có launcher activity. */
-    fun resolveComp(adb: dadb.Dadb, pkg: String): String? =
-        adb.shell("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER $pkg")
-            .output.lines().map { it.trim() }.lastOrNull { it.contains("/") && !it.contains(" ") }
+    fun resolveComp(adb: dadb.Dadb, pkg: String): String? = resolveComp({ c -> adb.shell(c).output }, pkg)
+    /**
+     * ★ v0.7x — biến thể chạy qua seam `sh` (KHÔNG cần `adb`). Nhờ nó [returnAppToMain] bỏ được tham số `adb`,
+     * để [ClusterCast.guardSinksOffVd] (chỉ có `sh`) gọi được returnAppToMain mà KHÔNG phải đổi chữ ký (giữ
+     * nguyên test CastFlowTest/CastStressTest gọi guardSinksOffVd theo sh). Cùng logic: lấy dòng cuối có '/'.
+     */
+    fun resolveComp(sh: (String) -> String, pkg: String): String? =
+        sh("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER $pkg")
+            .lineSequence().map { it.trim() }.lastOrNull { it.contains("/") && !it.contains(" ") }
 
     /** `am task resize` bị framework từ chối? (task fullscreen trên A10 → IllegalArgumentException "not allowed"). */
     fun resizeRejected(o: String) =
@@ -276,18 +282,189 @@ internal object CastShell {
     }
 
     /**
-     * ★ CỤM CHỈ ĐƯỢC CÓ ĐÚNG 1 APP (sửa "chuyển app không clear"): bê MỌI stack KHÔNG phải [keepPkg] khỏi VD
-     * về màn giữa rồi ép fullscreen. KHÔNG force-stop — có thể là phiên dẫn đường người dùng đang cần.
+     * ★ v0.7x (T7 · R11) — BÊ 1 APP KHỎI VD VỀ MÀN CHÍNH (display 0) FULLSCREEN, OCCLUDE-CORRECT.
+     *
+     * Trung tâm hoá "trả app khỏi cụm" cho ĐƯỜNG SWITCH — THAY cho MỌI `am display move-stack …0` (primitive NPE B).
+     *
+     * ★★ TIỀN ĐỀ BẮT BUỘC [oldOccluded] (R11 — bài học CP/AA orphan v0.67): caller PHẢI chạy OCCLUDE-VERIFY
+     *   ([occludeVerify] → target fresh-launch full-VD đã phủ lên → app cũ `isVisible==false`) rồi truyền kết quả vào.
+     *   Gentle `am start --display 0` một task size-compat/sink CÒN VISIBLE vượt ranh freeform →
+     *   `AppWindowToken.initializeChangeTransition` (research RISKY) → reparent nửa vời → cửa sổ MỒ CÔI (brick tới reboot).
+     *   • [oldOccluded]==true  → GENTLE an toàn (app cũ vô hình → snapshot-free): `am start --display 0 --wm1` GIỮ
+     *     pid/state (validated on-car 2026-07-24: 4 switch Vietmap↔Maps NPE=0, pid không đổi). Còn freeform-bé → ép fullscreen (H4).
+     *   • [oldOccluded]==false → KHÔNG gentle-move task visible. SINK/keep-session → ĐỂ YÊN sau target (R11/OQ3:
+     *     KHÔNG force-stop = giữ phiên chiếu điện thoại, KHÔNG move-stack, chấp nhận 2-on-VD); app THƯỜNG → PHAO
+     *     `am force-stop` (process death = CLOSE transition, an toàn kể cả khi visible) + relaunch d0.
+     *
+     * ★ keepSession TÍNH BÊN TRONG (F2): caller KHÔNG truyền cờ này → chống wire nhầm chỉ [ClusterCast.isKeepSession]
+     *   mà QUÊN [ClusterCast.isPhoneProjection] — `keepSessionApps` MẶC ĐỊNH RỖNG nên CP/AA chỉ được che bởi
+     *   `isPhoneProjection` (nhận diện theo hành vi, khớp `placeLadder` R3).
+     *
+     * @return true CHỈ KHI app (a) RỜI VD **VÀ** (b) `displayId==0` **VÀ** (c) `mode==fullscreen` (R3/H4 — đủ 3
+     *   điều kiện; freeform-bé sót = nghi phạm freeze bấm Home). TUYỆT ĐỐI KHÔNG dùng `am display move-stack …0`.
      */
-    fun evictVd(adb: dadb.Dadb, sh: (String) -> String, vd: Int, keepPkg: String, log: (String) -> Unit) {
+    fun returnAppToMain(sh: (String) -> String, app: String, vd: Int, oldOccluded: Boolean, log: (String) -> Unit): Boolean {
+        if (app.isBlank()) return false
+        val comp = resolveComp(sh, app) ?: run { log("  ⚠ returnAppToMain: không resolve được $app → bỏ"); return false }
+        val keepSession = ClusterCast.isKeepSession(app) || ClusterCast.isPhoneProjection(comp, app)   // R5 — CẢ HAI vế (keepSessionApps rỗng mặc định)
+        val startD0 = "am start --display 0 --windowingMode 1 -f 0x20000000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $comp 2>&1"
+        // Đạt "về màn chính" chưa: app RỜI VD ∧ ở display 0 ∧ fullscreen (R3/H4 — freeform-bé sót = nghi phạm freeze bấm Home).
+        fun reachedMain(): Boolean {
+            val ents = StackParse.parse(sh("am stack list"))
+            val e = StackParse.pick(ents, app, preferDisplay = 0)
+            return StackParse.of(ents, app).none { it.displayId == vd } && e != null && e.displayId == 0 && e.mode == "fullscreen"
+        }
+
+        // ★★ ① GENTLE — CHỈ KHI app cũ ĐÃ occlude (R11). Gentle-move một task CÒN VISIBLE = đúng đường tạo orphan v0.67.
+        //   `am start --display 0` → moveTaskToFrontLocked → prepareAppTransition(TRANSIT_TASK_TO_FRONT) →
+        //   isTransitionSet()=true → shouldStartChangeTransition=FALSE → KHÔNG createTaskSnapshot → né NPE A+B,
+        //   reparent về d0 GIỮ NGUYÊN pid/state (On-car 2026-07-24: 4 switch Vietmap↔Maps NPE=0, pid không đổi).
+        //   App cũ ĐÃ invisible (target fresh-launch full-VD phủ lên) nên không có surface đang hiện để animate → an toàn thêm 1 lớp.
+        if (oldOccluded) {
+            log("  ↩ returnAppToMain: $app đã occlude (invisible) → am start d0 (gentle — GIỮ state, không force-stop, không move-stack)")
+            sh(startD0); Thread.sleep(600)
+            run {                                                                   // còn freeform-bé trên d0 → ép fullscreen 1 lần nữa (H4)
+                val e = StackParse.pick(StackParse.parse(sh("am stack list")), app, preferDisplay = 0)
+                if (e != null && e.displayId == 0 && e.mode != "fullscreen") { log("  ↩ $app còn '${e.mode}' → ép fullscreen"); sh(startD0); Thread.sleep(400) }
+            }
+            if (reachedMain()) { log("  ✓ $app về màn chính fullscreen (GIỮ state)"); return true }
+        }
+
+        // ② Tới đây: app cũ CHƯA occlude (KHÔNG được gentle-move task visible → orphan), HOẶC đã gentle mà chưa rời VD.
+        //   SINK/keep-session (CP/AA): TUYỆT ĐỐI không giết phiên + KHÔNG move-stack visible → ĐỂ YÊN sau target (F2/F5/R11/OQ3).
+        if (keepSession) {
+            log("  ⚠ $app (giữ-phiên/sink) ${if (!oldOccluded) "còn VISIBLE trên VD" else "chưa rời VD sau gentle"} → ĐỂ YÊN sau target, " +
+                "KHÔNG force-stop, KHÔNG move-stack (chấp nhận 2-on-VD, KHÔNG treo — R11/OQ3)")
+            return reachedMain()      // false nếu sink còn trên VD (soft-R2) — nhưng KHÔNG treo
+        }
+
+        // ③ APP THƯỜNG: force-stop (process death = CLOSE transition, né A+B kể cả khi còn visible) + relaunch fullscreen d0.
+        //   CHỈ nhánh này mất state — đổi lấy chắc chắn rời VD + KHÔNG treo (app thường không có phiên chiếu điện thoại để mất).
+        log("  ↩ $app (thường) ${if (!oldOccluded) "chưa occlude" else "gentle chưa rời VD"} → force-stop + relaunch fullscreen d0 (an toàn, hiếm)")
+        sh("am force-stop $app"); Thread.sleep(400)                                 // process death → CLOSE transition (né A+B)
+        sh("am start --display 0 --windowingMode 1 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $comp 2>&1"); Thread.sleep(500)
+        return reachedMain()
+    }
+
+    /**
+     * ★ v0.7x (T7 · D5 U3) — OCCLUDE-VERIFY: poll `dumpsys window displays` tới khi [oldApp] token trên [vd]
+     * `isVisible==false` (đã bị target fresh-launch full-VD phủ lên), tối đa [timeoutMs]. Chỉ khi TRẢ TRUE thì
+     * [returnAppToMain] mới được gentle-move app cũ (né change-transition → orphan). Sink cưỡng lại (size-compat,
+     * tự re-front) → hết giờ → false → caller ĐỂ YÊN sink. Đọc-only, KHÔNG mutate.
+     */
+    internal fun occludeVerify(sh: (String) -> String, oldApp: String, vd: Int, log: (String) -> Unit,
+                               timeoutMs: Long = 1200, stepMs: Long = 200): Boolean {
+        if (oldApp.isBlank() || vd < 1) return true
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (true) {
+            if (!WmParse.isVisibleOn(sh("dumpsys window displays"), oldApp, vd)) {
+                log("  ✓ occlude-verify: $oldApp đã bị target phủ (isVisible==false) → gentle-return an toàn")
+                return true
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                log("  ⚠ occlude-verify: $oldApp VẪN visible trên VD sau ${timeoutMs}ms → KHÔNG gentle-move (né orphan): sink để yên / app thường force-stop")
+                return false
+            }
+            Thread.sleep(stepMs)
+        }
+    }
+
+    /**
+     * ★ v0.66 — kết quả 1 lần hot-swap ở tầng shell. [target] = StackEntry app đích trên VD SAU swap (ĐÃ RE-PICK,
+     * F10), null nếu swap KHÔNG hoàn tất (B chưa bám VD / B bounce) → caller GIỮ app cũ, KHÔNG commit. [note] để log.
+     */
+    internal data class SwapResult(val target: StackEntry?, val note: String)
+
+    /**
+     * ★ v0.7x (T7) — LÕI SHELL của HOT-SWAP, tách khỏi [ClusterCast] để test off-xe (FakeShell), Context-free.
+     * Bất biến cốt tử: "VD KHÔNG BAO GIỜ rỗng" (né NPE A) + KHÔNG `move-stack …0` (né NPE B) + OCCLUDE-CORRECT (R11).
+     * Bám recipe DashCast (docs/reference/dashcast-projection-recipe.md, validated on-car v0.23):
+     *
+     *  ② ĐẶT [target] lên VD ĐANG SỐNG — SPLIT theo loại app (khôi phục CP/AA đúng như cold path):
+     *       • target THƯỜNG (NEW, `oldApp != target`) → FRESH-LAUNCH: `am force-stop <target>` +
+     *         `am start --display vd --wm5 --activity-clear-task` (recipe #4 — buffer full-VD composite đúng,
+     *         hết trắng/ADAS-đen; force-stop giết TaskRecord để `--display` được tôn trọng, né willClearTask short-circuit).
+     *       • target SINK (isPhoneProjection‖isKeepSession) HOẶC re-cast CHÍNH app đang trên VD → RESUME:
+     *         `am start --display vd --wm5` (KHÔNG force-stop, KHÔNG clear-task) — giữ phiên chiếu điện thoại /
+     *         KHÔNG reset app đang đúng chỗ (F1: force-stop chính app duy nhất trên VD → VD rỗng → NPE A).
+     *     R2 = move-stack LÊN VD (đặt app MỚI lên VD, KHÔNG bê KHỎI VD) nếu am start chưa relocate. GATE [landedOn] (R6):
+     *     B chưa bám VD → GIỮ old, thoát (F5: TUYỆT ĐỐI KHÔNG [restoreFullscreenOnMain] target).
+     *  ③ Bê [oldApp] về màn chính — CHỈ khi `oldApp.isNotBlank() && oldApp != target` (F1). TRƯỚC đó:
+     *       (F4 TOCTOU) RE-CHECK B còn bám VD; B bounce → HỦY, giữ old.
+     *       (U3 OCCLUDE-VERIFY, R11) re-assert target on top rồi [occludeVerify] tới khi old `isVisible==false`.
+     *     Truyền `oldOccluded` vào [returnAppToMain]: occluded → gentle (giữ state); sink cưỡng lại → để yên (KHÔNG orphan).
+     *  ④ [evictVd] dọn app lạ khác. ⑤ RE-ASSERT B (H7) rồi RE-PICK StackEntry của B (F10 — taskId đổi sau fresh-launch/re-assert).
+     */
+    internal fun swapOnVd(sh: (String) -> String, target: String, comp: String, oldApp: String, vd: Int, log: (String) -> Unit): SwapResult {
+        // RESUME/re-assert (bring-to-front trên VD, full-VD freeform) — KHÔNG force-stop, KHÔNG clear-task.
+        val resumeCmd = "am start --display $vd --windowingMode 5 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $comp 2>&1"
+        // FRESH-LAUNCH (target thường mới): --activity-clear-task để buffer full-VD composite đúng (recipe #4).
+        val freshCmd = "am start --display $vd --windowingMode 5 --activity-clear-task -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $comp 2>&1"
+        val isSink = ClusterCast.isPhoneProjection(comp, target) || ClusterCast.isKeepSession(target)
+        // FRESH-LAUNCH chỉ cho target THƯỜNG & MỚI. Sink → resume (giữ phiên). Re-cast chính app (oldApp==target) →
+        //   resume (KHÔNG force-stop app duy nhất trên VD → chống VD rỗng → NPE A, F1).
+        val freshLaunch = !isSink && oldApp != target
+
+        // ② đặt B lên VD ĐANG SỐNG (VD còn app cũ → KHÔNG rỗng → KHÔNG huỷ)
+        if (freshLaunch) {
+            log("  ② fresh-launch $target (am force-stop + --activity-clear-task) — recipe #4, composite full-VD")
+            sh("am force-stop $target"); Thread.sleep(400)                           // giết TaskRecord → --display honored
+            logLines(sh(freshCmd), log); Thread.sleep(500)
+        } else {
+            log("  ② resume $target (am start --wm5" + (if (isSink) ", SINK — KHÔNG force-stop/clear-task để giữ phiên chiếu điện thoại)" else ", re-cast cùng app — KHÔNG force-stop)"))
+            logLines(sh(resumeCmd), log); Thread.sleep(500)
+        }
+        var landed = landedOn(sh, target, vd)
+        if (landed == null) {                                                        // R2: move-stack B LÊN VD (đặt app MỚI lên VD → an toàn)
+            val src = StackParse.pick(StackParse.parse(sh("am stack list")), target, preferDisplay = 0)
+            if (src != null && src.displayId != vd) {
+                log("  R2 move-stack ${src.stackId} → VD $vd"); sh("am display move-stack ${src.stackId} $vd 2>&1"); Thread.sleep(400)
+                logLines(sh(resumeCmd), log); landed = landedOn(sh, target, vd)      // re-composite (task đã ở VD → plain start)
+            }
+        }
+        if (landed == null)                                                          // R6: B chưa bám VD → GIỮ old (VD còn old → không rỗng → né NPE A)
+            return SwapResult(null, "$target chưa bám VD (bounce?) — giữ app cũ trên cụm, switch hụt (KHÔNG treo)")
+
+        // ③ Bê app CŨ ra display 0 — F1 (P0): chỉ khi oldApp != target (chống force-stop chính B → VD rỗng → NPE A).
+        if (oldApp.isNotBlank() && oldApp != target) {
+            // ★ F4 (TOCTOU): B (Maps GL) có thể bounce khỏi VD SAU gate landedOn → RE-CHECK bằng stack list MỚI
+            //   NGAY TRƯỚC bước phá hoại. B bounce → HỦY swap, giữ old (chưa đụng), KHÔNG force-stop, KHÔNG treo.
+            val bStillOnVd = StackParse.of(StackParse.parse(sh("am stack list")), target).any { it.displayId == vd }
+            if (!bStillOnVd)
+                return SwapResult(null, "$target vừa bounce khỏi VD trước khi bê app cũ → HỦY swap, giữ old (KHÔNG force-stop, KHÔNG treo)")
+            // ★ U3 OCCLUDE-VERIFY (R11): re-assert target on top (full-VD phủ lên) rồi CONFIRM old.isVisible==false
+            //   TRƯỚC khi bê. Chỉ khi old vô hình thì gentle mới né change-transition → orphan. Sink cưỡng lại → oldOccluded=false → để yên.
+            logLines(sh(resumeCmd), log); Thread.sleep(300)                          // re-assert target on top (H7 sớm) để phủ old
+            val oldOccluded = occludeVerify(sh, oldApp, vd, log)
+            if (returnAppToMain(sh, oldApp, vd, oldOccluded, log)) log("  ✓ $oldApp đã về màn chính (fullscreen d0)")
+            else log("  ⚠ $oldApp chưa về d0 sạch (sink để yên / chưa occlude) — KHÔNG treo, tiếp tục (xem log trên)")
+        }
+
+        // ④ dọn app lạ khác khỏi VD (cụm chỉ 1 app — R2). ⑤ RE-ASSERT B trên top (H7) + RE-PICK (F10).
+        evictVd(sh, vd, target, log)
+        logLines(sh(resumeCmd), log); Thread.sleep(300)
+        val repicked = landedOn(sh, target, vd) ?: landed
+        return SwapResult(repicked, "ok")
+    }
+
+    /**
+     * ★ CỤM CHỈ ĐƯỢC CÓ ĐÚNG 1 APP: bê MỌI stray (≠ [keepPkg]) khỏi VD về màn chính bằng [returnAppToMain]
+     *   (THAY `am display move-stack …0` = primitive NPE B). Mỗi stray tự tính OCCLUDE (isVisibleOn) → occluded
+     *   thì gentle (giữ state), còn visible thì app thường force-stop / sink để yên (R11). Thừa hưởng miễn-trừ
+     *   keep-session/projection (stray = CP/AA thì KHÔNG force-stop). [StackParse.evictableOnVd] vẫn lọc home/pinned (H8).
+     *   ⚠ evictVd CÒN được gọi ở đường COLD first-cast ([ClusterCast.placeAppOnVd]) → CHẤP NHẬN (stray hiếm ở cold,
+     *   sink vẫn miễn — F6). Chỉ đổi CƠ CHẾ relocate, KHÔNG đổi filter nạn nhân. KHÔNG move-stack ở BẤT KỲ nhánh nào.
+     */
+    fun evictVd(sh: (String) -> String, vd: Int, keepPkg: String, log: (String) -> Unit) {
         if (vd < 1) return
         val victims = StackParse.evictableOnVd(StackParse.parse(sh("am stack list")), vd)
             .filter { it.pkg != keepPkg }
+            .map { it.pkg }.distinct()
         if (victims.isEmpty()) return
-        for (v in victims.distinctBy { it.stackId }) {
-            log("  ⇤ dọn khỏi cụm: ${v.brief()}")
-            sh("am display move-stack ${v.stackId} 0 2>&1"); Thread.sleep(300)
+        for (pkg in victims) {
+            val occluded = !WmParse.isVisibleOn(sh("dumpsys window displays"), pkg, vd)   // stray bị target/keep phủ?
+            log("  ⇤ dọn khỏi cụm: $pkg (${if (occluded) "occluded → gentle" else "visible → force-stop thường / để yên sink"})")
+            returnAppToMain(sh, pkg, vd, occluded, log)                              // gentle nếu occluded; KHÔNG move-stack; sink miễn force-stop
         }
-        victims.map { it.pkg }.distinct().forEach { restoreFullscreenOnMain(adb, sh, it, -1, log) }
     }
 }
