@@ -105,9 +105,6 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.btn_reconnect_nav).setOnClickListener {
             NavConnect.reconnect(applicationContext)
         }
-        findViewById<Button>(R.id.btn_nav_details).setOnClickListener {
-            startActivity(Intent(this, ClusterNavActivity::class.java))
-        }
         findViewById<Button>(R.id.btn_nav_stop).setOnClickListener {
             NavRepository.stop(applicationContext)
             refresh()
