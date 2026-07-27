@@ -16,7 +16,8 @@ class TwoTrackHomeContractTest {
         assertFalse(activity.contains("ClusterCast.stop("))
         assertFalse(layout.contains("GPS trong hầm"))
         assertFalse(layout.contains("btn_gps"))
-        assertTrue(layout.contains("btn_nav_details"))
+        // 2026-07-27: bỏ nút "Mở Navigation" theo yêu cầu chủ dự án — Home đã có đủ công tắc của track
+        // Navigation ngay trên thẻ, nên một nút mở màn phụ chỉ thêm một lần bấm.
         assertTrue(layout.contains("btn_cast_details"))
         assertTrue(activity.contains("NavRepository.stop"))
     }

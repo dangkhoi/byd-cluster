@@ -29,10 +29,13 @@ class ClusterCastActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var selected: TextView
     private lateinit var apps: GridLayout
-    private lateinit var castButton: Button
+
+    private lateinit var chosenApps: android.widget.LinearLayout
+    private lateinit var chosenEmpty: TextView
+
+    /** Nút Chiếu chung đã bỏ; điều kiện được-phép-chiếu KHÔNG bỏ — nó gác nút chiếu của từng app. */
+    private var castEligible = false
     private lateinit var stopButton: Button
-    private lateinit var adjustButton: Button
-    private lateinit var appManagerButton: Button
     private lateinit var diagnosticsButton: Button
     private lateinit var retryButton: Button
     private lateinit var phoneDisconnectButton: Button
@@ -61,13 +64,11 @@ class ClusterCastActivity : Activity() {
         status = findViewById(R.id.cast_status)
         selected = findViewById(R.id.cast_selected)
         apps = findViewById<GridLayout>(R.id.cast_apps).apply { columnCount = resources.getInteger(R.integer.cast_app_columns) }
-        castButton = findViewById<Button>(R.id.cast_start).apply { setOnClickListener { selectedPackage?.let(::executeCast) ?: show("Chọn app trước") } }
+        chosenApps = findViewById(R.id.cast_chosen)
+        chosenEmpty = findViewById(R.id.cast_chosen_empty)
         stopButton = findViewById<Button>(R.id.cast_stop).apply { setOnClickListener { executeStop() } }
-        adjustButton = findViewById<Button>(R.id.cast_adjust).apply { setOnClickListener { openAdjustment() } }
-        appManagerButton = findViewById<Button>(R.id.cast_app_manager).apply { setOnClickListener { openAppManager() } }
         diagnosticsButton = findViewById<Button>(R.id.cast_diagnostics).apply { setOnClickListener { startActivity(android.content.Intent(this@ClusterCastActivity, DiagActivity::class.java)) } }
         retryButton = findViewById<Button>(R.id.cast_retry).apply { setOnClickListener { retryConnect() } }
-        CastBubbleControl.bind(this, findViewById(R.id.cast_bubble)) { show(it) }
         CastScreenChrome.bind(this)
         phoneDisconnectButton = findViewById<Button>(R.id.cast_phone_disconnect).apply { setOnClickListener { showPhoneDisconnectGuidance() } }
         recoverOnceButton = findViewById<Button>(R.id.cast_recover_once).apply { setOnClickListener { confirmEligibleRecovery() } }
@@ -85,7 +86,7 @@ class ClusterCastActivity : Activity() {
             if (savedFocusId != android.view.View.NO_ID) findViewById<android.view.View>(savedFocusId)?.requestFocus()
         }
         loadApps()
-        listOf(castButton, stopButton, adjustButton, appManagerButton, diagnosticsButton, retryButton,
+        listOf(stopButton, diagnosticsButton, retryButton,
             phoneDisconnectButton, recoverOnceButton, physicalInstructionButton, profileSetupButton)
             .forEach { it.isEnabled = false }
         work.misc {
@@ -108,12 +109,7 @@ class ClusterCastActivity : Activity() {
             executeStop()
         }
     }
-    /**
-     * Thực hiện ý định "chiếu ngay" do Home gửi sang, đúng một lần.
-     *
-     * Cần app đang chọn; chưa chọn thì KHÔNG đoán — chỉ mở màn này để người dùng thấy danh sách và tự tick.
-     * Đoán hộ ở đây là cách nhanh nhất để chiếu sai app lên cụm giữa lúc đang lái.
-     */
+    /** Ý định "chiếu ngay" từ Home, đúng một lần. Chưa chọn app thì KHÔNG đoán — chiếu sai app khi đang lái. */
     private fun consumeCastNowIntent() {
         if (intent?.getBooleanExtra(EXTRA_CAST_NOW, false) != true) return
         intent.removeExtra(EXTRA_CAST_NOW)
@@ -121,7 +117,7 @@ class ClusterCastActivity : Activity() {
         executeCast(target)
     }
 
-    override fun onResume() { super.onResume(); consumeCastNowIntent(); CastBubbleControl.rebind(this, findViewById(R.id.cast_bubble)) { show(it) }; refresh() }
+    override fun onResume() { super.onResume(); consumeCastNowIntent(); refresh() }
     override fun onDestroy() { destroyed = true; statusTimers.close(); operationStatus.clearAll(); work.close(); super.onDestroy() }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_SELECTED_PACKAGE, selectedPackage)
@@ -135,7 +131,14 @@ class ClusterCastActivity : Activity() {
             val preselected = appBinding.preselect(selectedPackage, values)
             postUi {
                 apps.removeAllViews()
-                values.forEach { app ->
+                chosenApps.removeAllViews()
+                // Đã chọn thì lên trên kèm panel; chưa chọn nằm im ở dưới — khỏi cuộn tìm xem đã tick gì.
+                val (picked, rest) = values.partition { it.packageName in catalog.favorites() }
+                picked.forEach { app ->
+                    chosenApps.addView(CastAppRows.build(this@ClusterCastActivity, app, rowActions))
+                }
+                chosenEmpty.visibility = if (picked.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+                rest.forEach { app ->
                     apps.addView(CastAppRows.build(this@ClusterCastActivity, app, rowActions))
                 }
                 if (values.isEmpty()) apps.addView(text("Không đọc được danh sách app", 13f, 0xFF555555.toInt()))
@@ -171,7 +174,9 @@ class ClusterCastActivity : Activity() {
             profileId = { facade.observedState()?.geometry?.profileId ?: "android-user-0" },
             stillAlive = { !isFinishing && !destroyed },
             applyGeometry = { geometry -> applyGeometry(geometry) },
-            castNow = { pkg -> executeCast(pkg) },
+            castNow = { pkg ->
+                if (castEligible) executeCast(pkg) else show("Chưa chiếu được ở trạng thái này — xem Chẩn đoán")
+            },
         )
     }
 
@@ -440,11 +445,9 @@ class ClusterCastActivity : Activity() {
                 val effectiveActions = model.activityActions(mutationSnapshot)
                 fun enabled(action: CastAction) = action in effectiveActions
                 castActionExported = enabled(CastAction.CAST) || enabled(CastAction.SWITCH)
-                castButton.isEnabled = castActionExported && result.selectedEligible
+                castEligible = castActionExported && result.selectedEligible
                 stopButton.isEnabled = enabled(CastAction.STOP)
-                adjustButton.isEnabled = enabled(CastAction.ADJUST)
                 diagnosticsButton.isEnabled = enabled(CastAction.OPEN_DIAGNOSTICS)
-                appManagerButton.isEnabled = enabled(CastAction.OPEN_APP_MANAGER)
                 retryButton.isEnabled = enabled(CastAction.RETRY_CONNECT)
                 phoneDisconnectButton.isEnabled = enabled(CastAction.REQUEST_PHONE_DISCONNECT)
                 recoverOnceButton.isEnabled = enabled(CastAction.TRY_ELIGIBLE_RECOVERY_ONCE)

@@ -82,13 +82,9 @@
                     android:textColor="@color/brand" />
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginTop="8dp">
-                    <Button android:id="@+id/btn_nav_details" android:layout_width="0dp"
-                        android:layout_height="wrap_content" android:layout_weight="1"
-                        android:minHeight="@dimen/touch_min" android:background="@drawable/btn_primary"
-                        android:text="Mở Navigation" android:textAllCaps="false" android:textColor="@color/white" />
                     <Button android:id="@+id/btn_nav_stop" android:layout_width="0dp"
                         android:layout_height="wrap_content" android:layout_weight="1"
-                        android:layout_marginStart="10dp" android:minHeight="@dimen/touch_min"
+                        android:minHeight="@dimen/touch_min"
                         android:background="@drawable/btn_warning_outline" android:text="Dừng toàn bộ"
                         android:textAllCaps="false" android:textColor="@color/warn_amber" />
                 </LinearLayout>
