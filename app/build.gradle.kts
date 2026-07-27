@@ -81,7 +81,7 @@ android {
     }
 
     testOptions {
-        // Chạy property test (jqwik) + JUnit 5 off-device qua ./gradlew testDebugUnitTest.
+        // Chạy JUnit 5 off-device qua ./gradlew testDebugUnitTest.
         unitTests.all { it.useJUnitPlatform() }
     }
 }
@@ -97,9 +97,8 @@ dependencies {
     implementation("dev.mobile:dadb:1.2.10")
 
     // — JVM unit + property tests (off-device, chạy bằng ./gradlew testDebugUnitTest) —
-    // JUnit 5 (Jupiter) làm test engine; jqwik cho property-based testing (Property 5/9/14...).
+    // JUnit 5 (Jupiter) làm test engine.
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
-    testImplementation("net.jqwik:jqwik:1.8.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

@@ -1,5 +1,7 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.navigation.NavigationOutputFailureReason
+import com.byd.clusternav.navigation.NavigationSourceReason
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
@@ -123,10 +125,10 @@ class MainActivity : Activity() {
         val source = navigation.source
         val sourceText = when (val freshness = source.freshness) {
             is NavigationFreshness.Fresh -> source.identity?.displayName ?: source.identity?.packageName ?: "Đang dẫn đường"
-            is NavigationFreshness.Stale -> "Nguồn đã cũ · ${freshness.reason.name}"
+            is NavigationFreshness.Stale -> "Nguồn đã cũ · ${freshness.reason.readable()}"
             is NavigationFreshness.Unknown -> when (permission) {
                 NavigationPermission.MISSING -> getString(R.string.status_need_perm)
-                else -> freshness.reason.name.replace('_', ' ').lowercase()
+                else -> freshness.reason.readable()
             }
         }
         navStatus.text = sourceText
@@ -154,9 +156,41 @@ class MainActivity : Activity() {
         NavigationOutputStatus.OFF -> "tắt"
         NavigationOutputStatus.STARTING -> "đang khởi động"
         NavigationOutputStatus.EMITTING -> "đang gửi"
-        NavigationOutputStatus.DISPLAY_VERIFIED -> "đã xác minh"
+        // Trạng thái này KHÔNG BAO GIỜ xảy ra khi chạy thật: `markDisplayVerified` chỉ được gọi từ test,
+        // không có producer nào trong `:app`. Giữ nhánh cho `when` vét cạn, nhưng nói đúng cơ sở — theo Q1
+        // (đóng ngày 2026-07-27) không có tín hiệu nào của Android xác nhận cụm đang hiện gì, nên chữ
+        // "đã xác minh" ở đây sẽ là tuyên bố không ai đặt được.
+        NavigationOutputStatus.DISPLAY_VERIFIED -> "cụm báo đã nhận"
         NavigationOutputStatus.STALE -> "đã cũ"
-        is NavigationOutputStatus.FAULT -> "lỗi ${reason.name.lowercase()}"
+        is NavigationOutputStatus.FAULT -> "lỗi: ${reason.readable()}"
+    }
+
+    /**
+     * Lý do nguồn dẫn đường, viết cho người đọc.
+     *
+     * Trước 2026-07-27 chỗ này in `reason.name.replace('_',' ').lowercase()`, nên trên màn tiếng Việt hiện
+     * ra "no active session". Cùng lỗi đã sửa ở màn Cast trong ngày: tên hằng trong mã không phải câu cho
+     * người dùng. `when` vét cạn nên thêm giá trị mới là trình dịch bắt ngay, không lặng lẽ rơi về tên thô.
+     */
+    private fun NavigationSourceReason.readable(): String = when (this) {
+        NavigationSourceReason.PERMISSION_UNKNOWN -> "Chưa rõ quyền notification"
+        NavigationSourceReason.PERMISSION_MISSING -> "Cần cấp quyền notification"
+        NavigationSourceReason.NO_ACTIVE_SESSION -> "Chưa có phiên dẫn đường"
+        NavigationSourceReason.WAITING_FOR_FRAME -> "Đang chờ dữ liệu đầu tiên"
+        NavigationSourceReason.PROCESS_REHYDRATED_UNVERIFIED -> "App vừa khởi động lại, chưa xác nhận nguồn"
+        NavigationSourceReason.FRAME_EXPIRED -> "Dữ liệu quá hạn"
+        NavigationSourceReason.SOURCE_DISCONNECTED -> "Mất kết nối với app dẫn đường"
+        NavigationSourceReason.SOURCE_CHANGED -> "Nguồn dẫn đường vừa đổi"
+    }
+
+    /** Lý do đầu ra lỗi, viết cho người đọc — cùng lý do như trên. */
+    private fun NavigationOutputFailureReason.readable(): String = when (this) {
+        NavigationOutputFailureReason.DELIVERY_THROWN -> "gửi thất bại"
+        NavigationOutputFailureReason.DEADLINE_EXCEEDED -> "quá thời gian chờ"
+        NavigationOutputFailureReason.QUEUE_SATURATED -> "hàng chờ đã đầy"
+        NavigationOutputFailureReason.EXECUTOR_REJECTED -> "luồng gửi đã dừng"
+        NavigationOutputFailureReason.DISPLAY_ACK_REJECTED -> "cụm từ chối xác nhận"
+        NavigationOutputFailureReason.INTERNAL_CONTRACT_ERROR -> "sai hợp đồng nội bộ"
     }
 
     private fun notificationAccessGranted(): Boolean {

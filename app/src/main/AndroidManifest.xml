@@ -53,11 +53,6 @@
             android:configChanges="orientation|screenSize|screenLayout|density|smallestScreenSize|keyboardHidden"
             android:theme="@style/ClusterTheme" />
 
-        <!-- Host CHUNG cho mọi ClusterModule (thí nghiệm). 1 dòng VĨNH VIỄN — thêm/xoá module không đụng đây. -->
-        <activity
-            android:name=".modules.ModuleHost"
-            android:exported="false"
-            android:label="Module (thí nghiệm)" />
 
         <!-- MAP LÊN CLUSTER (projection qua dadb). exported=false: chống app khác kích projection (chiếm cluster) —
              nút trong MainActivity mở qua explicit intent; adb shell vẫn 'am start' được activity non-exported. -->

@@ -11,10 +11,9 @@ class DeadReckonRetirementTest {
     fun `active product has exactly two tracks and no DR or mock provider wiring`() {
         val manifest = app("src/main/AndroidManifest.xml").toFile().readText()
         val home = app("src/main/java/com/byd/clusternav/MainActivity.kt").toFile().readText()
-        val registry = app("src/main/java/com/byd/clusternav/modules/ModuleRegistry.kt").toFile().readText()
         val receiver = app("src/main/java/com/byd/clusternav/RebindReceiver.kt").toFile().readText()
         val prefs = app("src/main/java/com/byd/clusternav/Prefs.kt").toFile().readText()
-        listOf(manifest, home, registry, receiver, prefs).forEach { text ->
+        listOf(manifest, home, receiver, prefs).forEach { text ->
             assertFalse(text.contains("DeadReckon"))
             assertFalse(text.contains("modules.deadreckon"))
             assertFalse(text.contains("modules.mockloc"))
