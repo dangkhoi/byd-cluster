@@ -20,10 +20,8 @@ import com.byd.clusternav.modules.clustercast.v2.BootAutomationRequest
 import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
 import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.CastAutomationSettings
-import com.byd.clusternav.modules.clustercast.v2.CastIntentOrigin
 import com.byd.clusternav.modules.clustercast.v2.CastManualIntentResult
 import com.byd.clusternav.modules.clustercast.v2.CastManualTargetReader
-import com.byd.clusternav.modules.clustercast.v2.StoreRead
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -113,7 +111,7 @@ class CastAutomationService : Service() {
         settings: CastAutomationSettings,
         requestId: UUID,
     ) {
-        val envelope = (runtime.store.locked { read() } as? StoreRead.Loaded)?.envelope ?: run {
+        val envelope = CastFacade.wrapping(runtime).envelope() ?: run {
             settings.terminalize(requestId, AutomationRequestState.BLOCKED, AutomationReason.KNOWN_FAILURE)
             return
         }
@@ -123,7 +121,7 @@ class CastAutomationService : Service() {
             settings.terminalize(requestId, AutomationRequestState.SUPERSEDED, AutomationReason.STOP_SUPERSEDED)
             return
         }
-        if (envelope.pendingIntent?.origin == CastIntentOrigin.USER) {
+        if (CastFacade.wrapping(runtime).pendingIntentIsUserRequested(envelope)) {
             settings.terminalize(requestId, AutomationRequestState.SUPERSEDED, AutomationReason.USER_SUPERSEDED)
             return
         }
@@ -168,13 +166,11 @@ class CastAutomationService : Service() {
             settings.terminalize(requestId, AutomationRequestState.SUPERSEDED, AutomationReason.STOP_SUPERSEDED)
             return
         }
-        val catalog = CastAppCatalog(applicationContext) { runtime.gateway.connectedPhoneSession(it) }
+        val catalog = CastAppCatalog(applicationContext) { CastFacade.wrapping(runtime).phoneSession(it) }
         val result = runCatching {
-            runtime.coordinator.runManualIntent(
+            CastFacade.wrapping(runtime).runBootAutomationIntent(
                 request.targetPackage,
-                runtime.vehicleFacts,
-                CastManualTargetReader { catalog.snapshot(it, runtime.gateway.connectedPhoneSession(it)) },
-                origin = CastIntentOrigin.BOOT_AUTO,
+                CastManualTargetReader { catalog.snapshot(it, CastFacade.wrapping(runtime).phoneSession(it)) },
                 automationRequestId = requestId,
             )
         }.getOrElse { failure ->
@@ -185,7 +181,7 @@ class CastAutomationService : Service() {
             is CastManualIntentResult.Succeeded ->
                 settings.terminalize(requestId, AutomationRequestState.COMPLETED, null)
             is CastManualIntentResult.Blocked -> {
-                val current = (runtime.store.locked { read() } as? StoreRead.Loaded)?.envelope
+                val current = CastFacade.wrapping(runtime).envelope()
                 val stillCurrent = current?.bootAutomationRequest?.takeIf { it.requestId == requestId }
                 val reason = if (current?.transaction != null && stillCurrent != null && !stillCurrent.terminal) {
                     AutomationReason.PRIOR_JOURNAL

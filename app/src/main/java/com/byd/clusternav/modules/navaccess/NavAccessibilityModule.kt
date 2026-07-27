@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.navaccess
 
+import com.byd.clusternav.navigation.TurnDistanceInterpolator
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -11,7 +12,6 @@ import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.TextView
 import com.byd.clusternav.Prefs
-import com.byd.clusternav.TurnDistanceInterpolator
 import com.byd.clusternav.modules.ClusterModule
 import com.byd.clusternav.modules.ModuleUi
 import com.byd.clusternav.modules.SelfTest

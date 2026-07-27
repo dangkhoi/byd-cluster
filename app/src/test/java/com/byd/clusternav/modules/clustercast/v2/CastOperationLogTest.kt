@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast.v2
 
+import com.byd.clusternav.testsupport.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -16,7 +17,7 @@ class CastOperationLogTest {
 
     private fun source(relative: String): String {
         val direct = Paths.get("app/src/$relative")
-        val nested = Paths.get("src/$relative")
+        val nested = SourceRoots.path("src/$relative")
         return (if (Files.exists(direct)) direct else nested).toFile().readText()
     }
 
@@ -56,7 +57,7 @@ class CastOperationLogTest {
 
     @Test
     fun `the gateway records the exact dispatched command`() {
-        val gateway = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAndroidRuntime.kt")
+        val gateway = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAdbGateway.kt")
         assertTrue(gateway.contains("CastOperationLog.record(\"   $ \$command\")"))
         assertTrue(gateway.indexOf("CastOperationLog.record(\"   $ \$command\")") < gateway.indexOf("val result = adb.shell(command)"))
     }
@@ -64,7 +65,7 @@ class CastOperationLogTest {
     @Test
     fun `diagnostics surfaces the log read-only`() {
         val diag = source("main/java/com/byd/clusternav/modules/clustercast/DiagActivity.kt")
-        assertTrue(diag.contains("CastOperationLog.render()"))
+        assertTrue(diag.contains("facade.operationLog()"))
         assertTrue(diag.contains("nhật ký thao tác"))
         assertTrue(diag.contains("mode=READ_ONLY"))
         assertFalse(diag.contains("CastOperationLog.clear"))

@@ -94,30 +94,44 @@ class CastAppManagerBinding(
      * immediately stops the overlay host without sending any Cast Stop request.
      */
     override fun setBubbleEnabled(enabled: Boolean) = background {
-        catalog.setBubbleEnabled(enabled)
-        val intent = Intent(context, FloatingBubbleService::class.java)
-        if (enabled) {
-            if (Settings.canDrawOverlays(context)) runCatching { context.startForegroundService(intent) }
-        } else {
-            runCatching { context.stopService(intent) }
-        }
+        CastBubbleControl.apply(context, enabled)
     }
 
-    override fun openOverlaySettings() {
-        runCatching {
-            context.startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + context.packageName),
-                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-        }
-    }
+    override fun openOverlaySettings() = CastBubbleControl.requestOverlay(context)
 }
 
 /** Shared icon+label binding for Activity tiles and quick switch. */
 object CastAppTiles {
+    /**
+     * Marks the tile of the app currently chosen to cast.
+     *
+     * Selection used to exist only as the sentence "Đã chọn: X" in the status card, so the grid gave no
+     * feedback at all when a tile was tapped. Tiles carry their package as their tag, which lets the
+     * mark move without rebuilding the grid or re-querying the package manager.
+     */
+    fun markSelected(grid: android.view.ViewGroup, selectedPackage: String?) {
+        for (index in 0 until grid.childCount) {
+            val child = grid.getChildAt(index) as? Button ?: continue
+            val chosen = child.tag != null && child.tag == selectedPackage
+            child.isSelected = chosen
+            val end = if (chosen) {
+                child.resources.getDrawable(com.byd.clusternav.R.drawable.ic_check_selected, null).apply {
+                    val side = (22 * child.resources.displayMetrics.density + .5f).toInt()
+                    setBounds(0, 0, side, side)
+                }
+            } else {
+                null
+            }
+            child.setCompoundDrawablesRelative(child.compoundDrawablesRelative[0], null, end, null)
+            child.contentDescription = buildString {
+                append(child.text)
+                if (chosen) append(". Đang chọn để chiếu")
+            }
+        }
+    }
+
     fun bind(button: Button, entry: CastAppEntry, onClick: () -> Unit) {
+        button.tag = entry.packageName
         button.text = buildString {
             if (entry.favorite) append("★ ")
             append(entry.label)
@@ -137,6 +151,19 @@ object CastAppTiles {
             if (entry.isDefault) append(". Ứng dụng mặc định")
             if (entry.favorite) append(". Yêu thích")
         }
+        // Card look from the project's own tokens: the tile grid used to be indistinguishable from the
+        // action buttons above it, so the screen read as one undifferentiated wall of grey.
+        button.setBackgroundResource(com.byd.clusternav.R.drawable.segment_bg)
+        button.isSelected = entry.isDefault
+        button.setTextColor(
+            button.resources.getColor(
+                if (entry.isDefault) com.byd.clusternav.R.color.brand else com.byd.clusternav.R.color.text_primary,
+                null,
+            ),
+        )
+        button.textSize = 14f
+        button.isAllCaps = false
+        button.gravity = android.view.Gravity.CENTER_VERTICAL or android.view.Gravity.START
         button.isFocusable = true
         button.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         button.setOnClickListener { onClick() }

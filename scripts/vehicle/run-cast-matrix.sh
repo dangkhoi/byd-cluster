@@ -9,7 +9,19 @@ if ! matrix_listing; then
   new_evidence_dir
 fi
 
-V2_SRC="$(vehicle_root)/app/src/main/java/com/byd/clusternav/modules/clustercast/v2"
+# Sau lần tách module 2026-07-27, code Cast nằm ở ba nơi: quyết định trong :core, transport trong
+# :car-integration, ghép nối Android trong :app. Assertion tĩnh phải soi cả ba, nếu không nó thành vô
+# nghĩa mà vẫn xanh — đúng kiểu bẫy đã gặp: kiểm thứ dễ kiểm thay vì thứ cần kiểm.
+V2_SRC=""
+for candidate in \
+  "$(vehicle_root)/core/src/main/kotlin/com/byd/clusternav/modules/clustercast/v2" \
+  "$(vehicle_root)/car-integration/src/main/kotlin/com/byd/clusternav/modules/clustercast/v2" \
+  "$(vehicle_root)/app/src/main/java/com/byd/clusternav/modules/clustercast/v2"; do
+  [[ -d "$candidate" ]] && V2_SRC="$V2_SRC $candidate"
+done
+if [[ -z "${V2_SRC// /}" ]]; then
+  echo "ERROR: không tìm thấy source Cast ở module nào — assertion tĩnh sẽ vô nghĩa" >&2; exit 7
+fi
 
 # D10 restored `am display move-stack`, so its ABSENCE is the failure, not its presence.
 # What is genuinely checkable without a device:
@@ -17,7 +29,7 @@ V2_SRC="$(vehicle_root)/app/src/main/java/com/byd/clusternav/modules/clustercast
 #   2. the destination is the resolved cluster-display variable, never a literal;
 #   3. no move-stack line mentions display 0;
 #   4. the centre screen is still reached with `am start --display 0`, not by reparenting.
-MOVE_SITES="$(grep -RhoE "am display move-stack [^\"]*" "$V2_SRC" || true)"
+MOVE_SITES="$(grep -RhoE "am display move-stack [^\"]*" $V2_SRC || true)"
 MOVE_COUNT="$(printf '%s\n' "$MOVE_SITES" | grep -cE "move-stack" || true)"
 if [[ "${MOVE_COUNT:-0}" -ne 1 ]]; then
   echo "ERROR: expected exactly one move-stack encoding site, found ${MOVE_COUNT:-0}" >&2; exit 7
@@ -27,10 +39,10 @@ if ! printf '%s\n' "$MOVE_SITES" | grep -qE 'move-stack \$[A-Za-z_][A-Za-z0-9_]*
   echo "       (rename or literal destination requires re-review of the D10 ladder)" >&2
   exit 7
 fi
-if grep -RnE "move-stack[^\"]*(--display 0|[[:space:]]0([[:space:]]|\"|$))" "$V2_SRC" >/dev/null; then
+if grep -RnE "move-stack[^\"]*(--display 0|[[:space:]]0([[:space:]]|\"|$))" $V2_SRC >/dev/null; then
   echo "ERROR: move-stack toward display 0 is forbidden" >&2; exit 7
 fi
-if ! grep -Rq -- "am start --display 0" "$V2_SRC"; then
+if ! grep -Rq -- "am start --display 0" $V2_SRC; then
   echo "ERROR: the return-to-centre path no longer uses am start --display 0" >&2; exit 7
 fi
 capture() {

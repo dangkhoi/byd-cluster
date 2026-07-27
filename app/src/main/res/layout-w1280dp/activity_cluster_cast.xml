@@ -1,34 +1,97 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Cluster Cast screen. Uses the project's V1 design tokens (brand/surface/divider, card_bg,
+     btn_primary, btn_outline, btn_warning_outline) so one action reads as primary instead of ten
+     identical grey boxes. Rare recovery actions stay collapsed until asked for. -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/cast_scroll"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
-    android:background="#F4F6F8">
+    android:background="@color/screen_bg">
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="32dp">
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Cluster Cast V2" android:textSize="22sp" android:textStyle="bold" android:textColor="#1A1F24" />
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Durable journal · verified state · protected sessions fail closed" android:textSize="13sp" android:textColor="#555555" />
-        <TextView android:id="@+id/cast_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="12dp" android:paddingBottom="8dp" android:text="Đang đọc trạng thái…" android:textSize="15sp" android:textColor="#1A1F24" />
-        <TextView android:id="@+id/cast_selected" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingBottom="8dp" android:text="Chưa chọn app" android:textSize="14sp" android:textColor="#555555" />
-        <LinearLayout android:id="@+id/cast_primary_actions" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:weightSum="5">
-            <Button android:id="@+id/cast_start" android:contentDescription="Chiếu hoặc chuyển ứng dụng trên cụm" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp" android:text="Chiếu / chuyển app" android:textAllCaps="false" />
-            <Button android:id="@+id/cast_stop" android:contentDescription="Dừng Cluster Cast và trả đồng hồ" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="64dp" android:text="Dừng — trả đồng hồ" android:textAllCaps="false" />
-            <Button android:id="@+id/cast_adjust" android:contentDescription="Điều chỉnh kích thước vị trí và DPI" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp" android:text="Điều chỉnh khung / DPI" android:textAllCaps="false" />
-            <Button android:id="@+id/cast_app_manager" android:contentDescription="Quản lý yêu thích và chính sách giữ phiên" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp" android:text="Yêu thích &amp; chính sách giữ phiên" android:textAllCaps="false" />
-            <Button android:id="@+id/cast_diagnostics" android:contentDescription="Mở chẩn đoán Cluster Cast chỉ đọc" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp" android:text="Chẩn đoán" android:textAllCaps="false" />
+        android:padding="@dimen/screen_pad">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Cluster Cast" android:textSize="@dimen/text_title" android:textStyle="bold"
+            android:textColor="@color/text_primary" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:background="@drawable/card_bg"
+            android:padding="@dimen/card_pad" android:layout_marginTop="@dimen/gap">
+            <TextView android:id="@+id/cast_status" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:text="Đang đọc trạng thái…"
+                android:textSize="@dimen/text_status" android:textColor="@color/text_primary" />
+            <TextView android:id="@+id/cast_selected" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:paddingTop="6dp" android:text="Chưa chọn app"
+                android:textSize="@dimen/text_label" android:textColor="@color/text_secondary" />
         </LinearLayout>
-        <LinearLayout android:id="@+id/cast_recovery_actions" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
-            <Button android:id="@+id/cast_retry" android:contentDescription="Thử kết nối Cluster Cast lại" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Thử kết nối lại" android:textAllCaps="false" />
-            <Button android:id="@+id/cast_phone_disconnect" android:contentDescription="Mở hướng dẫn ngắt kết nối điện thoại" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Hướng dẫn ngắt kết nối điện thoại" android:textAllCaps="false" />
-            <Button android:id="@+id/cast_recover_once" android:contentDescription="Thử phục hồi projection một lần" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Thử phục hồi một lần" android:textAllCaps="false" />
-            <Button android:id="@+id/cast_physical_instruction" android:contentDescription="Mở hướng dẫn khôi phục vật lý" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Hướng dẫn thao tác vật lý" android:textAllCaps="false" />
-            <Button android:id="@+id/cast_profile_setup" android:contentDescription="Mở thiết lập hồ sơ Android" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Mở thiết lập hồ sơ" android:textAllCaps="false" />
+        <LinearLayout android:id="@+id/cast_primary_actions" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:orientation="horizontal"
+            android:layout_marginTop="@dimen/gap">
+        <Button android:id="@+id/cast_start" android:contentDescription="Chiếu hoặc chuyển ứng dụng trên cụm"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="64dp"
+            android:background="@drawable/btn_primary" android:text="Chiếu / chuyển app" android:textAllCaps="false"
+            android:textSize="17sp" android:textColor="@color/btn_text_on_brand" android:textStyle="bold" />
+        <Button android:id="@+id/cast_stop" android:contentDescription="Dừng Cluster Cast và trả đồng hồ"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="64dp"
+            android:background="@drawable/btn_warning_outline" android:text="Dừng — trả đồng hồ" android:textAllCaps="false"
+            android:textSize="16sp" android:textColor="@color/btn_text" />
         </LinearLayout>
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="16dp" android:text="Quản lý ứng dụng" android:textSize="18sp" android:textStyle="bold" android:textColor="#1A1F24" />
-        <GridLayout android:id="@+id/cast_apps" android:layout_width="match_parent" android:layout_height="wrap_content" android:alignmentMode="alignBounds" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:layout_marginTop="10dp">
+        <Button android:id="@+id/cast_app_manager" android:contentDescription="Chọn app cho nút nổi và chính sách giữ phiên"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp"
+            android:background="@drawable/btn_outline" android:text="Chọn app cho nút nổi &amp; chính sách" android:textAllCaps="false"
+            android:textSize="14sp" android:textColor="@color/btn_text" />
+        <Button android:id="@+id/cast_adjust" android:contentDescription="Điều chỉnh kích thước vị trí và DPI"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp"
+            android:background="@drawable/btn_outline" android:text="Điều chỉnh khung / DPI" android:textAllCaps="false"
+            android:textSize="14sp" android:textColor="@color/btn_text" />
+        <Button android:id="@+id/cast_diagnostics" android:contentDescription="Mở chẩn đoán Cluster Cast chỉ đọc"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp"
+            android:background="@drawable/btn_outline" android:text="Chẩn đoán" android:textAllCaps="false"
+            android:textSize="14sp" android:textColor="@color/btn_text" />
+        </LinearLayout>
+        <Switch android:id="@+id/cast_bubble" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
+            android:background="@drawable/card_bg" android:padding="@dimen/card_pad"
+            android:layout_marginTop="@dimen/gap" android:text="Nút nổi — Dừng nhanh trên mọi màn"
+            android:textSize="@dimen/text_body" android:textColor="@color/text_primary"
+            android:contentDescription="Bật hoặc tắt nút nổi Cluster Cast" />
+        <TextView android:id="@+id/cast_recovery_toggle" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical"
+            android:layout_marginTop="@dimen/gap" android:text="Khắc phục sự cố"
+            android:textSize="@dimen/text_body" android:textColor="@color/brand" android:focusable="true"
+            android:contentDescription="Mở hoặc đóng nhóm hành động khắc phục sự cố" />
+        <LinearLayout android:id="@+id/cast_recovery_actions" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:orientation="horizontal"
+            android:visibility="gone">
+        <Button android:id="@+id/cast_retry" android:contentDescription="Thử kết nối Cluster Cast lại"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp"
+            android:background="@drawable/btn_outline" android:text="Thử kết nối lại" android:textAllCaps="false"
+            android:textSize="14sp" android:textColor="@color/btn_text" />
+        <Button android:id="@+id/cast_phone_disconnect" android:contentDescription="Mở hướng dẫn ngắt kết nối điện thoại"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp"
+            android:background="@drawable/btn_outline" android:text="Hướng dẫn ngắt kết nối điện thoại" android:textAllCaps="false"
+            android:textSize="14sp" android:textColor="@color/btn_text" />
+        <Button android:id="@+id/cast_recover_once" android:contentDescription="Thử phục hồi projection một lần"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp"
+            android:background="@drawable/btn_outline" android:text="Thử phục hồi một lần" android:textAllCaps="false"
+            android:textSize="14sp" android:textColor="@color/btn_text" />
+        <Button android:id="@+id/cast_physical_instruction" android:contentDescription="Mở hướng dẫn khôi phục vật lý"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp"
+            android:background="@drawable/btn_outline" android:text="Hướng dẫn thao tác vật lý" android:textAllCaps="false"
+            android:textSize="14sp" android:textColor="@color/btn_text" />
+        <Button android:id="@+id/cast_profile_setup" android:contentDescription="Mở thiết lập hồ sơ Android"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp"
+            android:background="@drawable/btn_outline" android:text="Mở thiết lập hồ sơ" android:textAllCaps="false"
+            android:textSize="14sp" android:textColor="@color/btn_text" />
+        </LinearLayout>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:paddingTop="@dimen/gap" android:paddingBottom="6dp" android:text="Chọn app để chiếu"
+            android:textSize="18sp" android:textStyle="bold" android:textColor="@color/text_primary" />
+        <GridLayout android:id="@+id/cast_apps" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:alignmentMode="alignBounds" />
     </LinearLayout>
 </ScrollView>

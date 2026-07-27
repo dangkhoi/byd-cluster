@@ -14,10 +14,28 @@ import java.nio.file.Paths
  */
 class CastFieldParityTest {
 
+    /**
+     * Giải đường dẫn source theo cả hai module.
+     *
+     * Từ 2026-07-27 một phần Cast sống trong module :core (Kotlin JVM thuần), nên test quét source phải
+     * tìm ở cả hai gốc thay vì giả định mọi thứ nằm dưới app/. Thứ tự thử phản ánh cả hai kiểu working
+     * directory mà Gradle có thể dùng.
+     */
     private fun source(relative: String): String {
-        val direct = Paths.get("app/src/$relative")
-        val nested = Paths.get("src/$relative")
-        return (if (Files.exists(direct)) direct else nested).toFile().readText()
+        val kotlinRelative = relative
+            .replace("main/java/", "main/kotlin/")
+            .replace("test/java/", "test/kotlin/")
+        val candidates = listOf(
+            Paths.get("app/src/$relative"),
+            Paths.get("src/$relative"),
+            Paths.get("core/src/$kotlinRelative"),
+            Paths.get("../core/src/$kotlinRelative"),
+            Paths.get("car-integration/src/$kotlinRelative"),
+            Paths.get("../car-integration/src/$kotlinRelative"),
+        )
+        val found = candidates.firstOrNull { Files.exists(it) }
+            ?: error("không tìm thấy source cho $relative trong: ${candidates.joinToString()}")
+        return found.toFile().readText()
     }
 
     @Test
@@ -153,8 +171,8 @@ class CastFieldParityTest {
             animations = "1.0\n1.0\n1.0",
             appOps = "No app ops",
         )
-        assertTrue(AndroidObservedStateParser.parse(raw) is ObservationValue.Unknown)
-        val recovered = AndroidObservedStateParser.parse(raw) { measured }
+        assertTrue(DumpObservedStateParser.parse(raw) is ObservationValue.Unknown)
+        val recovered = DumpObservedStateParser.parse(raw) { measured }
         assertTrue(recovered is ObservationValue.Known, recovered.toString())
         assertEquals("display-2", (recovered as ObservationValue.Known).value.displayIdentity)
         assertEquals(ObservedCoarseState.IDLE_CLEAN, recovered.value.coarseState)
@@ -190,11 +208,14 @@ class CastFieldParityTest {
         assertTrue(placement.contains("?: NO_OP"))
         assertTrue(placement.contains("return@let NO_OP"))
         // Every tolerant path reports success; the count is asserted so a regression to null shows up.
-        assertEquals(8, Regex("return@let NO_OP|\\?: NO_OP").findAll(placement).count())
+        assertEquals(17, Regex("return@let NO_OP|\\?: NO_OP|-> NO_OP").findAll(placement).count())
         // A fenced or cancelled dispatch must not be rescued by the in-process fallback.
         assertTrue(placement.contains("if (cancelled()) return null"))
         assertTrue(placement.contains("measuredCluster()?.id?.takeUnless { cancelled() }"))
-        assertTrue(placement.contains("force_resizable_activities 0"))
+        // 2026-07-26 on-car: 1 is the value that lets an unresizeable activity be placed on a
+        // differently sized display; 0 is what blocked com.byd.auto_photo.
+        assertTrue(placement.contains("force_resizable_activities 1"))
+        assertFalse(placement.contains("force_resizable_activities 0"))
         // Stop's own restore steps must never depend on the cluster display still existing.
         assertTrue(placement.contains("private fun displayFreeCommand("))
         // Structural invariant: every kind produced after discovery must actually use the display,
@@ -203,9 +224,12 @@ class CastFieldParityTest {
             .substringBefore(")\n")
             .let { block -> Regex("CommandKind\\.([A-Z_]+)").findAll(block).map { it.groupValues[1] }.toSet() }
         assertEquals(
-            setOf(
-                "FORCE_STOP_NORMAL", "DISCONNECTED_SINK_RECOVERY_ONCE", "SET_FORCE_RESIZABLE",
-                "DISABLE_TRANSITION_ANIMATION", "RESTORE_TRANSITION_ANIMATION", "BLOCK_PIP", "RESTORE_PIP",
+                        setOf(
+                // The three escalation rungs left this set on 2026-07-26: they must observe whether the
+                // target already landed, so they are produced after display discovery. Their RESTORE
+                // counterparts stay display-free so Stop works when the cluster has disappeared.
+                "FORCE_STOP_NORMAL", "DISCONNECTED_SINK_RECOVERY_ONCE",
+                "RESTORE_TRANSITION_ANIMATION", "RESTORE_PIP",
                 "RETURN_NORMAL_TO_MAIN", "RETURN_PROTECTED_GENTLY", "PRE_OPEN_ON_MAIN",
             ),
             declared,

@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast.v2
 
+import com.byd.clusternav.testsupport.SourceRoots
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -15,7 +16,7 @@ class CastAppManagerWiringTest {
 
     private fun source(relative: String): String {
         val direct: Path = Paths.get("app/src/$relative")
-        val nested: Path = Paths.get("src/$relative")
+        val nested: Path = SourceRoots.path("src/$relative")
         val path = if (Files.exists(direct)) direct else nested
         return path.toFile().readText()
     }

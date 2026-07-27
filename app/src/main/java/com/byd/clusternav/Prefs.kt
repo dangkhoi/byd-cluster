@@ -4,8 +4,10 @@ import android.content.Context
 
 /** Lưu lựa chọn người dùng (bật/tắt đẩy cụm + chế độ chọn nguồn). Đọc trực tiếp trong listener. */
 object Prefs {
-    const val AUTO = 0
-    const val PREFER_GMAPS = 2
+    // Giá trị thật nằm ở :core (NavSourceMode) để bộ quyết định không phải phụ thuộc Android chỉ vì hai
+    // con số. Giữ alias ở đây nên caller cũ không đổi và dữ liệu đã lưu vẫn đọc đúng.
+    const val AUTO = com.byd.clusternav.navigation.NavSourceMode.AUTO
+    const val PREFER_GMAPS = com.byd.clusternav.navigation.NavSourceMode.PREFER_GMAPS
 
     private const val FILE = "clusternav_prefs"
     private const val K_ENABLED = "enabled"

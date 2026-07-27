@@ -19,7 +19,37 @@ object CastLifecycleMigration {
         val rollout = CastRolloutRegistry.resolve(envelope, CastRolloutRegistry.vehicleTestCandidate)
         if (rollout.effectiveUiVersion != EngineVersion.V2 || rollout.actionOwner != null) return null
         val state = (observed as? ObservationValue.Known)?.value ?: return null
-        if (state.coarseState != ObservedCoarseState.IDLE_CLEAN) return null
+        // A genuinely unknown observation is handled by the Unknown branch of the caller.
+        if (state.coarseState == ObservedCoarseState.UNKNOWN) return null
+        // Measured on DiLink3 2026-07-26: only IDLE_CLEAN used to be adopted here, so a first run —
+        // or any run after the app's data was cleared — while ANYTHING occupied the cluster fell
+        // through to read-only legacy mode. That renders as "Cần xử lý thủ công · contract unmapped"
+        // with every control disabled, and it never recovers: not after the cluster is freed, not
+        // after another data clear. Adopting the observation as a reclaimable session keeps the
+        // claim truthful (we do not pretend the cluster is idle or verified) while leaving Stop
+        // available, which is the one action that can legitimately resolve it.
+        if (state.coarseState != ObservedCoarseState.IDLE_CLEAN) {
+            return envelope.copy(
+                effectiveUiVersion = EngineVersion.V2,
+                stableSession = StableCastSession(
+                    StableState.RECOVERY_PENDING,
+                    EngineVersion.V2,
+                    "runtime-migration-unowned",
+                    null,
+                    state.displayIdentity ?: "unresolved",
+                    CastBaseline(
+                        geometry = state.geometry,
+                        animationPerKey = state.animationPerKey,
+                        pipMode = state.pipMode,
+                        profile = state.profile,
+                    ),
+                    state.target,
+                    state.protectedResidue,
+                    null,
+                    verifiedAtEpochMillis,
+                ),
+            )
+        }
         return envelope.copy(
             effectiveUiVersion = EngineVersion.V2,
             stableSession = StableCastSession(

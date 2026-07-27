@@ -1,5 +1,6 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.navigation.TurnDistanceInterpolator
 import android.content.Context
 import android.content.ContextWrapper
 

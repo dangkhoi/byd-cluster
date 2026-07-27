@@ -112,8 +112,12 @@ PY
   return 1
 }
 
+# Only OUR crashes count. The unfiltered check attributed any process crash to ClusterNav; on the
+# vehicle that meant a BYD SystemUI NPE looked like the cast target dying.
 crashed() {
-  "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "FATAL EXCEPTION"
+  "${ADB[@]}" logcat -d -b crash 2>/dev/null \
+    | awk -v pkg="$PACKAGE" '/FATAL EXCEPTION/{f=1} f&&index($0,pkg){print;exit}' \
+    | grep -q .
 }
 
 resumed_activity() {

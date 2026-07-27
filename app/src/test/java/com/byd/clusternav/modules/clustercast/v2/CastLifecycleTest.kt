@@ -5,6 +5,7 @@ import java.nio.file.Path
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -21,7 +22,7 @@ class CastLifecycleTest {
     }
 
     @Test
-    fun `active unknown or already-owned truth never migrates`() {
+    fun `unknown or already-owned truth never migrates, an occupied cluster is adopted reclaimable`() {
         val active = ObservationValue.Known(
             ObservedState(
                 ObservedCoarseState.ACTIVE_SINGLE,
@@ -32,8 +33,24 @@ class CastLifecycleTest {
                 null,
             ),
         )
-        assertNull(CastLifecycleMigration.migratePristine(pristine(), active, 1))
+        // 2026-07-26 on-car: returning null here dropped a pristine install into read-only legacy
+        // mode whenever anything occupied the cluster, and that state never recovered. An occupied
+        // cluster is now adopted as RECOVERY_PENDING: truthful (never claims idle or verified) and
+        // reclaimable, because Stop stays available.
+        val adopted = CastLifecycleMigration.migratePristine(pristine(), active, 1)
+        assertNotNull(adopted)
+        assertEquals(StableState.RECOVERY_PENDING, adopted!!.stableSession?.state)
+        assertEquals("display-2", adopted.stableSession?.expectedDisplayIdentity)
+        assertEquals("com.example.maps", adopted.stableSession?.activeTarget?.packageName)
+
+        // Genuinely unknown truth still refuses to invent a session.
         assertNull(CastLifecycleMigration.migratePristine(pristine(), ObservationValue.Unknown("partial"), 1))
+        val unknownCoarse = ObservationValue.Known(
+            ObservedState(ObservedCoarseState.UNKNOWN, null, null, emptySet(), null, null),
+        )
+        assertNull(CastLifecycleMigration.migratePristine(pristine(), unknownCoarse, 1))
+
+        // An envelope we already own is never re-migrated.
         val owned = pristine().copy(stableSession = idleSession())
         assertNull(CastLifecycleMigration.migratePristine(owned, knownIdle(), 1))
     }

@@ -1,5 +1,7 @@
 package com.byd.clusternav.modules.navrealtime
 
+import com.byd.clusternav.navigation.NavParse
+import com.byd.clusternav.navigation.TurnDistanceInterpolator
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
@@ -7,11 +9,9 @@ import android.os.Handler
 import android.os.Looper
 import android.view.ViewGroup
 import android.widget.TextView
-import com.byd.clusternav.NavParse
 import com.byd.clusternav.NavRepository
 import com.byd.clusternav.Prefs
 import com.byd.clusternav.SpeedProvider
-import com.byd.clusternav.TurnDistanceInterpolator
 import com.byd.clusternav.modules.ClusterModule
 import com.byd.clusternav.modules.ModuleUi
 import com.byd.clusternav.modules.SelfTest
