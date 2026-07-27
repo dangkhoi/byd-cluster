@@ -18,12 +18,12 @@ dự án này đang tránh.
 | app shell, prefs, Home | 28 | 2 770 | có |
 | Navigation + HUD | 25 | 2 473 | có |
 | car-exec (đánh giá) | 10 | 2 242 | công cụ, không xuất xưởng |
-| Dead Reckon / mock-location | 6 | 1 096 | **không** — đã ngưng, giữ để rollback |
+| ~~Dead Reckon / mock-location~~ | ~~6~~ | ~~1 096~~ | **đã xoá hẳn 2026-07-27** |
 | HAL / infra | 2 | 264 | có |
 | vd_map (thử nghiệm cũ) | 2 | 185 | **không** |
 | **Tổng** | **124** | **20 145** | |
 
-**7 251 dòng (36%) nằm ngoài sản phẩm đích.** Trong đó engine V1 là phần lớn nhất và cũng là phần
+**Sau khi xoá Dead Reckon: 6 155 dòng (32%) còn nằm ngoài sản phẩm đích** (bản đầu là 7 251 / 36%). Trong đó engine V1 là phần lớn nhất và cũng là phần
 đang giữ 8 điểm mở adb ngoài module transport. Không xoá được trước khi V2 chạy trên xe — nhưng
 phải xoá ngay sau đó, không để trôi.
 
@@ -91,7 +91,7 @@ lại lúc cụm đang có app không treo máy thì đường app đơn giản 
 | Đổi tên package 26 file `:core` | chờ xoá V1 để không đổi hai lần |
 | Quyết `vd_map` giữ hay bỏ | chưa ai nhắc |
 | Fixture profile cho `observe --recorded` | chặn chuỗi quan sát off-car |
-| Dead Reckon / mock 1 096 dòng | giữ cho rollback; cần hạn chót |
+| ~~Dead Reckon / mock 1 096 dòng~~ | **xong** — xoá hẳn 2026-07-27 theo quyết định của chủ dự án |
 
 ## 8. Bài học vận hành, ghi lại vì đã tái diễn
 

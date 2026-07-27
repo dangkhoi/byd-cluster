@@ -12,7 +12,7 @@ ClusterNav is a personal hobby experiment by **Đăng Khôi · `dangkhoi`** for 
 
 The tracks may share one APK as packaging, but they must not share runtime control, mutable state, live transport, executor, journal, lifecycle or recovery. Home is a renderer/dispatcher, not an orchestrator.
 
-**GPS Dead Reckon and mock-location are quiesced from the active product baseline.** Their permissions, manifest service, module registration, boot/update paths, preference and Home controls are removed. Historical source remains rollback-readable but unreachable from active product wiring; do not select ClusterNav as the mock-location app.
+**GPS Dead Reckon and mock-location are removed.** On 2026-07-27 the owner ended the experiment: it failed too often to keep, and a future attempt should start from a new approach rather than this source. The six files (1,096 lines) are deleted from the working tree; git history remains the only record, which is where rollback belongs. Do not select ClusterNav as the mock-location app — it can no longer act as one.
 
 ## Downloads and installation
 

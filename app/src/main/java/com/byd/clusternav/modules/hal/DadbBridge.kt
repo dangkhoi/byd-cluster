@@ -22,7 +22,7 @@ object DadbBridge {
     fun ensure(ctx: Context): Boolean {
         val existing = shell
         if (existing != null) return existing.ensure()
-        // Dùng KEY CHUNG [AdbKeys] (cùng khoá với NavConnect/MockLoc/ClusterCast) → chỉ một lần Allow
+        // Dùng KEY CHUNG [AdbKeys] (cùng khoá với NavConnect/ClusterCast) → chỉ một lần Allow
         // cho tất cả, không popup thứ hai.
         val created = PersistentDeviceShell(
             keys = { AdbKeys.ensure(ctx) },
