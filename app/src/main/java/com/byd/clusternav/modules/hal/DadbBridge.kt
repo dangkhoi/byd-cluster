@@ -3,42 +3,41 @@ package com.byd.clusternav.modules.hal
 import android.content.Context
 import android.util.Log
 import com.byd.clusternav.AdbKeys
-import dadb.Dadb
+import com.byd.clusternav.carexec.PersistentDeviceShell
 
 /**
- * Cầu nối ADB nội bộ (thư viện dadb) — INFRA dùng chung (cạnh BydHal). App tự nối adb-tcp của CHÍNH cái xe
- * (localhost:5555) → shell uid 2000 → chạy lệnh privileged. Lần đầu nối: xe hiện popup "Allow" (RSA) → bấm
- * (key persist filesDir → 1 lần). MỌI lời gọi PHẢI chạy NỀN (blocking I/O).
+ * Bọc phía Android cho [PersistentDeviceShell]: giải khoá adb từ `Context` và nối `android.util.Log`
+ * vào khe ghi chú. Toàn bộ phần nói chuyện với thiết bị nằm ở `:car-integration`.
  *
- * Hiện dùng cho: vd_map shell-fallback `am start --display <vdId>` (chiếu map vào VirtualDisplay — cách kim.apk,
- * vì app thường không pin được activity lên display ảo bằng setLaunchDisplayId).
+ * App tự nối adb-tcp của CHÍNH cái xe (localhost:5555) → shell uid 2000 → chạy được lệnh privileged.
+ * Lần đầu nối, xe hiện popup "Allow" (RSA); khoá lưu ở filesDir nên chỉ một lần. MỌI lời gọi phải chạy
+ * ở luồng nền vì là I/O nghẽn.
  */
 object DadbBridge {
     private const val TAG = "DadbBridge"
-    @Volatile private var dadb: Dadb? = null
+    @Volatile private var shell: PersistentDeviceShell? = null
 
     /** Nối adb-tcp. Trả true nếu sẵn sàng. CHẠY NỀN. */
     @Synchronized
     fun ensure(ctx: Context): Boolean {
-        if (dadb != null) return true
-        return runCatching {
-            // #6: dùng KEY CHUNG [AdbKeys] (cùng key NavConnect/MockLoc/ClusterCast) → 1 lần Allow USB cho tất cả,
-            // không popup thứ 2 cho vd_map.
-            dadb = Dadb.create("localhost", 5555, AdbKeys.ensure(ctx))
-            Log.i(TAG, "connected localhost:5555")
-            true
-        }.getOrElse { Log.e(TAG, "ensure fail: ${it.message}", it); dadb = null; false }
+        val existing = shell
+        if (existing != null) return existing.ensure()
+        // Dùng KEY CHUNG [AdbKeys] (cùng khoá với NavConnect/MockLoc/ClusterCast) → chỉ một lần Allow
+        // cho tất cả, không popup thứ hai.
+        val created = PersistentDeviceShell(
+            keys = { AdbKeys.ensure(ctx) },
+            note = { message -> Log.i(TAG, message) },
+        )
+        shell = created
+        return created.ensure()
     }
 
     /** Chạy 1 lệnh shell, trả output. (Phải ensure() trước.) */
-    fun shell(cmd: String): String {
-        val d = dadb ?: return "ERR: chưa kết nối (gọi ensure)"
-        return runCatching { d.shell(cmd).output }.getOrElse {
-            close()   // #7: socket có thể đã chết → tear down để lần sau ensure() nối LẠI (đừng coi socket chết là sống mãi)
-            "ERR shell: ${it.message}"
-        }
-    }
+    fun shell(cmd: String): String = shell?.shell(cmd) ?: "ERR: chưa kết nối (gọi ensure)"
 
     @Synchronized
-    fun close() { runCatching { dadb?.close() }; dadb = null }
+    fun close() {
+        shell?.close()
+        shell = null
+    }
 }
