@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast
 
+import com.byd.clusternav.modules.clustercast.v2.CastRect
 import com.byd.clusternav.modules.clustercast.v2.AcceptedGeometry
 import com.byd.clusternav.modules.clustercast.v2.AdjustmentDraft
 import android.app.Activity
@@ -107,7 +108,20 @@ class ClusterCastActivity : Activity() {
             executeStop()
         }
     }
-    override fun onResume() { super.onResume(); CastBubbleControl.rebind(this, findViewById(R.id.cast_bubble)) { show(it) }; refresh() }
+    /**
+     * Thực hiện ý định "chiếu ngay" do Home gửi sang, đúng một lần.
+     *
+     * Cần app đang chọn; chưa chọn thì KHÔNG đoán — chỉ mở màn này để người dùng thấy danh sách và tự tick.
+     * Đoán hộ ở đây là cách nhanh nhất để chiếu sai app lên cụm giữa lúc đang lái.
+     */
+    private fun consumeCastNowIntent() {
+        if (intent?.getBooleanExtra(EXTRA_CAST_NOW, false) != true) return
+        intent.removeExtra(EXTRA_CAST_NOW)
+        val target = selectedPackage ?: return
+        executeCast(target)
+    }
+
+    override fun onResume() { super.onResume(); consumeCastNowIntent(); CastBubbleControl.rebind(this, findViewById(R.id.cast_bubble)) { show(it) }; refresh() }
     override fun onDestroy() { destroyed = true; statusTimers.close(); operationStatus.clearAll(); work.close(); super.onDestroy() }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_SELECTED_PACKAGE, selectedPackage)
@@ -122,12 +136,9 @@ class ClusterCastActivity : Activity() {
             postUi {
                 apps.removeAllViews()
                 values.forEach { app ->
-                    apps.addView(appButton(app.label) {}.also {
-                        CastAppTiles.bind(it, app) { toggleApp(app.label, app.packageName, app.favorite) }
-                    })
+                    apps.addView(CastAppRows.build(this@ClusterCastActivity, app, rowActions))
                 }
                 if (values.isEmpty()) apps.addView(text("Không đọc được danh sách app", 13f, 0xFF555555.toInt()))
-                CastAppTiles.markSelected(apps, selectedPackage)
                 if (selectedPackage == null && preselected != null) {
                     selectedPackage = preselected
                     selected.text = "Mặc định: " + (values.firstOrNull { it.packageName == preselected }?.label ?: preselected)
@@ -146,6 +157,24 @@ class ClusterCastActivity : Activity() {
      * Bật thì đồng thời chọn làm target, vì đó gần như luôn là ý của người bấm; tắt thì chỉ rút khỏi nút nổi
      * và KHÔNG đụng gì tới cụm.
      */
+    private val rowActions by lazy {
+        CastRowActions(
+            catalog = catalog,
+            favoriteWriter = { pkg, on -> appBinding.setFavorite(pkg, on) },
+            onChosen = { pkg -> selectApp(pkg, pkg) },
+            background = { work.misc(it) },
+            clusterSize = {
+                facade.observedState()?.geometry?.bounds
+                    ?.let { (it.right - it.left) to (it.bottom - it.top) } ?: (1920 to 720)
+            },
+            activeTarget = { facade.observedState()?.target?.packageName },
+            profileId = { facade.observedState()?.geometry?.profileId ?: "android-user-0" },
+            stillAlive = { !isFinishing && !destroyed },
+            applyGeometry = { geometry -> applyGeometry(geometry) },
+            castNow = { pkg -> executeCast(pkg) },
+        )
+    }
+
     private fun toggleApp(label: String, packageName: String, wasFavorite: Boolean) {
         appBinding.setFavorite(packageName, !wasFavorite)
         if (wasFavorite) {
@@ -160,7 +189,6 @@ class ClusterCastActivity : Activity() {
         selectionExplicit = true
         selectedPackage = packageName
         selected.text = "Đã chọn: $label"
-        CastAppTiles.markSelected(apps, packageName)
         refresh()
         work.selection { revision ->
             val queued = facade.queueLatestTarget(packageName)
@@ -453,6 +481,14 @@ class ClusterCastActivity : Activity() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density + .5f).toInt()
     companion object {
         const val ACTION_STOP = "com.byd.clusternav.action.CAST_V2_STOP"
+
+        /**
+         * Home bấm "Chiếu lên cụm" thì mở màn này kèm ý định chiếu ngay app đang chọn.
+         *
+         * Cố ý KHÔNG chiếu thẳng từ Home: mọi lệnh phải đi qua chỗ có façade và trạng thái, để nếu bị từ
+         * chối thì người dùng thấy lý do ở đúng nơi hiển thị nó — thay vì một toast rồi không biết làm gì.
+         */
+        const val EXTRA_CAST_NOW = "cast-now"
         private const val STATE_SELECTED_PACKAGE = "cast-selected-package"
         private const val STATE_SCROLL_Y = "cast-scroll-y"
         private const val STATE_FOCUS_ID = "cast-focus-id"

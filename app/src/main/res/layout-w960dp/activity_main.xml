@@ -111,10 +111,18 @@
                         android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="Sẵn sàng" android:textColor="@color/text_secondary" />
                 </LinearLayout>
+                                <Button android:id="@+id/btn_cast_toggle" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                android:minHeight="@dimen/touch_min" android:background="@drawable/btn_primary"
+                android:text="Chiếu lên cụm" android:textAllCaps="false" android:textColor="@color/white" />
+                <Button android:id="@+id/btn_bubble" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
+                android:text="Hiện nút nổi" android:textAllCaps="false" android:textColor="@color/brand" />
                 <Button android:id="@+id/btn_cast_details" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:layout_marginTop="10dp"
                     android:minHeight="@dimen/touch_min" android:background="@drawable/btn_primary"
-                    android:text="Mở Cluster Cast" android:textAllCaps="false" android:textColor="@color/white" />
+                    android:text="Cài đặt chiếu" android:textAllCaps="false" android:textColor="@color/white" />
             </LinearLayout>
         </ScrollView>
     </LinearLayout>
