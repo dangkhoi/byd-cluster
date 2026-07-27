@@ -27,9 +27,13 @@ class DeadReckonRetirementTest {
     }
 
     @Test
-    fun `retired source remains rollback readable but unregistered`() {
-        assertTrue(app("src/main/java/com/byd/clusternav/modules/deadreckon/DeadReckonService.kt").toFile().isFile)
-        assertTrue(app("src/main/java/com/byd/clusternav/modules/mockloc/MockLoc.kt").toFile().isFile)
+    fun `nguon da nghi phai bien khoi cay lam viec`() {
+        // 2026-07-27, chủ xe quyết: bỏ hẳn Dead Reckon, "đang fail quá, sau này cần làm thì tìm giải pháp
+        // mới sau". Bản trước bài kiểm này ĐÒI file phải còn, với lý do "đọc lại được để rollback" — nhưng
+        // git đã giữ nguyên lịch sử, nên giữ thêm bản trong cây chỉ để lại 1.096 dòng không ai chạy, không
+        // ai kiểm, mà vẫn phải đọc mỗi lần soát kiến trúc. Giờ đảo lại: chúng PHẢI biến mất.
+        assertFalse(app("src/main/java/com/byd/clusternav/modules/deadreckon").toFile().exists())
+        assertFalse(app("src/main/java/com/byd/clusternav/modules/mockloc").toFile().exists())
     }
 
     @Test

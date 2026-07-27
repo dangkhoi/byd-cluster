@@ -39,7 +39,7 @@ class CastArchitectureRatchetTest {
      * Số chỗ mở kết nối adb nằm ngoài :car-integration. Kiến trúc nói mọi transport thuộc một chỗ; đây
      * là khoảng cách còn lại tới lời tuyên bố đó.
      *
-     * 13 → 9 ngày 27/7: bốn chỗ lẻ (`NavConnect` tự chữa listener, `ClusterDiag`, `MockLoc` tự cấp quyền,
+     * 13 → 9 ngày 27/7: bốn chỗ lẻ (`NavConnect` tự chữa listener, `ClusterDiag`, `MockLoc` tự cấp quyền — `MockLoc` đã bị xoá hẳn cuối ngày,
      * `UpdateChecker` cài bản mới) đã đi qua `LocalDeviceShell` trong `:car-integration`. Trình tự được giữ
      * nguyên bằng API `session` vì `NavConnect` ngủ 1.5 giây giữa hai lệnh trên cùng phiên — đổi thành hai
      * phiên rời là đổi hành vi của một đường tự-chữa vốn mong manh.

@@ -53,7 +53,7 @@ object NavConnect {
         if (!reconnecting.compareAndSet(false, true)) { Log.i(TAG, "reconnect đang chạy — bỏ lần trùng"); return }
         try {
             runCatching {
-                val keyPair = AdbKeys.ensure(app)   // key CHUNG, sinh nguyên tử + khóa chung (chống đua với MockLoc.selfGrant)
+                val keyPair = AdbKeys.ensure(app)   // key CHUNG, sinh nguyên tử + khoá chung (chống đua với các client dadb khác)selfGrant)
                 LocalDeviceShell.session(keyPair) { sh ->
                     sh("cmd notification disallow_listener $COMP")
                     Thread.sleep(1500)
