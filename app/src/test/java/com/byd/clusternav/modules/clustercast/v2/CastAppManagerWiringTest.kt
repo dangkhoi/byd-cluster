@@ -24,7 +24,7 @@ class CastAppManagerWiringTest {
     private val activity = source("main/java/com/byd/clusternav/modules/clustercast/ClusterCastActivity.kt")
     private val dialog = source("main/java/com/byd/clusternav/modules/clustercast/CastAppManagerDialog.kt")
     private val binding = source("main/java/com/byd/clusternav/modules/clustercast/CastAppManagerBinding.kt")
-    private val catalog = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAppCatalog.kt")
+    private val catalog = source("main/java/com/byd/clusternav/cast/platform/CastAppCatalog.kt")
 
     @Test
     fun `activity binds shared icon tiles and local default preselection without dispatch`() {

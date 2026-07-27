@@ -57,7 +57,7 @@ class CastOperationLogTest {
 
     @Test
     fun `the gateway records the exact dispatched command`() {
-        val gateway = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAdbGateway.kt")
+        val gateway = source("main/java/com/byd/clusternav/cast/transport/CastAdbGateway.kt")
         assertTrue(gateway.contains("CastOperationLog.record(\"   $ \$command\")"))
         assertTrue(gateway.indexOf("CastOperationLog.record(\"   $ \$command\")") < gateway.indexOf("val result = adb.shell(command)"))
     }

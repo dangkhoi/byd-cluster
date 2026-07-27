@@ -26,7 +26,7 @@ class CastFacadeBoundaryTest {
             .map(Paths::get).first(Files::exists)
         val offenders = Files.walk(root).use { paths ->
             paths.filter { Files.isRegularFile(it) && it.toString().endsWith(".kt") }
-                .filter { !it.toString().contains("/clustercast/v2/") }
+                .filter { !NON_UI.any { part -> it.toString().contains(part) } }
                 .filter { it.fileName.toString() != "CastFacade.kt" }
                 .filter {
                     val text = it.toFile().readText()
@@ -56,4 +56,6 @@ class CastFacadeBoundaryTest {
         assertTrue(source.contains("private val runtime"))
         assertTrue(!source.contains("val runtime: CastAndroidRuntime.Runtime\n"))
     }
+
+    private val NON_UI = listOf("/modules/clustercast/v2/", "/cast/platform/", "/cast/transport/")
 }

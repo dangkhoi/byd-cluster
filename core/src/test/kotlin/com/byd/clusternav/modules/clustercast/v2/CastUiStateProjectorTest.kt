@@ -155,7 +155,10 @@ class CastUiStateProjectorTest {
         ))
         assertEquals(CoarseState.STOP_REQUESTED, state.coarseState)
         assertEquals(StopDispositionKind.REQUESTED, state.stopDisposition.kind)
-        assertTrue(state.allowedActions.isEmpty())
+        // 2026-07-27: Stop vẫn bị chặn để không phát trùng, nhưng trạng thái chờ KHÔNG được rỗng hành
+        // động — quét vét cạn R14 bắt được đúng ca này. Giữ hai hành động chỉ-đọc.
+        assertEquals(setOf(CastAction.OPEN_DIAGNOSTICS, CastAction.RETRY_CONNECT), state.allowedActions)
+        assertTrue(CastAction.STOP !in state.allowedActions)
         assertNull(state.operationId)
     }
 

@@ -2,13 +2,13 @@ package com.byd.clusternav.modules.clustercast
 
 import android.content.Context
 import com.byd.clusternav.modules.clustercast.v2.AutomationConfig
-import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
+import com.byd.clusternav.cast.platform.CastAndroidRuntime
 import com.byd.clusternav.modules.clustercast.v2.CastIntentOrigin
 import com.byd.clusternav.modules.clustercast.v2.CastManualIntentResult
 import com.byd.clusternav.modules.clustercast.v2.CastManualTargetReader
 import com.byd.clusternav.modules.clustercast.v2.CastSessionEnvelope
 import com.byd.clusternav.modules.clustercast.v2.ClusterStyle
-import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
+import com.byd.clusternav.cast.platform.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.CastIntent
 import com.byd.clusternav.modules.clustercast.v2.CastRolloutFlags
 import com.byd.clusternav.modules.clustercast.v2.ExecutionResult

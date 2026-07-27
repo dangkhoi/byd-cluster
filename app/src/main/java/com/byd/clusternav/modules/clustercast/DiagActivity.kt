@@ -1,6 +1,6 @@
 package com.byd.clusternav.modules.clustercast
 
-import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
+import com.byd.clusternav.cast.platform.CastAppCatalog
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -10,7 +10,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
+import com.byd.clusternav.cast.platform.CastAndroidRuntime
 
 /** Read-only Cast V2 diagnostics. This screen intentionally exports no repair/reset mutation. */
 class DiagActivity : Activity() {

@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast.v2
 
+import com.byd.clusternav.cast.platform.CastAndroidLifecycle
 import com.byd.clusternav.testsupport.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse

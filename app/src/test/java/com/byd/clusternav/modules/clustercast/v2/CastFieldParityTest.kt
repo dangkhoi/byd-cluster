@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast.v2
 
+import com.byd.clusternav.cast.platform.CastAndroidLifecycle
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -101,7 +102,7 @@ class CastFieldParityTest {
     fun `per-app density and style are preferences that reach the runtime call`() {
         val activity = source("main/java/com/byd/clusternav/modules/clustercast/ClusterCastActivity.kt")
         val bubble = source("main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt")
-        val placement = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastPlacementCommands.kt")
+        val placement = source("main/java/com/byd/clusternav/cast/transport/CastPlacementCommands.kt")
         assertTrue(activity.contains("preferredDensityDpi = catalog.clusterDensityDpi(pkg)"))
         assertTrue(activity.contains("clusterStyle = catalog.clusterStyle(pkg)"))
         assertTrue(bubble.contains("preferredDensityDpi = catalog.clusterDensityDpi(packageName)"))
@@ -180,7 +181,7 @@ class CastFieldParityTest {
 
     @Test
     fun `the watchdog restores gauges only on two identical clean observations`() {
-        val lifecycle = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAndroidLifecycle.kt")
+        val lifecycle = source("main/java/com/byd/clusternav/cast/platform/CastAndroidLifecycle.kt")
         assertTrue(lifecycle.contains("private fun vanished("))
         assertTrue(lifecycle.contains("if (a != b) return false"))
         assertTrue(lifecycle.contains("a.coarseState == ObservedCoarseState.IDLE_CLEAN && a.target == null"))
@@ -202,7 +203,7 @@ class CastFieldParityTest {
 
     @Test
     fun `a tolerant rung never turns a landed cast into a failed mutation`() {
-        val placement = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastPlacementCommands.kt")
+        val placement = source("main/java/com/byd/clusternav/cast/transport/CastPlacementCommands.kt")
         // Nothing-to-do must dispatch the success sentinel, never a null that becomes Rejected.
         assertTrue(placement.contains("pkg == null -> NO_OP"))
         assertTrue(placement.contains("?: NO_OP"))

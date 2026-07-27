@@ -7,9 +7,9 @@ import android.provider.Settings
 import android.view.View
 import android.widget.Button
 import com.byd.clusternav.modules.clustercast.v2.AppIconState
-import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
+import com.byd.clusternav.cast.platform.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.ClusterStyle
-import com.byd.clusternav.modules.clustercast.v2.CastAppEntry
+import com.byd.clusternav.cast.platform.CastAppEntry
 import com.byd.clusternav.modules.clustercast.v2.CastAppPresentation
 import com.byd.clusternav.modules.clustercast.v2.CastAutomationSettings
 
