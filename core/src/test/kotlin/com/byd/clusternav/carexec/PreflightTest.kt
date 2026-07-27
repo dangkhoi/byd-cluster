@@ -51,6 +51,11 @@ class PreflightTest {
             CarExecCatalog.PLACEHOLDER_RIGHT to "1920",
             CarExecCatalog.PLACEHOLDER_BOTTOM to "720",
             CarExecCatalog.PLACEHOLDER_DPI to "320",
+            // Hai tham số này chỉ biết SAU khi khám phá trên xe: tên khoá/action mà bên vẽ biển đang nghe,
+            // và số km/h muốn ghi. Vẫn phải nằm trong bộ tham số của phiên, vì tới lúc chạy step ghi thì
+            // người vận hành đã có chúng — và CLI phải có cờ để truyền vào.
+            CarExecCatalog.PLACEHOLDER_KEY to "com.byd.example.SPEED_LIMIT",
+            CarExecCatalog.PLACEHOLDER_VALUE to "60",
         )
         CarExecScenarios.all.forEach { scenario ->
             assertEquals(

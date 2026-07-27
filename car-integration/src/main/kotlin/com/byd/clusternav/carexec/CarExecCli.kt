@@ -69,6 +69,8 @@ object CarExecCli {
             args.value("--pkg")?.let { put(CarExecCatalog.PLACEHOLDER_PACKAGE, it) }
             args.value("--comp")?.let { put(CarExecCatalog.PLACEHOLDER_COMPONENT, it) }
             args.value("--display")?.let { put(CarExecCatalog.PLACEHOLDER_DISPLAY, it) }
+        args.value("--value")?.let { put(CarExecCatalog.PLACEHOLDER_VALUE, it) }
+        args.value("--key")?.let { put(CarExecCatalog.PLACEHOLDER_KEY, it) }
             args.value("--task")?.let { put(CarExecCatalog.PLACEHOLDER_TASK, it) }
             put(CarExecCatalog.PLACEHOLDER_SERVICE, args.value("--svc") ?: "AutoContainer")
         }
@@ -107,6 +109,8 @@ object CarExecCli {
         args.value("--right")?.let { put(CarExecCatalog.PLACEHOLDER_RIGHT, it) }
         args.value("--bottom")?.let { put(CarExecCatalog.PLACEHOLDER_BOTTOM, it) }
         args.value("--dpi")?.let { put(CarExecCatalog.PLACEHOLDER_DPI, it) }
+        args.value("--value")?.let { put(CarExecCatalog.PLACEHOLDER_VALUE, it) }
+        args.value("--key")?.let { put(CarExecCatalog.PLACEHOLDER_KEY, it) }
         put(CarExecCatalog.PLACEHOLDER_SERVICE, args.value("--svc") ?: "AutoContainer")
     }
 

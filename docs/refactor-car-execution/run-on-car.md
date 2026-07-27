@@ -59,3 +59,71 @@ Bước 1 chạy step `capture-state` bốn lần (đó là cách nó chụp b�
   lệnh trong nháy kép, không thì nhận `Parcel(fffffffc ...)`.
 - Máy phải nổ trong phiên dài: 26/7 mất cả phiên vì ACC standby.
 - Phiên trên xe **chỉ đo và ghi**. Không sửa code rồi cài trong phiên.
+
+## Phiên 2026-07-28 — thứ tự chạy
+
+Mức rủi ro giờ in kèm mỗi candidate. Đọc nó trước khi bấm: `READ_ONLY` chạy được lúc đang lái,
+`MAY_HANG_SYSTEM` **chỉ khi đỗ**.
+
+### A. Biển báo giới hạn tốc độ — khám phá (chạy được lúc đang lái)
+
+```
+carexec.sh plan sign.discover-chain --pkg <ứng-viên>
+carexec.sh run sign-inventory.packages
+carexec.sh run sign-inventory.services
+carexec.sh run sign-inventory.hal
+carexec.sh run sign-inventory.processes
+```
+
+Rồi phần quyết định — phải đi qua **ít nhất hai biển khác số**, nhớ số để đối chiếu:
+
+```
+carexec.sh run sign-watch.logcat-keywords
+carexec.sh run sign-watch.logcat-raw-window     # nếu lọc từ khoá ra rỗng
+carexec.sh run sign-watch.props-diff            # chụp ở hai vùng biển khác nhau
+carexec.sh run sign-watch.settings-diff
+```
+
+Nếu cả bốn ra rỗng thì kết luận thẳng: giá trị không đi qua đường nào của Android mà app đọc được,
+và hướng "gửi lén tín hiệu" phải đổi cách hoặc dừng. Đó cũng là một kết quả.
+
+### B. Nguồn từ VietMap (đang lái, chỉ đọc)
+
+```
+carexec.sh run sign-source.notification         # rẻ nhất, dùng lại đường notification đã có
+carexec.sh run sign-source.exported-surface
+carexec.sh run sign-source.logcat
+```
+
+### C. Chỉ khi ĐỖ — ghi vào và tắt nguồn camera
+
+Thứ tự bắt buộc: tắt camera trước, rồi ghi, rồi kiểm giá trị cũ có dính lại.
+
+```
+carexec.sh run sign-mute.settings-key --key <khoá tìm được>
+carexec.sh run sign-inject.broadcast --key <action tìm được> --value 60
+carexec.sh run sign-stale.stop-sending
+```
+
+### D. Chỉ khi ĐỖ — luật phát lại chuỗi mở chiếu
+
+Câu hỏi chặn đường app. **Chuẩn bị sẵn khả năng khởi động lại head unit.** Chạy từng cái, dừng lại
+đánh cờ ngay sau mỗi cái, đừng chạy liền một mạch:
+
+```
+carexec.sh run reissue.35-only-while-warm       # ít bị nghi nhất, thử trước
+carexec.sh run reissue.16-only-while-warm       # V1 bảo cái này tái tạo display
+carexec.sh run reissue.full-while-warm          # ca V1 bảo sẽ treo
+carexec.sh run reissue.return-then-recast       # đường phục hồi giả định
+```
+
+Nếu `full-while-warm` không treo thì đường app đơn giản hẳn: cứ phát lại vô điều kiện, không cần
+đoán chiếu đang mở hay đóng — mà Q1 đã chứng minh là không đoán được.
+
+### Đánh cờ ngay tại chỗ
+
+```
+carexec.sh verdict <candidate> ok|fail --note "chủ xe thấy ..."
+```
+
+Ghi chú phải dẫn đúng điều đã thấy. Sổ ghi rõ verdict là `MEASURED` hay `HUMAN`, đừng để lẫn.
