@@ -90,7 +90,7 @@ lại lúc cụm đang có app không treo máy thì đường app đơn giản 
 | Test cho Navigation + HUD | chưa ai kiểm; nợ lớn nhất về chất lượng |
 | Đổi tên package 26 file `:core` | chờ xoá V1 để không đổi hai lần |
 | Quyết `vd_map` giữ hay bỏ | chưa ai nhắc |
-| `NavRealtimeModule` đổi tốc độ ra km/h ở hai chỗ — để làm gì? | nghi trùng với đồng hồ tốc độ sẵn có của xe |
+| ~~`NavRealtimeModule` đổi tốc độ ra km/h~~ | **đã soi 21:07** — chỉ là màn chẩn đoán trong app, không tính gì và không đẩy lên cụm/HUD. Không trùng với đồng hồ của xe |
 | Fixture profile cho `observe --recorded` | chặn chuỗi quan sát off-car |
 | ~~Dead Reckon / mock 1 096 dòng~~ | **xong** — xoá hẳn 2026-07-27 theo quyết định của chủ dự án |
 
@@ -121,4 +121,7 @@ Nhân đó tách rõ hai chuyện hay bị lẫn:
 Nếu số đó chỉ để **hiển thị** thì cụm đã có đồng hồ tốc độ của xe, và hiển thị lại là dư — trùng lặp
 thật, khác loại với chuyện nội suy. Nếu nó dùng để **tính** (ngưỡng, đếm ngược) thì giữ.
 
-Chưa kiểm, ghi nợ đúng như đang biết: hai chỗ gọi, chưa rõ dùng để hiển thị hay để tính.
+**Đã soi 21:07 — nợ đóng.** `NavRealtimeModule` là màn chẩn đoán: `selfTest` in một dòng "đọc tốc độ =
+N km/h", và `read()` vẽ một khung monospace gồm tốc độ, cự ly thô từ notification, anchor, giá trị nội
+suy đang đẩy lên cụm và ETA. Nó **không tính gì** bằng km/h và **không đẩy** số đó lên cụm hay HUD — chỉ
+để so trên đường khi bật/tắt nội suy. Nên không trùng với đồng hồ tốc độ của xe. Không phải bỏ.
