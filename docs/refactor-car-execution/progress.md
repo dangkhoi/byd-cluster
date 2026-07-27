@@ -427,3 +427,52 @@ Cũng đã soi phần `activities` khác 40 dòng giữa hai bản: **toàn bộ
 
 Chỉ khi ba nhãn đó do người xác nhận thì phép so mới có nghĩa. Bài học: **không tự dựng "sự thật"
 từ một công thức chưa được kiểm trong chính phiên đó.**
+
+## 2026-07-27 19:38–19:40 — Q1 ĐÃ CHỐT (có người xác nhận cả hai đầu)
+
+Làm lại đúng cách đã ghi ở mục đính chính: mỗi trạng thái đều có nhãn do chủ xe xác nhận, và task
+nằm y nguyên trên display 1 ở cả hai lần, nên biến duy nhất thay đổi là chiếu OEM.
+
+| Bước | Lệnh | Chủ xe nhìn cụm |
+|---|---|---|
+| X | task đã đặt + `30,16,35` | **"vietmap lên ok nhé"** (19:38) |
+| Y | `18,0` | **"đồng hồ"** (19:40) |
+
+### Kết quả so sánh X vs Y
+
+| Nguồn | Khác |
+|---|---|
+| `dumpsys display` | 3 dòng, đều là `(N ms ago)` của cảm biến sáng |
+| `am stack list` | 0 |
+| `SurfaceFlinger --list` | 0 |
+| `service list` | 0 |
+| `window displays` | 2 dòng nhiễu cảm biến gia tốc |
+| `dumpsys activity activities` | 40 dòng, **toàn bộ timestamp** |
+| `SurfaceFlinger` đầy đủ (lọc nhịp vẽ) | 8 dòng: đổi slot buffer, `vsync on 0→1`, bộ đếm fps |
+
+**Không có tín hiệu chỉ-đọc nào của Android phân biệt được "cụm hiện app" và "cụm hiện đồng hồ".**
+Đã ghim thành bài kiểm `RealFixtureParsingTest.khong the phan biet…` chạy trên chính hai bản chụp
+có người xác nhận, để về sau không ai dựng tuyên bố "đã xác minh đang chiếu" trên các tín hiệu này.
+Bài kiểm chỉ lọc giá trị thời gian trôi; nếu `numLayers`, `layerStack`, kích thước hay cờ display
+đổi theo chiếu thì nó sẽ đổ — tức là đã tìm ra observable.
+
+Sửa một câu tôi nói sai trong lúc làm: hai bản dumpsys **không** bằng nhau đến từng byte; tôi suy từ
+kích thước file bằng nhau, đó là suy luận hỏng. Chúng khác đúng 3 dòng mốc thời gian.
+
+### Hệ quả cho sản phẩm
+
+`ACTIVE_VERIFIED` không thể là "đã xác minh đang chiếu" — nó chỉ là "cửa sổ đã nằm trên display cụm".
+Chữ đã đổi chiều nay là đúng, và giờ có bằng chứng đóng.
+
+### Lỗi mới, do chủ xe phát hiện: Stop có thể để app MỒ CÔI
+
+Sau `18,0`: *"đồng hồ, và vietmap cũng ko ở màn chính luôn, đi đâu mất tiêu rồi"*. Task vẫn trên
+display 1 nhưng cụm đã về đồng hồ → app không hiện ở cả hai màn.
+
+Thang Stop của V2 có `return-normal` trước khi đóng chiếu, nên đường thường không bị. Nhưng nhánh
+`TargetClass.UNKNOWN_PROTECTED` **không có bước trả về nào** — Stop ở lớp đó tự tạo ra đúng trạng
+thái mồ côi. Đã vá bằng `RETURN_PROTECTED_GENTLY` (`am start --display 0 -n <comp>`): ít rủi ro nhất,
+không đổi windowing mode, không force-stop — và chính lệnh đó vừa cứu VietMap trên xe.
+
+Bài kiểm mới quét **mọi** `TargetClass`: nếu thang có đóng chiếu thì phải có bước trả về, và bước đó
+phải đứng TRƯỚC. Đã kiểm ngược bằng cách tạm gỡ bản vá → bài kiểm đổ đúng chỗ `UNKNOWN_PROTECTED`.

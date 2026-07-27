@@ -12,3 +12,6 @@ recordedAt	feature	step	candidate	verdict	source	endpoint	note
 2026-07-27T12:33:17.273157Z	CLUSTER_CAST	open-projection	open.seal-30-16-35	OK	HUMAN	localhost:5555	Parcel(0,0);
 2026-07-27T12:34:20.433912Z	CLUSTER_CAST	teardown	teardown.18-then-0	OK	HUMAN	localhost:5555	người xác nhận gauges trở lại là ở phiên SÁNG 27/7, không phải phiên chiều
 2026-07-27T12:35:10.798983Z	CLUSTER_CAST	open-projection	open.seal-30-16-35	OK	HUMAN	localhost:5555	người xác nhận cụm hiện app là ở phiên SÁNG 27/7, không phải phiên chiều
+2026-07-27T12:45:57.215364Z	CLUSTER_CAST	open-projection	open.seal-30-16-35	OK	HUMAN	localhost:5555	chủ xe nhìn cụm xác nhận: vietmap lên ok (19:38, task đã đặt sẵn)
+2026-07-27T12:45:57.666496Z	CLUSTER_CAST	teardown	teardown.18-then-0	OK	HUMAN	localhost:5555	chủ xe nhìn cụm xác nhận: về đồng hồ (19:40) NHUNG task 40 con tren display 1 nen app mo coi
+2026-07-27T12:45:58.146455Z	CLUSTER_CAST	place	place.freeform-then-resize	OK	MEASURED	localhost:5555	task 40 len cum 1920x720, chu xe thay map
