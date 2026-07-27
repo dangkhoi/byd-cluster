@@ -29,6 +29,8 @@ class MainActivity : Activity() {
     private lateinit var hudStatus: TextView
     private lateinit var laneEnabled: CheckBox
     private lateinit var hudEnabled: CheckBox
+    private lateinit var interpolate: CheckBox
+    private lateinit var accBooster: CheckBox
     private lateinit var castDot: View
     private lateinit var castStatus: TextView
 
@@ -49,6 +51,8 @@ class MainActivity : Activity() {
         hudStatus = findViewById(R.id.txt_hud_status)
         laneEnabled = findViewById(R.id.cb_lane)
         hudEnabled = findViewById(R.id.cb_hud)
+        interpolate = findViewById(R.id.cb_interpolate)
+        accBooster = findViewById(R.id.cb_acc_booster)
         castDot = findViewById(R.id.dot_cast)
         castStatus = findViewById(R.id.txt_cast_status)
 
@@ -74,6 +78,13 @@ class MainActivity : Activity() {
             NavRepository.setOutputEnabled(this, NavigationOutputTarget.HUD, enabled)
             refresh()
         }
+
+        // Hai công tắc này V1 để ngay trên Home; V2 đẩy vào màn module riêng nên một việc bật/tắt tốn hai
+        // lần bấm. Home chỉ GHI tuỳ chọn — không điều phối gì — nên vẫn giữ đúng vai renderer/dispatcher.
+        interpolate.isChecked = Prefs.interpolate(this)
+        interpolate.setOnCheckedChangeListener { _, enabled -> Prefs.setInterpolate(this, enabled) }
+        accBooster.isChecked = Prefs.accBooster(this)
+        accBooster.setOnCheckedChangeListener { _, enabled -> Prefs.setAccBooster(this, enabled) }
 
         findViewById<Button>(R.id.btn_reconnect_nav).setOnClickListener {
             NavConnect.reconnect(applicationContext)

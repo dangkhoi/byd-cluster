@@ -39,6 +39,16 @@
             <CheckBox android:id="@+id/cb_hud" android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min" android:text="Bật đầu ra HUD độc lập"
                 android:textColor="@color/text_secondary" />
+            <!-- V1 để hai công tắc này NGAY trên Home. V2 đẩy chúng vào màn module riêng, thành hai lần
+                 bấm cho một việc bật/tắt — đó chính là chỗ làm màn hình có cảm giác nhiều nút. Đưa về. -->
+            <CheckBox android:id="@+id/cb_interpolate" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
+                android:layout_marginTop="8dp" android:textColor="@color/text_secondary"
+                android:text="Nội suy cự ly tới chỗ rẽ (bám thực tế hơn giữa hai lần cập nhật)" />
+            <CheckBox android:id="@+id/cb_acc_booster" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
+                android:layout_marginTop="8dp" android:textColor="@color/text_secondary"
+                android:text="Đọc thêm cự ly từ màn dẫn đường (chính xác hơn, cần quyền trợ năng)" />
             <Button android:id="@+id/btn_reconnect_nav" android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
                 android:text="Cấp quyền / kết nối lại" android:textAllCaps="false" android:textColor="@color/brand" />
