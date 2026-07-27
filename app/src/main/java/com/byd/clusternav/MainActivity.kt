@@ -1,5 +1,6 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.modules.clustercast.CastBubbleControl
 import com.byd.clusternav.navigation.NavigationOutputFailureReason
 import com.byd.clusternav.navigation.NavigationSourceReason
 import android.app.Activity
@@ -100,6 +101,23 @@ class MainActivity : Activity() {
         }
         findViewById<Button>(R.id.btn_cast_details).setOnClickListener {
             startActivity(Intent(this, ClusterCastActivity::class.java))
+        }
+
+        // Khối Cast trên Home, đúng v0.3x/v0.57: thao tác chính bấm được NGAY, chi tiết mới phải đi sâu.
+        // Home vẫn là renderer/dispatcher — nó không tự lập kế hoạch gì, chỉ chuyển ý định sang màn Cast
+        // (nơi có façade + trạng thái) hoặc bật/tắt nút nổi, một việc thuần tuỳ chọn cục bộ.
+        findViewById<Button>(R.id.btn_cast_toggle).setOnClickListener {
+            startActivity(
+                Intent(this, ClusterCastActivity::class.java)
+                    .putExtra(ClusterCastActivity.EXTRA_CAST_NOW, true),
+            )
+        }
+        findViewById<Button>(R.id.btn_bubble).setOnClickListener {
+            val wanted = !CastBubbleControl.optedIn(this)
+            if (!CastBubbleControl.apply(this, wanted) && wanted) {
+                CastBubbleControl.requestOverlay(this)
+            }
+            refresh()
         }
 
         NavConnect.ensureConnected(applicationContext)

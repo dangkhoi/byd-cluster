@@ -1,5 +1,6 @@
 package com.byd.clusternav.cast.platform
 
+import com.byd.clusternav.modules.clustercast.AppScale
 import com.byd.clusternav.modules.clustercast.v2.*
 
 import android.content.Context
@@ -110,6 +111,37 @@ class CastAppCatalog(
         }
         check(prefs.edit().putString("protected", next.sorted().joinToString(",")).commit())
         return true
+    }
+
+    /**
+     * Khung + DPI riêng cho từng app, đúng mô hình v0.3x mà chủ dự án dùng thật: tick app nào thì chỉnh
+     * kích thước/vị trí ngay dưới app đó, và giá trị theo app chứ không theo phiên.
+     *
+     * V2 trước đây chỉ giữ geometry của PHIÊN đang chiếu, nên chỉnh cho app A rồi chiếu app B là mất. Lưu
+     * theo app thì lần chiếu sau vẫn đúng khung đã chỉnh — đó là điều làm nó dùng được thật.
+     */
+    fun scaleOf(packageName: String): AppScale {
+        val dpi = prefs.getInt("scale-dpi:$packageName", AppScale().dpi)
+        return AppScale(
+            dpi = dpi,
+            rectL = prefs.getInt("scale-l:$packageName", -1),
+            rectT = prefs.getInt("scale-t:$packageName", -1),
+            rectR = prefs.getInt("scale-r:$packageName", -1),
+            rectB = prefs.getInt("scale-b:$packageName", -1),
+        )
+    }
+
+    fun setScale(packageName: String, scale: AppScale) {
+        require(PACKAGE.matches(packageName))
+        check(
+            prefs.edit()
+                .putInt("scale-dpi:$packageName", scale.dpi)
+                .putInt("scale-l:$packageName", scale.rectL)
+                .putInt("scale-t:$packageName", scale.rectT)
+                .putInt("scale-r:$packageName", scale.rectR)
+                .putInt("scale-b:$packageName", scale.rectB)
+                .commit(),
+        )
     }
 
     /**
