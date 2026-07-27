@@ -13,7 +13,7 @@ dự án này đang tránh.
 
 | Phần | File | Dòng | Thuộc sản phẩm đích? |
 |---|---:|---:|---|
-| Cast V1 + UI | 24 | 5 970 | UI có; engine V1 **không** |
+| Cast V1 + UI ⚠️ | 24 | 5 970 | **gộp nhóm SAI — xem mục 13**: V1 thật sự chỉ 2.110 dòng, phần còn lại là UI đang dùng |
 | Cast V2 | 27 | 5 145 | có |
 | app shell, prefs, Home | 28 | 2 770 | có |
 | Navigation + HUD | 25 | 2 473 | có |
@@ -210,3 +210,23 @@ Tôi đã thêm chặn `NaN`/vô cực trong lúc tách — sửa hành vi lẫn
 Bản vá đúng và có bài kiểm, nên giữ; nhưng đã **khai báo tường minh** trong KDoc của `SpeedReading` thay vì
 để nó lẫn vào diff. Bài học: P2 không phải luật hình thức — chính tôi vi phạm ngay lần tách đầu tiên trong
 buổi, và không có bước checklist thì nó đi vào lịch sử như "chỉ tách file".
+
+## 13. ĐÍNH CHÍNH con số "mã ngoài sản phẩm đích" — 22:35
+
+Tôi đã nói **5.970 dòng V1** nhiều lần tối nay, kể cả trong commit message và mục 2 của tài liệu này.
+**Sai.** Con số đó là bucket `Cast V1 + UI` trong script kiểm kê đầu tiên — nó gộp cả **Cast UI đang dùng**
+vào cùng nhóm với engine V1. Lỗi phân loại của chính tôi, và tôi lặp lại nó thay vì kiểm.
+
+Đo lại bằng cách tìm file nào **chỉ V1 dùng**:
+
+| | File | Dòng |
+|---|---:|---:|
+| Engine V1 thật sự (`ClusterCast`, `CastShell`, `ClusterProfile`, `ClusterDiag`) | 4 | **2.110** |
+| Cast UI + façade — **giữ, đang dùng** | 16 | 3.113 |
+
+Nên phần chờ xoá là **2.110 dòng**, không phải 5.970. Cây hiện 18.953 dòng, tức mã ngoài sản phẩm đích còn
+**11%**, không phải 31%.
+
+Bài học lặp lại lần thứ bảy trong ngày: **một con số đến từ script phân loại chưa được kiểm thì chưa phải
+sự thật.** Sáu lỗi trước đều là phép đo (đếm call thay vì ranh giới, đếm theo package, quét sai module,
+đếm trong transport, chỉ đếm dòng `import`, đếm test theo tên đầy đủ); lần này là phép **gộp nhóm**.
