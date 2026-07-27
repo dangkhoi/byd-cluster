@@ -42,13 +42,11 @@ keystore.properties
 *.db-journal
 *.db-shm
 *.db-wal
-
 # ─── IDE / OS ─────────────────────────────────────────────
 .idea/
 *.iml
 .DS_Store
 *.swp
-
 # ─── Logs & dữ liệu xe (PII: GPS/nhà/email/token — TUYỆT ĐỐI không public) ──
 dr_logs/
 *.log
@@ -60,31 +58,25 @@ docs/diagnostics/carlog-*/
 docs/diagnostics/log-nav-debug.txt
 # Dump/trace on-car theo phiên (WM NPE traces, castlog, IP nội bộ, tên app) — PII, TUYỆT ĐỐI không public
 oncar-*/
-
 # ─── Không thuộc ClusterNav (PoSound / tooling / audio / bên thứ 3) ──
 tools/
 *.wav
 apks/
-
 # ─── Local Kiro autonomous orchestrator state (session ID, locks, logs) ───
 .kiro/runtime/
-
 # Python tooling cache
 __pycache__/
 *.pyc
-
 # Local agent config (workspace steering/settings — not product source)
 .kiro/
-
 # APKs are build outputs / local evidence, not source. The 0.59 artifact predates this rule
 # and stays tracked; nothing new goes into history.
 apk/*.apk
 !apk/ClusterNav-0.59-release.apk
-
 # Written by the authorized build; regenerated every time, so it is never source.
 docs/_handoff/vehicle-candidate.json
-
 # Attestation for an already-committed tree: the commit sha is the provenance, so this
 # file is a build gate artifact, regenerated whenever HEAD moves.
 docs/_handoff/*-committed-exact-source.json
 docs/_handoff/*-check.json
+oncar-emulator-*/

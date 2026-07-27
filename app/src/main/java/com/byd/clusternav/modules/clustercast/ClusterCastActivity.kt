@@ -443,7 +443,10 @@ class ClusterCastActivity : Activity() {
                 recoverOnceButton.isEnabled = enabled(CastAction.TRY_ELIGIBLE_RECOVERY_ONCE)
                 physicalInstructionButton.isEnabled = enabled(CastAction.SHOW_PHYSICAL_INSTRUCTION)
                 profileSetupButton.isEnabled = enabled(CastAction.OPEN_PROFILE_SETUP)
-                val appManagementEnabled = enabled(CastAction.OPEN_APP_MANAGER) || enabled(CastAction.CHOOSE_ANOTHER_APP)
+                // Chọn app là tuỳ chọn cục bộ, không phát lệnh ra xe → không khoá theo trạng thái cụm.
+                // Trước 27/7 chỗ này khoá theo OPEN_APP_MANAGER || CHOOSE_ANOTHER_APP nên ở trạng thái
+                // "cần xử lý thủ công" người dùng không chọn nổi app để chuẩn bị.
+                val appManagementEnabled = enabled(CastAction.SELECT_TARGET_APP)
                 for (index in 0 until apps.childCount) apps.getChildAt(index).isEnabled = appManagementEnabled
                 if (stopSnapshot != null && model.operationAcknowledged) {
                     stopRequestedAt = null

@@ -14,6 +14,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class CastRendererContractTest {
+    /** Hai phép không phát lệnh ra xe nên luôn bật: xem Chẩn đoán, và chọn app để chuẩn bị. */
+    private val ALWAYS = setOf(CastAction.OPEN_DIAGNOSTICS, CastAction.SELECT_TARGET_APP)
+
     @Test fun `renderer exports every action exactly once and only projector allowed actions are enabled`() {
         val state = CastUiStateProjector.project(base().copy(
             stableState = StableState.ACTIVE_VERIFIED,
@@ -98,11 +101,10 @@ class CastRendererContractTest {
             instant(2_000),
         )
         assertEquals(
-            setOf(
+            ALWAYS + setOf(
                 CastAction.CAST,
                 CastAction.CHOOSE_ANOTHER_APP,
                 CastAction.OPEN_APP_MANAGER,
-                CastAction.OPEN_DIAGNOSTICS,
             ),
             model.actions.filter { it.enabled }.map { it.action }.toSet(),
         )
@@ -110,7 +112,7 @@ class CastRendererContractTest {
         assertEquals("Cluster Cast sẵn sàng tạo cụm", model.title)
         assertEquals("Chọn ứng dụng để chiếu", model.status)
         assertEquals(
-            setOf(CastAction.STOP, CastAction.CHOOSE_ANOTHER_APP),
+            ALWAYS + setOf(CastAction.STOP, CastAction.CHOOSE_ANOTHER_APP),
             model.activityActions(CastUiMutationSnapshot(1L, pending = true)),
         )
     }
@@ -127,13 +129,13 @@ class CastRendererContractTest {
             instant(2_000),
         )
         assertEquals(
-            setOf(CastAction.STOP, CastAction.CHOOSE_ANOTHER_APP),
+            ALWAYS + setOf(CastAction.STOP, CastAction.CHOOSE_ANOTHER_APP),
             model.actions.filter { it.enabled }.map { it.action }.toSet(),
         )
         assertFalse(model.actions.single { it.action == CastAction.CAST }.enabled)
         assertFalse(model.actions.single { it.action == CastAction.RETRY_CONNECT }.enabled)
         assertEquals(
-            setOf(CastAction.STOP, CastAction.CHOOSE_ANOTHER_APP),
+            ALWAYS + setOf(CastAction.STOP, CastAction.CHOOSE_ANOTHER_APP),
             model.activityActions(CastUiMutationSnapshot(2L, pending = true)),
         )
     }
@@ -147,7 +149,7 @@ class CastRendererContractTest {
         cases.forEach { (storeRead, observation) ->
             val model = CastRuntimeUi.render(storeRead, observation, instant(2_000))
             assertEquals(
-                setOf(CastAction.OPEN_DIAGNOSTICS),
+                ALWAYS,
                 model.actions.filter { it.enabled }.map { it.action }.toSet(),
             )
         }

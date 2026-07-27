@@ -153,6 +153,14 @@ object CastUiStateProjector {
         NextSafeAction.OPEN_DIAGNOSTICS, setOf(CastAction.OPEN_DIAGNOSTICS),
     )
 
+    /**
+     * Nhóm phép không bao giờ bị khoá, vì chúng không phát lệnh nào ra xe: xem Chẩn đoán để biết vì
+     * sao, và chọn app để chuẩn bị. Gộp ở một chỗ để không trạng thái nào lỡ bỏ sót — thay vì nhớ
+     * thêm tay ở từng nhánh, cách đã bỏ sót hai lần trong ngày 27/7.
+     */
+    private fun alwaysAllowed(actions: Set<CastAction>): Set<CastAction> =
+        actions + CastAction.OPEN_DIAGNOSTICS + CastAction.SELECT_TARGET_APP
+
     private fun state(
         input: CastProjectionInput,
         coarse: CoarseState,
@@ -170,7 +178,8 @@ object CastUiStateProjector {
         val dominant = input.stopRequested || recovery != null || phase != null || coarse in DOMINANT_STATES
         return CastUiStateV2(
             CAST_UI_SCHEMA_VERSION, CAST_UI_SCHEMA_HASH, coarse, stable, phase, recovery, disposition,
-            next, reason, actions, disabled(actions, coarse), input.interactionContext, input.target,
+            next, reason, alwaysAllowed(actions), disabled(alwaysAllowed(actions), coarse),
+            input.interactionContext, input.target,
             input.protectedResidue, input.acceptedGeometry, operationId, input.durableEpoch, deadline,
             automationDisposition = input.automationDisposition.takeUnless { dominant },
             automationReason = input.automationReason.takeUnless { dominant },

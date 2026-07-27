@@ -10,7 +10,7 @@ typealias Sha256LowerHex = String
 const val CAST_ENVELOPE_SCHEMA_VERSION = 3
 const val CAST_UI_SCHEMA_VERSION = 5
 const val CAST_UI_SCHEMA_HASH =
-    "3b53e6bf62d9ad0af5922f18ac2e8ab2a3047edab7b3a259aa9378225db13ada"
+    "79595611424c083cca80b87002e65ee16097f668b09ea8f4d721235a2f060918"
 
 private fun <T> immutableList(values: Collection<T>): List<T> =
     Collections.unmodifiableList(ArrayList(values))
@@ -287,6 +287,17 @@ enum class CastAction {
     CAST, SWITCH, ADJUST, STOP, CHOOSE_ANOTHER_APP, OPEN_APP_MANAGER, RETRY_CONNECT,
     OPEN_DIAGNOSTICS, REQUEST_PHONE_DISCONNECT, TRY_ELIGIBLE_RECOVERY_ONCE,
     SHOW_PHYSICAL_INSTRUCTION, OPEN_PROFILE_SETUP,
+
+    /**
+     * Chọn app sẽ chiếu. Đây là phép ghi TUỲ CHỌN CỤC BỘ: không phát lệnh nào ra xe, không đụng
+     * transaction, không đổi gì trên cụm — việc chiếu chỉ xảy ra khi bấm Chiếu. Vì thế nó nằm trong
+     * nhóm luôn được phép, cùng với Chẩn đoán.
+     *
+     * Có mục này vì 2026-07-27 phát hiện tile app bị vô hiệu hoá theo `OPEN_APP_MANAGER ||
+     * CHOOSE_ANOTHER_APP`; ở trạng thái "cần xử lý thủ công" projector không cấp hai phép đó, nên
+     * người dùng không chọn nổi app để chuẩn bị — bị khoá đúng như sáng cùng ngày.
+     */
+    SELECT_TARGET_APP,
 }
 enum class CoarseState {
     UNKNOWN, COLD_PRISTINE, LEGACY_ACTIVE_READ_ONLY, PREPARING, ACTIVATING, SWITCHING, VERIFYING,
