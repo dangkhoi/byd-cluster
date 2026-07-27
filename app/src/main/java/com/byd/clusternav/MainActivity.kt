@@ -1,5 +1,6 @@
 package com.byd.clusternav
 
+import android.widget.Toast
 import com.byd.clusternav.modules.clustercast.CastBubbleControl
 import com.byd.clusternav.navigation.NavigationOutputFailureReason
 import com.byd.clusternav.navigation.NavigationSourceReason
@@ -32,8 +33,7 @@ class MainActivity : Activity() {
     private lateinit var hudStatus: TextView
     private lateinit var laneEnabled: CheckBox
     private lateinit var hudEnabled: CheckBox
-    private lateinit var interpolate: CheckBox
-    private lateinit var accBooster: CheckBox
+    private lateinit var distanceAssist: CheckBox
     private lateinit var castDot: View
     private lateinit var castStatus: TextView
 
@@ -54,8 +54,7 @@ class MainActivity : Activity() {
         hudStatus = findViewById(R.id.txt_hud_status)
         laneEnabled = findViewById(R.id.cb_lane)
         hudEnabled = findViewById(R.id.cb_hud)
-        interpolate = findViewById(R.id.cb_interpolate)
-        accBooster = findViewById(R.id.cb_acc_booster)
+        distanceAssist = findViewById(R.id.cb_distance_assist)
         castDot = findViewById(R.id.dot_cast)
         castStatus = findViewById(R.id.txt_cast_status)
 
@@ -82,12 +81,26 @@ class MainActivity : Activity() {
             refresh()
         }
 
-        // Hai công tắc này V1 để ngay trên Home; V2 đẩy vào màn module riêng nên một việc bật/tắt tốn hai
-        // lần bấm. Home chỉ GHI tuỳ chọn — không điều phối gì — nên vẫn giữ đúng vai renderer/dispatcher.
-        interpolate.isChecked = Prefs.interpolate(this)
-        interpolate.setOnCheckedChangeListener { _, enabled -> Prefs.setInterpolate(this, enabled) }
-        accBooster.isChecked = Prefs.accBooster(this)
-        accBooster.setOnCheckedChangeListener { _, enabled -> Prefs.setAccBooster(this, enabled) }
+        // MỘT công tắc cho một mục đích: "Hỗ trợ cự ly" bật cả hai nửa của cùng cơ chế — nội suy trừ dần cự
+        // ly theo tốc độ xe giữa hai lần notification, và bộ đọc màn Maps kéo mốc về đúng số thật.
+        //
+        // Không tách hai checkbox nữa: tắt nội suy thì bộ đọc màn vẫn chạy nhưng VÔ NGHĨA (`refine()` bỏ qua
+        // khi chưa có mốc, mà mốc chỉ do nội suy đặt). Hai công tắc độc lập cho một cơ chế là cách chắc chắn
+        // để người dùng bật một nửa rồi tưởng đã bật cả.
+        //
+        // Bộ đọc màn còn cần quyền trợ năng do HỆ THỐNG cấp. Bật công tắc mà chưa cấp thì nó im lặng không
+        // làm gì, nên đưa người dùng sang đúng trang đó — giống cách nút nổi xử lý quyền overlay.
+        distanceAssist.isChecked = Prefs.interpolate(this)
+        distanceAssist.setOnCheckedChangeListener { _, enabled ->
+            Prefs.setInterpolate(this, enabled)
+            Prefs.setAccBooster(this, enabled)
+            if (enabled && !accessibilityBoosterGranted()) {
+                Toast.makeText(this, "Cần bật ClusterNav trong Trợ năng để đọc cự ly từ màn Maps", Toast.LENGTH_LONG).show()
+                runCatching {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }
+        }
 
         findViewById<Button>(R.id.btn_reconnect_nav).setOnClickListener {
             NavConnect.reconnect(applicationContext)
@@ -209,6 +222,12 @@ class MainActivity : Activity() {
         NavigationOutputFailureReason.EXECUTOR_REJECTED -> "luồng gửi đã dừng"
         NavigationOutputFailureReason.DISPLAY_ACK_REJECTED -> "cụm từ chối xác nhận"
         NavigationOutputFailureReason.INTERNAL_CONTRACT_ERROR -> "sai hợp đồng nội bộ"
+    }
+
+    /** Service trợ năng đã được hệ thống bật chưa — công tắc chỉ ghi tuỳ chọn, quyền thì do người dùng cấp. */
+    private fun accessibilityBoosterGranted(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_accessibility_services") ?: return false
+        return flat.split(':').any { it.contains("com.byd.clusternav") }
     }
 
     private fun notificationAccessGranted(): Boolean {
