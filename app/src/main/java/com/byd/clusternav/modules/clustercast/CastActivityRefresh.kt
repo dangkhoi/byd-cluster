@@ -14,18 +14,33 @@ internal data class CastActivityRefreshResult(
 )
 
 
+/**
+ * Các phép KHÔNG phát lệnh nào ra xe, nên một phép ghi đang chờ không có lý do gì khoá chúng.
+ * Chọn app và mở danh sách app chỉ ghi tuỳ chọn cục bộ; Chẩn đoán chỉ đọc.
+ */
+private val NON_DISPATCHING = setOf(
+    CastAction.OPEN_DIAGNOSTICS,
+    CastAction.SELECT_TARGET_APP,
+    CastAction.CHOOSE_ANOTHER_APP,
+)
+
+/**
+ * Thu hẹp tập phép khi đang chờ một phép ghi hội tụ.
+ *
+ * Bản trước so sánh BẰNG với hai tập cứng để đoán "có được chọn app không". Cách đó sai hai lần: nó
+ * vỡ im lặng mỗi khi tập phép đổi (thêm một phép mới là `selectionAllowed` lặng lẽ thành false), và nó
+ * trả về đúng một phép STOP — nghĩa là trong lúc chờ, người dùng MẤT cả Chẩn đoán. Phát hiện ngày
+ * 2026-07-27 khi chạy E2E trên emulator.
+ *
+ * Bản này lọc theo Ý ĐỊNH thay vì theo danh sách: chặn mọi phép phát lệnh mới, giữ Stop để luôn có
+ * đường thoát, và giữ những phép không phát lệnh nào mà trạng thái vốn đã cho.
+ */
 internal fun CastRenderModel.activityActions(mutation: CastUiMutationSnapshot): Set<CastAction> {
     val canonical = actions.filterTo(linkedSetOf()) { it.enabled }.mapTo(linkedSetOf()) { it.action }
     if (!mutation.pending) return canonical
-    val selectionAllowed = canonical == setOf(
-        CastAction.CAST,
-        CastAction.CHOOSE_ANOTHER_APP,
-        CastAction.OPEN_APP_MANAGER,
-        CastAction.OPEN_DIAGNOSTICS,
-    ) || canonical == setOf(CastAction.STOP, CastAction.CHOOSE_ANOTHER_APP)
     return buildSet {
         add(CastAction.STOP)
-        if (selectionAllowed) add(CastAction.CHOOSE_ANOTHER_APP)
+        addAll(canonical.intersect(NON_DISPATCHING))
     }
 }
 /** Read-only refresh boundary. Call only from the serialized refresh lane. */

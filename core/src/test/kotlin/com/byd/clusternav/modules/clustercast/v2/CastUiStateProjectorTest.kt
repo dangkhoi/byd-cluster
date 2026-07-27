@@ -21,7 +21,7 @@ class CastUiStateProjectorTest {
         val canonical = Json.canonical(artifact)
         val hash = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(StandardCharsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
-        assertEquals("3b53e6bf62d9ad0af5922f18ac2e8ab2a3047edab7b3a259aa9378225db13ada", hash)
+        assertEquals("79595611424c083cca80b87002e65ee16097f668b09ea8f4d721235a2f060918", hash)
         assertEquals(hash, CAST_UI_SCHEMA_HASH)
         assertEquals(5L, (artifact["schemaVersion"] as Json.Number).raw.toLong())
     }
@@ -56,7 +56,7 @@ class CastUiStateProjectorTest {
                 add(CastAction.OPEN_DIAGNOSTICS)
                 if (state.nextSafeAction == NextSafeAction.WAIT_AND_OBSERVE) add(CastAction.RETRY_CONNECT)
             }
-            assertEquals(expectedActions, state.allowedActions, substate.name)
+            assertEquals(expectedActions + ALWAYS, state.allowedActions, substate.name)
             assertTrue(CastAction.OPEN_DIAGNOSTICS in state.allowedActions, substate.name)
             assertEquals(
                 state.stopDisposition.kind == StopDispositionKind.UNAVAILABLE,
@@ -86,7 +86,7 @@ class CastUiStateProjectorTest {
         )
         assertEquals(CoarseState.MANUAL_REQUIRED, state.coarseState)
         assertEquals(UnavailableReason.CONTRACT_UNMAPPED, state.unavailableReason)
-        assertEquals(setOf(CastAction.OPEN_DIAGNOSTICS), state.allowedActions)
+        assertEquals(ALWAYS, state.allowedActions)
     }
 
     @Test
@@ -97,11 +97,10 @@ class CastUiStateProjectorTest {
         assertEquals(StopDispositionKind.COMPLETED, cold.stopDisposition.kind)
         assertEquals(NextSafeAction.NONE, cold.nextSafeAction)
         assertEquals(
-            setOf(
+            ALWAYS + setOf(
                 CastAction.CAST,
                 CastAction.CHOOSE_ANOTHER_APP,
                 CastAction.OPEN_APP_MANAGER,
-                CastAction.OPEN_DIAGNOSTICS,
             ),
             cold.allowedActions,
         )
@@ -157,7 +156,7 @@ class CastUiStateProjectorTest {
         assertEquals(StopDispositionKind.REQUESTED, state.stopDisposition.kind)
         // 2026-07-27: Stop vẫn bị chặn để không phát trùng, nhưng trạng thái chờ KHÔNG được rỗng hành
         // động — quét vét cạn R14 bắt được đúng ca này. Giữ hai hành động chỉ-đọc.
-        assertEquals(setOf(CastAction.OPEN_DIAGNOSTICS, CastAction.RETRY_CONNECT), state.allowedActions)
+        assertEquals(ALWAYS + CastAction.RETRY_CONNECT, state.allowedActions)
         assertTrue(CastAction.STOP !in state.allowedActions)
         assertNull(state.operationId)
     }
@@ -203,7 +202,7 @@ class CastUiStateProjectorTest {
         )
         actions.clear()
         val state = CastUiStateProjector.project(base().copy(transaction = projection))
-        assertEquals(setOf(CastAction.STOP), state.allowedActions)
+        assertEquals(ALWAYS + CastAction.STOP, state.allowedActions)
         assertThrows(UnsupportedOperationException::class.java) {
             (projection.allowedActions as MutableSet).clear()
         }
@@ -226,7 +225,7 @@ class CastUiStateProjectorTest {
             val state = CastUiStateProjector.project(base().copy(
                 destructiveRecoveryEligible = true, interactionContext = context,
             ))
-            assertEquals(setOf(CastAction.TRY_ELIGIBLE_RECOVERY_ONCE), state.allowedActions)
+            assertEquals(ALWAYS + CastAction.TRY_ELIGIBLE_RECOVERY_ONCE, state.allowedActions)
             assertEquals(UnavailableReason.RECOVERY_ACTION_ONLY, state.unavailableReason)
         }
         val ineligible = CastUiStateProjector.project(base().copy(destructiveRecoveryEligible = false))
@@ -280,6 +279,13 @@ class CastUiStateProjectorTest {
 
     private fun instant(epochMillis: Long): Instant = Instant.ofEpochMilli(epochMillis)
     private fun operationId(seed: String): UUID = UUID.nameUUIDFromBytes(seed.toByteArray(StandardCharsets.UTF_8))
+
+    /**
+     * Hai phép không bao giờ bị khoá vì không phát lệnh ra xe: xem Chẩn đoán, và chọn app để chuẩn bị.
+     * Các bài kiểm dưới đây ghim phần action RIÊNG của từng trạng thái; việc nhóm này luôn có mặt ở mọi
+     * trạng thái do NoDeadEndStateTest canh.
+     */
+    private val ALWAYS = setOf(CastAction.OPEN_DIAGNOSTICS, CastAction.SELECT_TARGET_APP)
 
     private fun assertEnum(name: String, actual: List<String>) {
         val enums = artifact["enums"] as Map<*, *>

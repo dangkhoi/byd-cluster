@@ -74,6 +74,19 @@ class NoDeadEndStateTest {
     }
 
     @Test
+    fun `moi trang thai deu chon duoc app de chuan bi`() {
+        // Chọn app không phát lệnh nào ra xe. Khoá nó theo trạng thái cụm nghĩa là ở trạng thái xấu người
+        // dùng không chuẩn bị được gì — đúng lỗi tìm ra ngày 27/7 khi chạy E2E trên emulator.
+        val missing = (listOf<RecoverySubstate?>(null) + RecoverySubstate.entries).filter { substate ->
+            listOf(false, true).any { stop ->
+                CastAction.SELECT_TARGET_APP !in
+                    CastUiStateProjector.project(input(substate, stopRequested = stop)).allowedActions
+            }
+        }
+        assertTrue(missing.isEmpty(), "không chọn được app ở: $missing")
+    }
+
+    @Test
     fun `trang thai dang cho luon co duong thu lai`() {
         val waiting = RecoverySubstate.entries.filter {
             CastUiStateProjector.project(input(it)).nextSafeAction == NextSafeAction.WAIT_AND_OBSERVE
