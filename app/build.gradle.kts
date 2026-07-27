@@ -90,6 +90,10 @@ dependencies {
     // "CÁI KIA" — dadb: ADB client thuần JVM, tự nối localhost:5555 -> uid 2000 -> chạy navopen (HAL trực tiếp,
     // ETA + icon hoàn hảo như DashCast). KÉO okio + bouncycastle transitively.
     // ⚠️ Build LẦN ĐẦU ở cty PHẢI có internet (KHÔNG dùng --offline) để tải dep; sau khi cache xong build offline OK.
+    // :core giữ quyết định, dữ liệu, metadata, config. :app chỉ được đi xuống, không có đường ngược lại.
+    implementation(project(":core"))
+    implementation(project(":car-integration"))
+    testImplementation(testFixtures(project(":core")))
     implementation("dev.mobile:dadb:1.2.10")
 
     // — JVM unit + property tests (off-device, chạy bằng ./gradlew testDebugUnitTest) —

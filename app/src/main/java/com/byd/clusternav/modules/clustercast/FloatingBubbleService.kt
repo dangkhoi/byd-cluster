@@ -28,10 +28,7 @@ import com.byd.clusternav.modules.clustercast.v2.CastAndroidLifecycle
 import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
 import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.CastAppEntry
-import com.byd.clusternav.modules.clustercast.v2.CastBubbleProjection
 import com.byd.clusternav.modules.clustercast.v2.CastManualTargetReader
-import com.byd.clusternav.modules.clustercast.v2.CastRuntimeUi
-import com.byd.clusternav.modules.clustercast.v2.StoreRead
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -45,6 +42,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class FloatingBubbleService : Service() {
     private lateinit var runtime: CastAndroidRuntime.Runtime
+    private lateinit var facade: CastFacade
     private lateinit var catalog: CastAppCatalog
     private var windowManager: WindowManager? = null
     private var bubble: LinearLayout? = null
@@ -54,6 +52,16 @@ class FloatingBubbleService : Service() {
     private var statusLabel: TextView? = null
     private var menuPanel: LinearLayout? = null
     private var params: WindowManager.LayoutParams? = null
+    private fun goHome() {
+        runCatching {
+            startActivity(
+                Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_HOME)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+
     private val handler = Handler(Looper.getMainLooper())
     private val projecting = AtomicBoolean(false)
     private val stopInFlight = AtomicBoolean(false)
@@ -71,7 +79,8 @@ class FloatingBubbleService : Service() {
     override fun onCreate() {
         super.onCreate()
         runtime = CastAndroidRuntime.create(applicationContext)
-        catalog = CastAppCatalog(applicationContext) { runtime.gateway.connectedPhoneSession(it) }
+        facade = CastFacade.wrapping(runtime)
+        catalog = CastAppCatalog(applicationContext) { facade.phoneSession(it) }
         if (!catalog.bubbleEnabled()) { stopSelf(); return }
         if (!startForegroundOnce()) { stopSelf(); return }
         if (!Settings.canDrawOverlays(this)) { stopSelf(); return }
@@ -124,19 +133,31 @@ class FloatingBubbleService : Service() {
         windowManager = manager
         stopButton = bubbleText("Dừng chiếu", STOP_MIN_DP).apply {
             id = STOP_VIEW_ID
+            setBackgroundResource(com.byd.clusternav.R.drawable.bubble_panel)
             visibility = View.GONE
             setOnClickListener { requestStopOnce() }
         }
-        menuButton = bubbleText("Cast · Menu", MENU_MIN_DP).apply {
+        // V1 shape: a small translucent glyph, not a text label. The label lives in
+        // contentDescription so TalkBack and the rotary still announce the real state.
+        menuButton = bubbleText("", MENU_MIN_DP).apply {
             id = MENU_BUTTON_ID
             contentDescription = "Mở menu Cluster Cast"
+            gravity = Gravity.CENTER
+            setBackgroundResource(com.byd.clusternav.R.drawable.bubble_round)
+            val glyph = resources.getDrawable(com.byd.clusternav.R.drawable.ic_cast_bubble, theme)
+            val side = dp(22)
+            glyph?.setBounds(0, 0, side, side)
+            setCompoundDrawablesRelative(glyph, null, null, null)
+            compoundDrawablePadding = 0
             setOnClickListener { toggleMenu() }
         }
         primaryButton = bubbleText("", MENU_MIN_DP).apply { visibility = View.GONE }
         statusLabel = bubbleText("", 0).apply { textSize = 10f; visibility = View.GONE }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(0xE528323B.toInt())
+            // The circle carries the visual weight; the host row itself stays invisible so nothing
+            // rectangular sits over the map underneath.
+            setBackgroundColor(Color.TRANSPARENT)
             addView(stopButton)
             addView(primaryButton)
             addView(menuButton)
@@ -153,8 +174,9 @@ class FloatingBubbleService : Service() {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = clampX(saved?.first ?: dp(18))
-            y = clampY(saved?.second ?: dp(160))
+            // Default clear of the screen's own content instead of on top of the status card.
+            x = clampX(saved?.first ?: (resources.displayMetrics.widthPixels - dp(84)))
+            y = clampY(saved?.second ?: (resources.displayMetrics.heightPixels / 2 - dp(28)))
         }
         params = layout
         listOfNotNull<View>(root, stopButton, menuButton, statusLabel)
@@ -230,11 +252,10 @@ class FloatingBubbleService : Service() {
     }
 
     private fun project(token: Long) {
-        val read = runtime.store.locked { read() }
-        val envelope = (read as? StoreRead.Loaded)?.envelope
+        val envelope = facade.envelope()
         val durableStop = envelope?.stopRequested == true
-        val model = CastRuntimeUi.render(read, runtime.coordinator.observe())
-        val projection = CastBubbleProjection.project(
+        val model = facade.renderModel()
+        val projection = facade.bubbleProjection(
             model,
             entries.map { it.row() },
             envelope?.automationConfig?.defaultPackage,
@@ -269,8 +290,7 @@ class FloatingBubbleService : Service() {
             contentDescription = "${projection.stopLabel}. ${projection.status}"
         }
         menuButton?.apply {
-            text = projection.menuLabel
-            contentDescription = projection.contentDescription
+            contentDescription = "${projection.menuLabel}. ${projection.contentDescription}"
         }
         statusLabel?.apply {
             text = projection.status
@@ -315,7 +335,7 @@ class FloatingBubbleService : Service() {
         closeMenu()
         val token = generation.get()
         Thread {
-            val accepted = runCatching { runtime.coordinator.requestStop() }.getOrNull()
+            val accepted = runCatching { facade.requestStop() }.getOrNull()
             handler.post {
                 if (destroyed || token != generation.get()) return@post
                 if (accepted == null) {
@@ -327,13 +347,36 @@ class FloatingBubbleService : Service() {
         }.start()
     }
 
+    /**
+     * Re-reads the app catalogue when the menu is opened.
+     *
+     * The list was loaded once when the service started and never again, so an app pinned afterwards
+     * never appeared: on the vehicle 2026-07-27 the screen showed four starred apps while the menu
+     * still said nothing was chosen. Opening the menu is the moment the list is about to be read, and
+     * it is operator-initiated, so it is the right place to refresh rather than polling the package
+     * manager on a timer.
+     */
+    private fun reloadEntries() {
+        Thread {
+            val loaded = runCatching { catalog.installed(runtime.automation.config().defaultPackage) }
+                .getOrDefault(emptyList())
+            handler.post {
+                if (destroyed || loaded.isEmpty()) return@post
+                entries = loaded
+                lastProjection?.let { if (menuPanel != null) renderMenu(it) }
+                handler.post(refresh)
+            }
+        }.start()
+    }
+
     private fun toggleMenu() {
         if (menuPanel != null) { closeMenu(); return }
         val manager = windowManager ?: return
+        reloadEntries()
         val panel = LinearLayout(this).apply {
             id = MENU_VIEW_ID
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xF21C2329.toInt())
+            setBackgroundResource(com.byd.clusternav.R.drawable.bubble_panel)
             setPadding(dp(12), dp(12), dp(12), dp(12))
             isFocusableInTouchMode = true
             setOnKeyListener { _, keyCode, event ->
@@ -341,7 +384,7 @@ class FloatingBubbleService : Service() {
             }
         }
         val layout = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            dp(MENU_PANEL_WIDTH_DP),
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
@@ -378,7 +421,7 @@ class FloatingBubbleService : Service() {
                 contentDescription = buildString {
                     append(item.label)
                     if (!item.enabled) item.disabledReason?.let {
-                        append(". Không khả dụng: ").append(CastBubbleProjection.unavailable(it))
+                        append(". Không khả dụng: ").append(facade.unavailableReason(it))
                     }
                 }
                 entry?.icon?.let { icon ->
@@ -397,19 +440,38 @@ class FloatingBubbleService : Service() {
                 if (item.enabled) setOnClickListener { dispatchTarget(item.packageName) }
             })
         }
+        if (projection.menu.isEmpty()) {
+            panel.addView(TextView(this).apply {
+                text = "Chưa chọn app nào — mở Cấu hình để chọn app cho nút nổi"
+                textSize = 12f
+                setTextColor(Color.WHITE)
+            })
+        }
+        panel.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1))
+                .apply { topMargin = dp(6); bottomMargin = dp(6) }
+            setBackgroundColor(0x3DFFFFFF)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        })
         panel.addView(TextView(this).apply {
-            id = SETTINGS_VIEW_ID
-            text = "Mở điều khiển Cluster Cast"
+            text = "Về màn chính"
             textSize = 13f
             setTextColor(Color.WHITE)
             minimumHeight = dp(MENU_MIN_DP)
             isFocusable = true
-            contentDescription = "Mở điều khiển Cluster Cast"
+            contentDescription = "Về màn hình chính của xe"
+            setOnClickListener { closeMenu(); goHome() }
+        })
+        panel.addView(TextView(this).apply {
+            id = SETTINGS_VIEW_ID
+            text = "Cấu hình Cluster Cast"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            minimumHeight = dp(MENU_MIN_DP)
+            isFocusable = true
+            contentDescription = "Mở cấu hình Cluster Cast"
             setOnClickListener { closeMenu(); openCastControls() }
         })
-        if (projection.menu.isEmpty()) {
-            panel.addView(TextView(this).apply { text = "Chưa có ứng dụng yêu thích hoặc mặc định"; textSize = 12f; setTextColor(Color.WHITE) })
-        }
     }
 
     private fun closeMenu() {
@@ -430,10 +492,9 @@ class FloatingBubbleService : Service() {
         val token = generation.get()
         Thread {
             runCatching {
-                runtime.coordinator.runManualIntent(
+                facade.runManualIntent(
                     packageName,
-                    runtime.vehicleFacts,
-                    CastManualTargetReader { catalog.snapshot(it, runtime.gateway.connectedPhoneSession(it)) },
+                    CastManualTargetReader { catalog.snapshot(it, facade.phoneSession(it)) },
                     preferredDensityDpi = catalog.clusterDensityDpi(packageName),
                     clusterStyle = catalog.clusterStyle(packageName),
                 )
@@ -490,6 +551,8 @@ class FloatingBubbleService : Service() {
         private const val STOP_MIN_DP = 64
         private const val MENU_MIN_DP = 56
         private val MENU_VIEW_ID = View.generateViewId()
+        /** A menu wider than this covers the screen it floats over instead of sitting beside it. */
+        private const val MENU_PANEL_WIDTH_DP = 300
         private val SETTINGS_VIEW_ID = View.generateViewId()
         internal const val STOP_ACK_DEADLINE_MS = 500L
     }

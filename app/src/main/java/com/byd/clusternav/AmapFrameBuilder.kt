@@ -1,5 +1,8 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.navigation.ArrowClassifier
+import com.byd.clusternav.navigation.NavFormat
+import com.byd.clusternav.navigation.NavParse
 import android.content.Intent
 
 /**
@@ -34,7 +37,7 @@ object AmapFrameBuilder {
             else s.maneuverIcon.takeIf { it in 0..28 }
                 ?: ManeuverSignature.classify(s.arrow)
                 ?: NavFormat.maneuverVerbIcon(s.maneuverText.ifBlank { s.road })
-                ?: ArrowClassifier.classify(s.arrow)
+                ?: ArrowClassifier.classify(s.arrow?.asPixelFrame())
                 ?: 9
         // GUARD "hình ghim + xe" lúc bắt đầu đi: nếu icon = 15 (điểm đến) SUY TỪ classifier (không phải cờ
         // đích tường minh maneuverIcon=15 do NavNotificationListener cắm khi ĐÃ ĐẾN) mà vẫn còn cự ly phía trước

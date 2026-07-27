@@ -2,7 +2,6 @@ package com.byd.clusternav.modules.clustercast
 
 import android.os.Handler
 import android.os.Looper
-import com.byd.clusternav.modules.clustercast.v2.CastUiRenderer
 import java.io.Closeable
 import java.time.Duration
 import java.time.Instant
@@ -46,14 +45,18 @@ internal class CastActivityStatusTimers(
         statusExpiryCallback = null
     }
 
-    fun scheduleStopAckRefresh(requestedAt: Instant, isCurrent: (Instant) -> Boolean) {
+    /**
+     * [graceMillis] được truyền vào thay vì đọc hằng số của tầng dưới: lớp này là hạ tầng đếm thời gian
+     * của UI, nó không cần biết ai định nghĩa ngân sách chờ.
+     */
+    fun scheduleStopAckRefresh(requestedAt: Instant, graceMillis: Long, isCurrent: (Instant) -> Boolean) {
         cancelStopAckRefresh()
         val callback = Runnable {
             stopAckCallback = null
             if (!closed && isCurrent(requestedAt)) refresh()
         }
         stopAckCallback = callback
-        mainHandler.postDelayed(callback, CastUiRenderer.STOP_ACK_GRACE_MILLIS + 1L)
+        mainHandler.postDelayed(callback, graceMillis + 1L)
     }
 
     fun cancelStopAckRefresh() {

@@ -10,7 +10,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
-import com.byd.clusternav.modules.clustercast.v2.StoreRead
 
 /** Read-only Cast V2 diagnostics. This screen intentionally exports no repair/reset mutation. */
 class DiagActivity : Activity() {
@@ -39,29 +38,26 @@ class DiagActivity : Activity() {
     private fun refresh() {
         report.text = "Đang đọc…"
         Thread {
-            val store = runtime.store.locked { read() }
-            val observation = runtime.coordinator.observe()
+            val facade = CastFacade.wrapping(runtime)
+            val observation = facade.observe()
             val value = buildString {
                 appendLine("mode=READ_ONLY")
                 appendLine("observation=$observation")
-                when (store) {
-                    is StoreRead.Loaded -> {
-                        val e = store.envelope
-                        appendLine("schema=${e.schemaVersion}")
-                        appendLine("durableEpoch=${e.durableEpoch}")
-                        appendLine("effectiveUi=${e.effectiveUiVersion}")
-                        appendLine("transaction=${e.transaction}")
-                        appendLine("stableSession=${e.stableSession}")
-                        appendLine("ledgerEntries=${e.transaction?.ledger?.size ?: 0}")
-                        e.transaction?.ledger?.forEach { appendLine("ledger=${it.effect}:${it.commandKind}:${it.stepId}") }
-                    }
-                    StoreRead.Empty -> appendLine("store=EMPTY")
-                    is StoreRead.Corrupt -> appendLine("store=CORRUPT:${store.reason}")
-                    is StoreRead.UnsupportedSchema -> appendLine("store=UNSUPPORTED:${store.version}")
+                val e = facade.envelope()
+                if (e == null) {
+                    appendLine(facade.storeStatusLine())
+                } else {
+                    appendLine("schema=${e.schemaVersion}")
+                    appendLine("durableEpoch=${e.durableEpoch}")
+                    appendLine("effectiveUi=${e.effectiveUiVersion}")
+                    appendLine("transaction=${e.transaction}")
+                    appendLine("stableSession=${e.stableSession}")
+                    appendLine("ledgerEntries=${e.transaction?.ledger?.size ?: 0}")
+                    e.transaction?.ledger?.forEach { appendLine("ledger=${it.effect}:${it.commandKind}:${it.stepId}") }
                 }
                 appendLine()
                 appendLine("── nhật ký thao tác (mới nhất ở dưới) ──")
-                val log = com.byd.clusternav.modules.clustercast.v2.CastOperationLog.render()
+                val log = facade.operationLog()
                 appendLine(if (log.isBlank()) "(chưa có thao tác nào trong tiến trình này)" else log)
             }
             runOnUiThread { report.text = value }

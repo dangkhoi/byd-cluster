@@ -1,5 +1,6 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.navigation.ManeuverRegistry
 import android.graphics.Bitmap
 import android.util.Log
 

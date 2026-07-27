@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast.v2
 
+import com.byd.clusternav.testsupport.SourceRoots
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -27,7 +28,7 @@ class CastAndroidRuntimeTest {
 
     @Test
     fun `parser accepts exactly one non-main display and never guesses across displays`() {
-        val known = AndroidObservedStateParser.parse(
+        val known = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(2, "com.example.maps/.MainActivity"),
                 "Display: mDisplayId=2",
@@ -41,7 +42,7 @@ class CastAndroidRuntimeTest {
         assertEquals("com.example.maps", known.value.target!!.packageName)
         assertEquals(2, known.value.target!!.displayId)
 
-        val disputed = AndroidObservedStateParser.parse(
+        val disputed = DumpObservedStateParser.parse(
             RawObservation(
                 "",
                 "Display: mDisplayId=2\nDisplay: mDisplayId=3",
@@ -54,7 +55,7 @@ class CastAndroidRuntimeTest {
 
     @Test
     fun `parser extracts hidden protected residue PIP animation and profile truth`() {
-        val parsed = AndroidObservedStateParser.parse(
+        val parsed = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(
                     2,
@@ -77,7 +78,7 @@ class CastAndroidRuntimeTest {
 
     @Test
     fun `parser rejects ambiguous protected residue incomplete animation and absent target app-ops`() {
-        val twoResidues = AndroidObservedStateParser.parse(
+        val twoResidues = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(
                     2,
@@ -91,7 +92,7 @@ class CastAndroidRuntimeTest {
         )
         assertTrue(twoResidues is ObservationValue.Unknown)
 
-        val incompleteAnimation = AndroidObservedStateParser.parse(
+        val incompleteAnimation = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(2, "com.example.maps/.Main visible=true"),
                 "Display: mDisplayId=2", clusterDisplayDump(2 to "fission"), "10", "1\n1",
@@ -100,7 +101,7 @@ class CastAndroidRuntimeTest {
         )
         assertTrue(incompleteAnimation is ObservationValue.Unknown)
 
-        val unrelatedPip = AndroidObservedStateParser.parse(
+        val unrelatedPip = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(2, "com.example.maps/.Main visible=true"),
                 "Display: mDisplayId=2", clusterDisplayDump(2 to "fission"), "10", "1\n1\n1",
@@ -109,7 +110,7 @@ class CastAndroidRuntimeTest {
         )
         assertTrue(unrelatedPip is ObservationValue.Unknown)
 
-        val staleParent = AndroidObservedStateParser.parse(
+        val staleParent = DumpObservedStateParser.parse(
             RawObservation(
                 "Stack id=1 displayId=2\nSection:\n  taskId=7: com.example.maps/.Main visible=true",
                 "Display: mDisplayId=2", clusterDisplayDump(2 to "fission"), "10", "1\n1\n1",
@@ -121,7 +122,7 @@ class CastAndroidRuntimeTest {
 
     @Test
     fun `parser reports unsupported active profile format instead of inventing identity`() {
-        val parsed = AndroidObservedStateParser.parse(
+        val parsed = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(2, "com.example.maps/.Main visible=true"),
                 "Display: mDisplayId=2", clusterDisplayDump(2 to "fission"), "Current user unavailable", "1\n1\n1",
@@ -140,7 +141,7 @@ class CastAndroidRuntimeTest {
         assertEquals(720, discovered.appHeight)
         assertEquals(180, discovered.densityDpi)
 
-        val parsed = AndroidObservedStateParser.parse(
+        val parsed = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(0, "com.android.launcher3/.Launcher visible=true"),
                 "Display: mDisplayId=0 bounds=[0,0][1920,1080] density=240\n" +
@@ -163,7 +164,7 @@ class CastAndroidRuntimeTest {
             "Fission_bg_xdjaVirtualSurface_0",
         )
         assertEquals("Fission_bg_xdjaVirtualSurface_0", discoverClusterDisplay(suffixDump)?.name)
-        val suffixParsed = AndroidObservedStateParser.parse(
+        val suffixParsed = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(0, "com.android.launcher3/.Launcher visible=true"),
                 "unrelated bounds=[0,0][1,1] density=1", suffixDump, "10", "1.0\n0.5\n1.0", "",
@@ -200,7 +201,7 @@ class CastAndroidRuntimeTest {
               mPhysicalDisplayId=19261206365013889
         """.trimIndent()
 
-        val parsed = AndroidObservedStateParser.parse(
+        val parsed = DumpObservedStateParser.parse(
             RawObservation("", "Display: mDisplayId=0", physicalDisplayOnly, "10", "1\n1\n1", ""),
         )
         assertTrue(parsed is ObservationValue.Unknown)
@@ -208,7 +209,7 @@ class CastAndroidRuntimeTest {
 
         val oneCluster = physicalDisplayOnly + "\n" + clusterDisplayDump(2 to "fission")
         assertEquals(2, discoverClusterDisplayId(oneCluster))
-        val known = AndroidObservedStateParser.parse(
+        val known = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(2, "com.example.maps/.MainActivity"),
                 "Display: mDisplayId=2",
@@ -240,7 +241,7 @@ class CastAndroidRuntimeTest {
 
     @Test
     fun `parser fails closed when display bounds overflow Int`() {
-        val parsed = AndroidObservedStateParser.parse(
+        val parsed = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(2, "com.example.maps/.Main visible=true"),
                 "Display: mDisplayId=2 mBounds=Rect(0, 0 - 19261206365013889, 720) density=180",
@@ -309,7 +310,7 @@ class CastAndroidRuntimeTest {
 
     @Test
     fun `Android V2 gateway owns ephemeral DADB and contains no legacy transport or move-stack`() {
-        val source = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAndroidRuntime.kt")
+        val source = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAdbGateway.kt")
         assertTrue(source.contains("Dadb.create"))
         assertTrue(source.contains("task.get(timeoutMillis"))
         assertTrue(source.contains("TimeoutException"))
@@ -323,14 +324,22 @@ class CastAndroidRuntimeTest {
         assertTrue(source.contains("CastAmStackParser.isKnownCleanDisplay"))
         assertFalse(source.contains("line.contains(\"taskId\""))
         assertFalse(source.contains("newCachedThreadPool"))
-        assertTrue(source.contains("AdbKeys.ensure(context)"))
+        // 2026-07-27: khoá adb được truyền vào transport thay vì transport tự lấy từ Context — nhờ vậy
+        // CLI runner có thể cấp khoá của riêng nó. Hợp đồng cần giữ: transport dùng khoá được cấp, và
+        // không tự biết Android.
+        assertTrue(source.contains("keys()"))
+        assertFalse(source.contains("import android."), "transport phải không có Android")
+        val wiring = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAndroidRuntime.kt")
+        assertTrue(wiring.contains("AdbKeys.ensure(app)"))
         assertFalse(source.contains("DadbBridge"))
         assertFalse(source.contains("modules.clustercast.ClusterCast"))
         assertTrue(source.contains("unsupported, unresolved, or fenced mutation"))
         assertTrue(source.contains("CastPlacementCommands.of("))
         // The in-process DisplayManager fallback keeps placement usable when the dump wording changes.
-        assertTrue(source.contains("measuredCluster = { CastInProcessDisplay.measure(context) }"))
-        assertTrue(source.contains("AndroidObservedStateParser.withFallback { CastInProcessDisplay.measure(app) }"))
+        // Sau khi đảo phụ thuộc, transport nhận hàm đo display thay vì tự gọi DisplayManager.
+        assertTrue(source.contains("measuredCluster = { measureCluster() }"))
+        assertTrue(wiring.contains("CastInProcessDisplay.measure(app)"))
+        assertTrue(wiring.contains("DumpObservedStateParser.withFallback { CastInProcessDisplay.measure(app) }"))
 
         val placement = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastPlacementCommands.kt")
         // The reparent rung exists exactly once and never moves a stack back to display 0.
@@ -338,8 +347,12 @@ class CastAndroidRuntimeTest {
         assertTrue(placement.contains("am display move-stack \$it \$display"))
         assertFalse(placement.contains("move-stack \$it 0"))
         assertTrue(placement.contains("--windowingMode \$FREEFORM_MODE"))
-        assertTrue(placement.contains("force_resizable_activities 0"))
-        assertTrue(placement.contains("appops set \$it PICTURE_IN_PICTURE ignore"))
+        // Measured on the vehicle 2026-07-26: 1 is what allows an activity that declares itself
+        // unresizeable to be placed on a differently sized display. 0 made com.byd.auto_photo
+        // unplaceable while the app reported "does not stick".
+        assertTrue(placement.contains("force_resizable_activities 1"))
+        assertFalse(placement.contains("force_resizable_activities 0"))
+        assertTrue(placement.contains("appops set \$pkg PICTURE_IN_PICTURE ignore"))
         assertTrue(placement.contains("am task resize"))
         assertTrue(placement.contains("am start --display 0"))
         // clear-task exists only on the destructive rung, and never on a session-preserving launch.
@@ -361,7 +374,9 @@ class CastAndroidRuntimeTest {
             fixedSealDl3BootstrapCommand(kind)?.let { kind to it }
         }.toMap())
 
-        val source = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAndroidRuntime.kt")
+        // Bảng opcode đã tách sang :core (CastSealCommands.kt) trong lần refactor 2026-07-27; nội dung
+        // và chữ ký không đổi, chỉ đổi chỗ ở.
+        val source = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastSealCommands.kt")
         assertTrue(source.contains("fixedSealDl3BootstrapCommand(kind: CommandKind)"))
         assertFalse(source.contains("fixedSealDl3BootstrapCommand(kind: CommandKind,"))
         val placement = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastPlacementCommands.kt")
@@ -372,7 +387,7 @@ class CastAndroidRuntimeTest {
 
     @Test
     fun `named display truth and exact Android build facts reach the runtime boundary`() {
-        val parsed = AndroidObservedStateParser.parse(
+        val parsed = DumpObservedStateParser.parse(
             RawObservation(
                 amStack(0, "com.android.launcher3/.Launcher visible=true"),
                 "Display: mDisplayId=2 bounds=[0,0][1920,720] density=180",
@@ -391,7 +406,7 @@ class CastAndroidRuntimeTest {
 
     @Test
     fun `per-call timeout and Stop fence cannot dispatch late mutation or cancel unrelated reads`() {
-        val source = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAndroidRuntime.kt")
+        val source = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAdbGateway.kt")
         val create = source.indexOf("val adb = Dadb.create")
         val postCreateCheck = source.indexOf("if (cancelled())", create)
         val successDispatch = source.indexOf("success(adb, cancelled)", postCreateCheck)
@@ -416,11 +431,7 @@ class CastAndroidRuntimeTest {
         assertTrue(source.contains("result.exitCode != 0 || result.errorOutput.isNotBlank()"))
     }
 
-    private fun source(relative: String): String {
-        val current = Path.of(System.getProperty("user.dir"))
-        val app = if (Files.exists(current.resolve("src"))) current else current.resolve("app")
-        return app.resolve("src").resolve(relative).toFile().readText()
-    }
+    private fun source(relative: String): String = SourceRoots.text("src/$relative")
 
     private fun amStack(displayId: Int, vararg taskBodies: String): String =
         taskBodies.mapIndexed { index, body ->

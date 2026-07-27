@@ -1,14 +1,14 @@
 package com.byd.clusternav.modules.navaccess
 
+import com.byd.clusternav.navigation.NavParse
+import com.byd.clusternav.navigation.TurnDistanceInterpolator
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import com.byd.clusternav.NavParse
 import com.byd.clusternav.Prefs
-import com.byd.clusternav.TurnDistanceInterpolator
 
 /**
  * BOOSTER TẦNG 1 — đọc UI dẫn đường GMaps ĐANG HIỆN trên màn để lấy cự ly tới rẽ CHÍNH XÁC, TƯƠI hơn noti

@@ -10,8 +10,12 @@ class CastDiagnosticsContractTest {
     @Test
     fun `diagnostics reads V2 observation and journal without repair or reset actions`() {
         val diagnostics = source("main/java/com/byd/clusternav/modules/clustercast/DiagActivity.kt")
-        assertTrue(diagnostics.contains("runtime.coordinator.observe()"))
-        assertTrue(diagnostics.contains("runtime.store.locked"))
+        // Từ 2026-07-27 chẩn đoán đọc qua CastFacade thay vì chạm thẳng coordinator/store. Hợp đồng
+        // cần giữ là "chỉ đọc", không phải đường gọi cụ thể.
+        assertTrue(diagnostics.contains("facade.observe()"))
+        // Chẩn đoán đọc envelope qua façade và không còn tự bóc kiểu StoreRead.
+        assertTrue(diagnostics.contains("facade.envelope()"))
+        assertTrue(diagnostics.contains("facade.storeStatusLine()"))
         assertTrue(diagnostics.contains("mode=READ_ONLY"))
         assertFalse(diagnostics.contains("ClusterCast."))
         assertFalse(diagnostics.contains("gateway.execute(CastMutation"))
@@ -29,12 +33,14 @@ class CastDiagnosticsContractTest {
                 assertFalse(bubble.contains(forbidden), "bubble: $forbidden")
             }
         assertTrue(receiver.contains("CastAndroidLifecycle.rehydrate"))
-        assertTrue(bubble.contains("CastRuntimeUi.render"))
+        // 2026-07-27: bubble dựng mô hình qua façade; hợp đồng giữ nguyên là nó chỉ render, không mutate.
+        assertTrue(bubble.contains("facade.renderModel()"))
         assertFalse(bubble.contains("ACTION_STOP"), "0.71 Bubble must not send a duplicate Activity Stop")
         assertTrue(bubble.contains("STOP_MIN_DP = 64"))
-        assertTrue(bubble.contains("runtime.coordinator.requestStop()"))
+        // 2026-07-27: bubble gọi Stop qua CastFacade. Hợp đồng cần giữ là thứ tự latch trước khi phát Stop.
+        assertTrue(bubble.contains("facade.requestStop()"))
         assertTrue(bubble.contains("stopInFlight.compareAndSet(false, true)"))
-        assertTrue(bubble.indexOf("stopInFlight.compareAndSet(false, true)") < bubble.indexOf("runtime.coordinator.requestStop()"))
+        assertTrue(bubble.indexOf("stopInFlight.compareAndSet(false, true)") < bubble.indexOf("facade.requestStop()"))
         assertTrue(bubble.contains("STOP_ACK_DEADLINE_MS = 500L"))
         assertTrue(bubble.contains("contentDescription"))
         assertFalse(bubble.contains("setOnLongClickListener"))

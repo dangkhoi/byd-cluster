@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast.v2
 
+import com.byd.clusternav.testsupport.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -19,7 +20,7 @@ class CastAutomationHostTest {
 
     private fun source(relative: String): String {
         val direct = Paths.get("app/src/$relative")
-        val nested = Paths.get("src/$relative")
+        val nested = SourceRoots.path("src/$relative")
         return (if (Files.exists(direct)) direct else nested).toFile().readText()
     }
 
@@ -95,7 +96,9 @@ class CastAutomationHostTest {
 
     @Test
     fun `host delegates every mutation to the existing manual intent owner`() {
-        assertTrue(service.contains("origin = CastIntentOrigin.BOOT_AUTO"))
+        // 2026-07-27: origin do façade đặt (runBootAutomationIntent) nên service không còn dựng nó.
+        // Hợp đồng cần giữ: mutation vẫn đi qua chủ sở hữu manual-intent, không tự plan/execute.
+        assertTrue(service.contains("runBootAutomationIntent("))
         assertTrue(service.contains("automationRequestId = requestId"))
         assertFalse(service.contains("coordinator.execute"))
         assertFalse(service.contains("coordinator.plan("))

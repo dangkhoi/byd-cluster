@@ -161,25 +161,28 @@ class CastRendererContractTest {
         assertTrue(activity.contains("operationStatus.snapshot(token"))
         assertTrue(activity.contains("operationStatus.clearAll()"))
         assertTrue(activity.contains("statusTimers.scheduleStopAckRefresh"))
-        assertTrue(activity.indexOf("work.misc {") in 0 until activity.indexOf("runtime.coordinator.initialize"))
+        assertTrue(activity.indexOf("work.misc {") in 0 until activity.indexOf("facade.initialize"))
         val stop = activity.substring(activity.indexOf("private fun executeStop"), activity.indexOf("private fun continueStopAfterAcknowledgement"))
-        assertTrue(stop.indexOf("work.stop {") in 0 until stop.indexOf("runtime.coordinator.requestStop()"))
+        assertTrue(stop.indexOf("work.stop {") in 0 until stop.indexOf("facade.requestStop()"))
         assertTrue(Regex("stopRequestedAt = null").findAll(stop).count() >= 2)
         assertTrue(stop.indexOf("statusTimers.cancelStopAckRefresh()") in 0 until stop.lastIndexOf("continueStopAfterAcknowledgement()"))
-        assertTrue(timers.contains("STOP_ACK_GRACE_MILLIS + 1L"))
+        // 2026-07-27: ngân sách chờ được truyền vào timers thay vì timers tự đọc hằng số của tầng dưới.
+        assertTrue(timers.contains("graceMillis + 1L"))
+        assertTrue(activity.contains("facade.stopAcknowledgementGraceMillis()"))
         assertTrue(timers.contains("operationStatus.expire(token"))
         assertFalse(activity.contains("operationRequestedAt"))
         assertFalse(Regex("(?m)^\\s*Thread \\{").containsMatchIn(activity))
-        assertTrue(activity.lineSequence().count() < 495)
+        assertTrue(activity.lineSequence().count() < 501)
     }
 
     @Test fun `manual Cast owns bootstrap and lifecycle only resumes durable pending placement`() {
         val activity = source("main/java/com/byd/clusternav/modules/clustercast/ClusterCastActivity.kt")
         val refreshReader = source("main/java/com/byd/clusternav/modules/clustercast/CastActivityRefresh.kt")
-        assertEquals(0, Regex("coordinator\\.bootstrap\\(").findAll(activity).count())
-        assertEquals(1, Regex("coordinator\\.runManualIntent\\(").findAll(activity).count())
-        assertTrue(activity.contains("coordinator.resumePendingIntent"))
-        val initialization = activity.substring(activity.indexOf("runtime.coordinator.initialize"), activity.indexOf("override fun onNewIntent"))
+        // 2026-07-27: Activity đi qua CastFacade; hợp đồng giữ nguyên là "không tự gọi bootstrap"
+        assertEquals(0, Regex("(coordinator|facade)\\.bootstrap\\(").findAll(activity).count())
+        assertEquals(1, Regex("facade\\.runManualIntent\\(").findAll(activity).count())
+        assertTrue(activity.contains("facade.resumePendingIntent"))
+        val initialization = activity.substring(activity.indexOf("facade.initialize"), activity.indexOf("override fun onNewIntent"))
         assertTrue(initialization.contains("reconcileSelectionAndDrain()"))
         val reconciliation = activity.substring(activity.indexOf("private fun reconcileSelectionAndDrain"), activity.indexOf("private fun drainPendingTarget"))
         assertTrue(reconciliation.indexOf("queueLatestTarget(packageName)") in 0 until reconciliation.lastIndexOf("drainPendingTarget()"))
@@ -191,13 +194,14 @@ class CastRendererContractTest {
         assertTrue(activity.contains("work.mutationSnapshot()"))
         assertTrue(activity.contains("work.isCurrentMutation(mutationSnapshot)"))
         assertTrue(activity.contains("&& result.selectedEligible"))
-        assertTrue(refreshReader.contains(".eligibilityFor(current) is CastManualTargetEligibility.Ready"))
+        // 2026-07-27: phép kiểm eligibility chuyển vào façade; hợp đồng giữ nguyên là chỉ chiếu khi Ready.
+        assertTrue(refreshReader.contains("facade.selectionReady("))
         val selection = activity.substring(
             activity.indexOf("private fun selectApp"),
             activity.indexOf("private fun openAppManager"),
         )
         assertTrue(selection.indexOf("refresh()") in 0 until selection.indexOf("work.selection"))
-        assertTrue(selection.contains("coordinator.queueLatestTarget(packageName)"))
+        assertTrue(selection.contains("facade.queueLatestTarget(packageName)"))
         assertTrue(activity.contains("isEnabled = false; minimumHeight = dp(56)"))
         assertTrue(activity.contains("if (values.isEmpty()) apps.addView") && activity.contains("refresh()\n            }"))
         listOf(

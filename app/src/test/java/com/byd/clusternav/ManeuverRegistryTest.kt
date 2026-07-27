@@ -1,5 +1,6 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.navigation.ManeuverRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test

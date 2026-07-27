@@ -13,19 +13,22 @@ import com.byd.clusternav.modules.clustercast.v2.CastManualIntentResult
  */
 object CastRetryPrompt {
 
-    /** True when the gentle ladder finished without placing the target on the cluster. */
+    /**
+     * True when the gentle ladder finished without placing the target on the cluster.
+     *
+     * The caller must additionally confirm with a fresh observation that the target really is not the
+     * cluster occupant: on the vehicle 2026-07-26 this prompt appeared during a cast that then
+     * succeeded, because the intent result was decided before the placement was observable.
+     */
     fun escalatable(result: CastManualIntentResult, protectedTarget: Boolean): Boolean =
         !protectedTarget && (result is CastManualIntentResult.Blocked || result is CastManualIntentResult.RecoveryRequired)
 
     fun show(context: Context, label: String, onEscalate: () -> Unit) {
         AlertDialog.Builder(context)
             .setTitle("Chưa lên được cụm")
-            .setMessage(
-                "Đã thử giữ phiên: mở lại trên cụm, chuyển stack sang cụm, ép vẽ lại và co khung — " +
-                    "\"$label\" vẫn không bám cụm.\n\n" +
-                    "Bước tiếp theo phải TẮT app rồi mở lại trên cụm. Bạn sẽ MẤT phiên đang chạy " +
-                    "(tuyến đang dẫn, nội dung đang phát). Với CarPlay/Android Auto bước này luôn bị chặn."
-            )
+            // One short sentence: the long transcript of attempted rungs belongs in Chẩn đoán, not in
+            // a dialog the driver has to read. Only the cost of the next step matters here.
+            .setMessage("\"$label\" không bám cụm. Tắt app rồi chiếu lại sẽ mất phiên đang chạy.")
             .setNegativeButton("Để nguyên", null)
             .setPositiveButton("Tắt app và chiếu lại") { _, _ -> onEscalate() }
             .show()

@@ -1,5 +1,6 @@
 package com.byd.clusternav.navigation
 
+import com.byd.clusternav.testsupport.SourceRoots
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -41,7 +42,7 @@ class NavigationOutputIsolationTest {
     }
 
     @Test fun `Navigation Stage 2 sources have no Cast import legacy wiring or adapter mutual call`() {
-        val sourceRoot = Path.of("src/main/java/com/byd/clusternav/navigation")
+        val sourceRoot = SourceRoots.path("src/main/java/com/byd/clusternav/navigation")
         val files = listOf(
             "NavigationModels.kt",
             "NavigationFrameStore.kt",
