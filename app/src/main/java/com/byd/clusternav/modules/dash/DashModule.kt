@@ -16,7 +16,7 @@ import com.byd.clusternav.modules.hal.BydHal
  * Đây là tính năng MỚI từ phiên test xe: áp suất 4 lốp, tốc độ, số, EPB, nhiệt ngoài, pin còn.
  * (OEM-map-bị-cắt không đụng tới được phần đọc HAL này.)
  *
- * XOÁ: xoá modules/dash/ + dòng ModuleRegistry. (Dùng chung BydHal với vdmap — đừng xoá modules/hal/.)
+ * XOÁ: xoá modules/dash/ + dòng ModuleRegistry. (Dùng chung BydHal — đừng xoá modules/hal/BydHal.)
  */
 object DashModule : ClusterModule {
     override val title = "Bảng dữ liệu xe (live)"

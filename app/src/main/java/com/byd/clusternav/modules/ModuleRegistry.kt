@@ -5,7 +5,6 @@ import com.byd.clusternav.modules.navaccess.NavAccessibilityModule
 import com.byd.clusternav.modules.navaudiocue.AudioCueModule
 import com.byd.clusternav.modules.navrealtime.NavRealtimeModule
 import com.byd.clusternav.modules.navremoteviews.RemoteViewsModule
-import com.byd.clusternav.modules.vdmap.VdMapModule
 
 /**
  * Nguồn sự thật DUY NHẤT về module nào tồn tại. MỘT dòng / module.
@@ -13,7 +12,6 @@ import com.byd.clusternav.modules.vdmap.VdMapModule
  *
  * Đã DỌN (keep/kill, đã chứng minh trên xe): xoá dadbnav/inprochal/mapmode — ghi cụm in-proc/dadb trả rc=0
  * nhưng KHÔNG render (cụm chỉ vẽ qua AmapService/broadcast). GIỮ: tpms/vehicle (đọc HAL in-proc CHẠY THẬT),
- * vdmap (map màn giữa, đang nâng cấp bằng dadb shell-fallback). Lõi nav broadcast nằm ngoài modules/.
  */
 object ModuleRegistry {
     val MODULES: List<ClusterModule> = listOf(
@@ -22,6 +20,5 @@ object ModuleRegistry {
         RemoteViewsModule,  // vắt field ẩn trong RemoteViews noti GMaps (lever chưa khai thác)
         AudioCueModule,     // bắt xung audio dẫn đường (usage=12) — phần audio ăn được no-root
         DashModule,         // bảng dữ liệu xe LIVE (TPMS 4 lốp + tốc độ/gear/nhiệt/pin) — đọc HAL no-root
-        VdMapModule,        // chiếu map thật lên màn giữa (VirtualDisplay) — cần dadb shell-fallback
     )
 }

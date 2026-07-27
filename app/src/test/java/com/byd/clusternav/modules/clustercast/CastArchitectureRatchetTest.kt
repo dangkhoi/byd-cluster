@@ -44,10 +44,10 @@ class CastArchitectureRatchetTest {
      * nguyên bằng API `session` vì `NavConnect` ngủ 1.5 giây giữa hai lệnh trên cùng phiên — đổi thành hai
      * phiên rời là đổi hành vi của một đường tự-chữa vốn mong manh.
      *
-     * 9 → 8 cùng ngày: `DadbBridge` giữ phiên lâu dài nên không vừa helper phiên-ngắn, nhưng chỗ đúng của
-     * nó vẫn là module transport — chỉ cần một API khác. Phần nói với thiết bị thành
-     * `PersistentDeviceShell` trong `:car-integration` (nhận khoá đã giải + khe ghi chú, đúng khuôn Q1b);
-     * phía `:app` còn lại một adapter mỏng cắm `AdbKeys` và `android.util.Log` vào.
+     * 9 → 8 cùng ngày: `DadbBridge` giữ phiên lâu dài nên được đưa sang `:car-integration` thành
+     * `PersistentDeviceShell`. Rồi cuối ngày cả chuỗi đó bị XOÁ: người dùng duy nhất của nó là module
+     * `vd_map`, và `vd_map` bị bỏ khi Cluster Cast đã chiếu được. Giữ lại một transport không ai gọi chỉ
+     * là nợ chờ mục.
      *
      * 8 còn lại đều trong `ClusterCast.kt` — engine V1 cũ, chỉ xoá được sau khi V2 chạy được trên xe.
      */

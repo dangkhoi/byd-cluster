@@ -87,16 +87,6 @@
                 android:value="cluster_cast_boot_automation" />
         </service>
 
-        <!-- MODULE vdmap (ngoại lệ: cần Activity riêng). Xoá module vdmap → xoá luôn dòng này. -->
-        <activity
-            android:name=".modules.vdmap.VdMapActivity"
-            android:exported="false"
-            android:launchMode="singleTop"
-            android:screenOrientation="landscape"
-            android:resizeableActivity="true"
-            android:configChanges="orientation|screenSize|screenLayout|density|smallestScreenSize|keyboardHidden"
-            android:theme="@style/ClusterTheme" />
-
         <!-- Lắng nghe notification dẫn đường -->
         <service
             android:name=".NavNotificationListener"
