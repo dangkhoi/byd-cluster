@@ -80,7 +80,22 @@ object CastPlanner {
                     TargetClass.PROJECTION_SINK, TargetClass.KEEP_SESSION -> add(
                         PlannedStep("return-protected", CommandKind.RETURN_PROTECTED_GENTLY, "protected session must be preserved")
                     )
-                    TargetClass.UNKNOWN_PROTECTED -> Unit
+                    // Trước 2026-07-27 nhánh này KHÔNG trả task về, vì không biết target có phải phiên
+                    // được bảo vệ nên sợ làm sai. Nhưng không làm gì lại tạo trạng thái tệ hơn: chiếu
+                    // đóng nên cụm về đồng hồ, mà task vẫn nằm trên display 1 → app không hiện ở cả hai
+                    // màn. Đo trực tiếp trên xe chiều 27/7: chủ xe nói "đồng hồ, và vietmap cũng ko ở màn
+                    // chính luôn, đi đâu mất tiêu rồi".
+                    //
+                    // Trả về KIỂU NHẸ là hành động ít rủi ro nhất: `am start --display 0` chỉ đưa task
+                    // sẵn có lên trước, không đổi windowing mode, không force-stop. Đã kiểm chính lệnh
+                    // này trên xe ngay sau đó và app hiện lại ở màn giữa.
+                    TargetClass.UNKNOWN_PROTECTED -> add(
+                        PlannedStep(
+                            "return-unknown-gently",
+                            CommandKind.RETURN_PROTECTED_GENTLY,
+                            "target policy unknown, so return gently rather than orphan the task",
+                        )
+                    )
                 }
                 add(PlannedStep("restore-pip", CommandKind.RESTORE_PIP, "baseline app-op mode is journaled"))
                 add(PlannedStep(

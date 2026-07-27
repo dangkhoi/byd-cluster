@@ -32,6 +32,27 @@ class RealFixtureParsingTest {
     }
 
     @Test
+    fun `khong the phan biet cum dang hien app hay dong ho bang dumpsys display`() {
+        // Q1, trả lời ngày 2026-07-27 19:38–19:40 với NGƯỜI XÁC NHẬN cả hai đầu:
+        //   19:38 chủ xe: "vietmap lên ok nhé"  → cụm hiện app
+        //   19:40 chủ xe: "đồng hồ"             → cụm hiện đồng hồ
+        // Giữa hai lần chụp, task 40 nằm y nguyên trên display 1 với visible=true; biến duy nhất thay
+        // đổi là chiếu OEM (18,0 rồi thôi). Hai bản dumpsys display GIỐNG NHAU ĐẾN TỪNG BYTE.
+        //
+        // Bài kiểm này ghim sự thật đó để không ai về sau dựng một tuyên bố "đã xác minh đang chiếu"
+        // trên tín hiệu này. Muốn biết cụm hiện gì thì phải có nguồn khác — hiện chưa có nguồn nào.
+        // Bỏ mọi giá trị thời gian trôi. KHÔNG bỏ số khác: nếu numLayers, layerStack, kích thước hay
+        // cờ display đổi theo chiếu thì đó chính là observable đang tìm, và bài kiểm này phải đổ.
+        val elapsed = Regex("""\(\d+ ms ago\)""")
+        val showsApp = elapsed.replace(fixture("dumpsys-display-HUMAN-CONFIRMED-shows-app.txt"), "(T)")
+        val showsGauges = elapsed.replace(fixture("dumpsys-display-HUMAN-CONFIRMED-shows-gauges.txt"), "(T)")
+        assertEquals(
+            showsApp, showsGauges,
+            "nếu hai bản này khác nhau thì ĐÃ TÌM RA observable cho Q1 — cập nhật spec và bỏ bài kiểm này",
+        )
+    }
+
+    @Test
     fun `stack list luc cum bi chiem doc ra dung occupant`() {
         val raw = fixture("am-stack-list-occupied.txt")
         val parsed = CastAmStackParser.parse(raw)

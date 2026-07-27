@@ -123,6 +123,43 @@ class CastPlannerManifestTest {
     }
 
     @Test
+    fun `Stop khong bao gio de app thanh mo coi, ke ca khi chua ro chinh sach target`() {
+        // Đo trực tiếp trên xe 2026-07-27: gửi 18,0 mà không trả task về display 0 thì cụm về đồng hồ
+        // NHƯNG app cũng không hiện ở màn giữa — chủ xe nói "đồng hồ, và vietmap cũng ko ở màn chính
+        // luôn, đi đâu mất tiêu rồi". Nhánh UNKNOWN_PROTECTED trước đây không có bước trả về nào, nên
+        // Stop tự tạo ra đúng trạng thái đó. Bài kiểm quét MỌI lớp target để không lớp nào lọt.
+        val target = CastTarget("com.example.maps", 7, 2)
+        val state = ObservedState(
+            ObservedCoarseState.ACTIVE_SINGLE, "display-2", target,
+            setOf(target.packageName), null,
+            AcceptedGeometry(CastRect(0, 0, 1920, 720), 160, "android-user-0"),
+        )
+        val stable = StableCastSession(
+            StableState.ACTIVE_VERIFIED, EngineVersion.V2, "test", null, "display-2",
+            CastBaseline(geometry = state.geometry), target, null, state.geometry, 1,
+        )
+        val returns = setOf(CommandKind.RETURN_NORMAL_TO_MAIN, CommandKind.RETURN_PROTECTED_GENTLY)
+        TargetClass.entries.forEach { targetClass ->
+            val result = CastPlanner.plan(
+                CastIntent(CastIntentKind.STOP, target.packageName),
+                PlannerSnapshot(ObservationValue.Known(state), stable, targetClass, true, true, 4),
+            )
+            val ready = result as? PlanResult.Ready ?: return@forEach
+            val kinds = ready.plan.steps.map { it.commandKind }
+            val closes = CommandKind.SEAL_DL3_COMPENSATE_18 in kinds
+            if (!closes) return@forEach
+            assertTrue(
+                kinds.any { it in returns },
+                "$targetClass: Stop đóng chiếu mà không trả task về màn giữa → app mồ côi",
+            )
+            assertTrue(
+                kinds.indexOfFirst { it in returns } < kinds.indexOf(CommandKind.SEAL_DL3_COMPENSATE_18),
+                "$targetClass: phải trả task về TRƯỚC khi đóng chiếu",
+            )
+        }
+    }
+
+    @Test
     fun `Stop plans target return followed by independently guarded display reset`() {
         val target = CastTarget("com.example.maps", 7, 2)
         val state = ObservedState(
