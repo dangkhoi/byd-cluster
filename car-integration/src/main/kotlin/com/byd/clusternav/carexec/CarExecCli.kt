@@ -1,7 +1,7 @@
 package com.byd.clusternav.carexec
 
 import com.byd.clusternav.modules.clustercast.v2.DumpObservedStateParser
-import com.byd.clusternav.modules.clustercast.v2.CastAdbGateway
+import com.byd.clusternav.cast.transport.CastAdbGateway
 import com.byd.clusternav.modules.clustercast.v2.ObservationValue
 import com.byd.clusternav.modules.clustercast.v2.ObservedStateReader
 import dadb.AdbKeyPair

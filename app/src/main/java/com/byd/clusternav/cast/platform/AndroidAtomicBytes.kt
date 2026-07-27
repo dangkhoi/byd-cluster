@@ -1,4 +1,6 @@
-package com.byd.clusternav.modules.clustercast.v2
+package com.byd.clusternav.cast.platform
+
+import com.byd.clusternav.modules.clustercast.v2.*
 
 import android.util.AtomicFile
 import java.io.File

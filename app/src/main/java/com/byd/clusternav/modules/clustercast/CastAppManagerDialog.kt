@@ -18,7 +18,7 @@ import com.byd.clusternav.modules.clustercast.v2.AppProtectionSource
 import com.byd.clusternav.modules.clustercast.v2.AppRowAction
 import com.byd.clusternav.modules.clustercast.v2.AppUnavailableReason
 import com.byd.clusternav.modules.clustercast.v2.AutomationDisposition
-import com.byd.clusternav.modules.clustercast.v2.CastAppEntry
+import com.byd.clusternav.cast.platform.CastAppEntry
 import com.byd.clusternav.modules.clustercast.v2.CastAppPresentation
 import com.byd.clusternav.modules.clustercast.v2.CastAppRow
 

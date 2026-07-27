@@ -1,8 +1,8 @@
 package com.byd.clusternav.modules.clustercast
 
 import com.byd.clusternav.modules.clustercast.v2.CastAction
-import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
-import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
+import com.byd.clusternav.cast.platform.CastAndroidRuntime
+import com.byd.clusternav.cast.platform.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.CastRenderModel
 import com.byd.clusternav.modules.clustercast.v2.StableState
 import java.time.Instant

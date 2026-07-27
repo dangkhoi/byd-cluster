@@ -24,10 +24,10 @@ import com.byd.clusternav.R
 import com.byd.clusternav.modules.clustercast.v2.BubbleFocusTarget
 import com.byd.clusternav.modules.clustercast.v2.BubbleProjection
 import com.byd.clusternav.modules.clustercast.v2.BubbleStopControl
-import com.byd.clusternav.modules.clustercast.v2.CastAndroidLifecycle
-import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
-import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
-import com.byd.clusternav.modules.clustercast.v2.CastAppEntry
+import com.byd.clusternav.cast.platform.CastAndroidLifecycle
+import com.byd.clusternav.cast.platform.CastAndroidRuntime
+import com.byd.clusternav.cast.platform.CastAppCatalog
+import com.byd.clusternav.cast.platform.CastAppEntry
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 

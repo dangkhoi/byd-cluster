@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast
 
+import com.byd.clusternav.cast.platform.CastAndroidLifecycle
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -23,7 +24,7 @@ class CastArchitectureRatchetTest {
      * Số kiểu của tầng dưới mà UI còn import trực tiếp. Façade chỉ chặn được lời gọi; chừng nào con số
      * này còn lớn thì UI vẫn buộc chặt vào hình dạng bên trong.
      */
-    private val uiTypeCoupling = 30
+    private val uiTypeCoupling = 26
 
     /**
      * Số kiểu **của tầng dưới** (`:core` / `:car-integration`) mà UI còn import trực tiếp.
@@ -57,7 +58,7 @@ class CastArchitectureRatchetTest {
         uiRoots().forEach { root ->
             Files.walk(root).use { paths ->
                 paths.filter { Files.isRegularFile(it) && it.toString().endsWith(".kt") }
-                    .filter { !it.toString().contains("/modules/clustercast/v2/") }
+                    .filter { !NON_UI.any { part -> it.toString().contains(part) } }
                     .filter { it.fileName.toString() != "CastFacade.kt" }
                     .forEach { file ->
                         IMPORT.findAll(file.toFile().readText()).forEach { types += it.groupValues[1] }
@@ -78,7 +79,7 @@ class CastArchitectureRatchetTest {
         uiRoots().forEach { root ->
             Files.walk(root).use { paths ->
                 paths.filter { Files.isRegularFile(it) && it.toString().endsWith(".kt") }
-                    .filter { !it.toString().contains("/modules/clustercast/v2/") }
+                    .filter { !NON_UI.any { part -> it.toString().contains(part) } }
                     .filter { it.fileName.toString() != "CastFacade.kt" }
                     .forEach { file ->
                         IMPORT.findAll(file.toFile().readText()).forEach { match ->
@@ -156,6 +157,9 @@ class CastArchitectureRatchetTest {
         listOf("app/src/main/java", "../app/src/main/java").map(Paths::get).filter(Files::exists)
 
     private companion object {
+        /** Không phải UI: package của tầng dưới và của lớp nền tảng vừa tách theo module. */
+        val NON_UI = listOf("/modules/clustercast/v2/", "/cast/platform/", "/cast/transport/")
+
         val IMPORT = Regex("""import com\.byd\.clusternav\.modules\.clustercast\.v2\.([A-Za-z0-9_]+)""")
         val DADB = Regex("""\bDadb\.create\(""")
         val DECLARATION = Regex(

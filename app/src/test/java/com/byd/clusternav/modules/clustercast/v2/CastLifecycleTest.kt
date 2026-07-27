@@ -1,5 +1,7 @@
 package com.byd.clusternav.modules.clustercast.v2
 
+import com.byd.clusternav.cast.platform.CastAndroidLifecycle
+import com.byd.clusternav.cast.platform.CastLifecycleMigration
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -91,7 +93,7 @@ class CastLifecycleTest {
 
     @Test
     fun `V2 app catalog migrates legacy preferences without deleting rollback data`() {
-        val catalog = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAppCatalog.kt")
+        val catalog = source("main/java/com/byd/clusternav/cast/platform/CastAppCatalog.kt")
         val activity = source("main/java/com/byd/clusternav/modules/clustercast/ClusterCastActivity.kt")
         assertTrue(catalog.contains("migrationVersion"))
         assertTrue(catalog.contains("getSharedPreferences(\"clustercast\""))

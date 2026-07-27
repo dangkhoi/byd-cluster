@@ -9,9 +9,9 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.byd.clusternav.R
 import com.byd.clusternav.modules.clustercast.v2.CastAction
-import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
-import com.byd.clusternav.modules.clustercast.v2.CastAndroidLifecycle
-import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
+import com.byd.clusternav.cast.platform.CastAppCatalog
+import com.byd.clusternav.cast.platform.CastAndroidLifecycle
+import com.byd.clusternav.cast.platform.CastAndroidRuntime
 import com.byd.clusternav.modules.clustercast.v2.CastManualIntentResult
 import com.byd.clusternav.modules.clustercast.v2.EngineVersion
 import com.byd.clusternav.modules.clustercast.v2.CastIntent

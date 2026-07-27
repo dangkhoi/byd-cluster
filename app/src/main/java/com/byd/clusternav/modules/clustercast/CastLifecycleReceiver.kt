@@ -7,7 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import android.util.Log
-import com.byd.clusternav.modules.clustercast.v2.CastAndroidLifecycle
+import com.byd.clusternav.cast.platform.CastAndroidLifecycle
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Cast-owned same-boot revalidation trigger. It observes durable truth and never emits mutation. */

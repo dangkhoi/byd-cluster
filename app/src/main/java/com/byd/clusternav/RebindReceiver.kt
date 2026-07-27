@@ -62,7 +62,7 @@ class RebindReceiver : BroadcastReceiver() {
             try {
                 val app = context.applicationContext
                 runCatching {
-                    val result = com.byd.clusternav.modules.clustercast.v2.CastAndroidLifecycle.rehydrate(app)
+                    val result = com.byd.clusternav.cast.platform.CastAndroidLifecycle.rehydrate(app)
                     Log.i(TAG, "Cast V2 lifecycle: $result")
                 }.onFailure { Log.e(TAG, "Cast rehydrate failed", it) }
                 runCatching { startOptedInBubble(app) }.onFailure { Log.e(TAG, "bubble restore failed", it) }
@@ -81,7 +81,7 @@ class RebindReceiver : BroadcastReceiver() {
     /** Presentation-only restore of an explicitly opted-in Bubble; it never dispatches Cast work. */
     private fun startOptedInBubble(app: Context) {
         val optedIn = runCatching {
-            com.byd.clusternav.modules.clustercast.v2.CastAppCatalog(app).bubbleEnabled()
+            com.byd.clusternav.cast.platform.CastAppCatalog(app).bubbleEnabled()
         }.getOrDefault(false)
         if (!optedIn || !android.provider.Settings.canDrawOverlays(app)) return
         runCatching {

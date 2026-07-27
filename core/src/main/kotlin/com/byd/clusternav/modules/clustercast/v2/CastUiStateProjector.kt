@@ -59,7 +59,12 @@ object CastUiStateProjector {
         if (recovery != null) return recoveryRows[recovery]?.let { recovery(input, recovery, it) } ?: failClosed(input)
         if (input.stopRequested) return state(
             input, CoarseState.STOP_REQUESTED, null, OperationPhase.STOP_REQUESTED, null,
-            StopDisposition(StopDispositionKind.REQUESTED), NextSafeAction.WAIT_AND_OBSERVE, emptySet(),
+            StopDisposition(StopDispositionKind.REQUESTED), NextSafeAction.WAIT_AND_OBSERVE,
+            // Đã yêu cầu Stop mà chưa có recovery substate: trước 2026-07-27 nhánh này trả emptySet(),
+            // nghĩa là màn hình không còn hành động nào trong lúc chờ. Quét vét cạn R14 bắt được đúng ca
+            // này. Giữ hai hành động chỉ-đọc: Chẩn đoán để biết vì sao, và thử kết nối lại để cứu chính
+            // cái kênh đang được chờ. Stop vẫn bị chặn bởi disposition REQUESTED nên không phát trùng.
+            setOf(CastAction.OPEN_DIAGNOSTICS, CastAction.RETRY_CONNECT),
         )
         input.transaction?.let { tx ->
             if (!validDisposition(tx.stopDisposition) ||

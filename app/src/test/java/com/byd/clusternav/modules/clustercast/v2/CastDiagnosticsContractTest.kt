@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast.v2
 
+import com.byd.clusternav.cast.platform.CastAndroidLifecycle
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -49,7 +50,7 @@ class CastDiagnosticsContractTest {
 
     @Test
     fun `Android Cast surfaces share one process owner and never close it independently`() {
-        val runtime = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAndroidRuntime.kt")
+        val runtime = source("main/java/com/byd/clusternav/cast/platform/CastAndroidRuntime.kt")
         val activity = source("main/java/com/byd/clusternav/modules/clustercast/ClusterCastActivity.kt")
         val bubble = source("main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt")
         val manifest = source("main/AndroidManifest.xml")

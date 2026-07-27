@@ -17,8 +17,8 @@ import com.byd.clusternav.R
 import com.byd.clusternav.modules.clustercast.v2.AutomationReason
 import com.byd.clusternav.modules.clustercast.v2.AutomationRequestState
 import com.byd.clusternav.modules.clustercast.v2.BootAutomationRequest
-import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
-import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
+import com.byd.clusternav.cast.platform.CastAndroidRuntime
+import com.byd.clusternav.cast.platform.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.CastAutomationSettings
 import com.byd.clusternav.modules.clustercast.v2.CastManualIntentResult
 import java.util.UUID

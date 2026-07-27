@@ -310,7 +310,7 @@ class CastAndroidRuntimeTest {
 
     @Test
     fun `Android V2 gateway owns ephemeral DADB and contains no legacy transport or move-stack`() {
-        val source = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAdbGateway.kt")
+        val source = source("main/java/com/byd/clusternav/cast/transport/CastAdbGateway.kt")
         assertTrue(source.contains("Dadb.create"))
         assertTrue(source.contains("task.get(timeoutMillis"))
         assertTrue(source.contains("TimeoutException"))
@@ -329,7 +329,7 @@ class CastAndroidRuntimeTest {
         // không tự biết Android.
         assertTrue(source.contains("keys()"))
         assertFalse(source.contains("import android."), "transport phải không có Android")
-        val wiring = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAndroidRuntime.kt")
+        val wiring = source("main/java/com/byd/clusternav/cast/platform/CastAndroidRuntime.kt")
         assertTrue(wiring.contains("AdbKeys.ensure(app)"))
         assertFalse(source.contains("DadbBridge"))
         assertFalse(source.contains("modules.clustercast.ClusterCast"))
@@ -341,7 +341,7 @@ class CastAndroidRuntimeTest {
         assertTrue(wiring.contains("CastInProcessDisplay.measure(app)"))
         assertTrue(wiring.contains("DumpObservedStateParser.withFallback { CastInProcessDisplay.measure(app) }"))
 
-        val placement = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastPlacementCommands.kt")
+        val placement = source("main/java/com/byd/clusternav/cast/transport/CastPlacementCommands.kt")
         // The reparent rung exists exactly once and never moves a stack back to display 0.
         assertEquals(1, Regex("am display move-stack").findAll(placement).count())
         assertTrue(placement.contains("am display move-stack \$it \$display"))
@@ -379,7 +379,7 @@ class CastAndroidRuntimeTest {
         val source = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastSealCommands.kt")
         assertTrue(source.contains("fixedSealDl3BootstrapCommand(kind: CommandKind)"))
         assertFalse(source.contains("fixedSealDl3BootstrapCommand(kind: CommandKind,"))
-        val placement = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastPlacementCommands.kt")
+        val placement = source("main/java/com/byd/clusternav/cast/transport/CastPlacementCommands.kt")
         val fixedRoute = placement.indexOf("fixedSealDl3BootstrapCommand(request.kind)?.let { return it }")
         val discovery = placement.indexOf("val display = discoverCastDisplay(adb, cancelled)", fixedRoute)
         assertTrue(fixedRoute >= 0 && discovery > fixedRoute)
@@ -397,7 +397,7 @@ class CastAndroidRuntimeTest {
         assertEquals("display-2", parsed.value.displayIdentity)
         assertEquals("xdja", parsed.value.displayName)
 
-        val source = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAndroidRuntime.kt")
+        val source = source("main/java/com/byd/clusternav/cast/platform/CastAndroidRuntime.kt")
         listOf(
             "Build.VERSION.SDK_INT", "Build.MANUFACTURER", "Build.BRAND",
             "Build.PRODUCT, Build.DEVICE, Build.PRODUCT",
@@ -406,7 +406,7 @@ class CastAndroidRuntimeTest {
 
     @Test
     fun `per-call timeout and Stop fence cannot dispatch late mutation or cancel unrelated reads`() {
-        val source = source("main/java/com/byd/clusternav/modules/clustercast/v2/CastAdbGateway.kt")
+        val source = source("main/java/com/byd/clusternav/cast/transport/CastAdbGateway.kt")
         val create = source.indexOf("val adb = Dadb.create")
         val postCreateCheck = source.indexOf("if (cancelled())", create)
         val successDispatch = source.indexOf("success(adb, cancelled)", postCreateCheck)

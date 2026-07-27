@@ -18,6 +18,10 @@ class TwoPipelineStaticBoundaryTest {
         }
     }
 
+    /** Không phải "consumer": chính tầng dưới và lớp nền tảng đã tách theo module. */
+    private val NON_CORE_CONSUMER =
+        listOf("/modules/clustercast/v2/", "/cast/platform/", "/cast/transport/")
+
     @Test
     fun `Navigation contracts have no Cast control import`() {
         kotlinFiles("src/main/java/com/byd/clusternav/navigation").forEach { file ->
@@ -31,7 +35,7 @@ class TwoPipelineStaticBoundaryTest {
         val root = projectPath("src/main/java")
         val consumers = Files.walk(root).use { paths ->
             paths.filter { Files.isRegularFile(it) && it.toString().endsWith(".kt") }
-                .filter { !it.toString().contains("/modules/clustercast/v2/") }
+                .filter { part -> NON_CORE_CONSUMER.none { part.toString().contains(it) } }
                 .filter { it.toFile().readText().contains("com.byd.clusternav.modules.clustercast.v2") }
                 .toList()
         }
@@ -39,8 +43,8 @@ class TwoPipelineStaticBoundaryTest {
             "ClusterCastActivity.kt", "CastOperationStatus.kt", "CastActivityRefresh.kt",
             "CastAdjustmentDialog.kt", "CastAppManagerDialog.kt",
             "CastAppManagerBinding.kt", "CastAutomationService.kt", "CastRetryPrompt.kt",
-            "CastBubbleControl.kt", "CastFacade.kt",
-            "CastLifecycleReceiver.kt", "FloatingBubbleService.kt", "DiagActivity.kt", "RebindReceiver.kt",
+            "CastFacade.kt",
+            "FloatingBubbleService.kt",
         )
         assertTrue(consumers.map { it.fileName.toString() }.toSet() == expected, "unexpected V2 consumers: $consumers")
         val activity = consumers.single { it.fileName.toString() == "ClusterCastActivity.kt" }.toFile().readText()

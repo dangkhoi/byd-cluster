@@ -16,9 +16,9 @@ class CastAdbGatewayContractTest {
 
     private val source: String by lazy {
         listOf(
-            "car-integration/src/main/kotlin/com/byd/clusternav/modules/clustercast/v2/CastAdbGateway.kt",
-            "src/main/kotlin/com/byd/clusternav/modules/clustercast/v2/CastAdbGateway.kt",
-            "../car-integration/src/main/kotlin/com/byd/clusternav/modules/clustercast/v2/CastAdbGateway.kt",
+            "car-integration/src/main/kotlin/com/byd/clusternav/cast/transport/CastAdbGateway.kt",
+            "src/main/kotlin/com/byd/clusternav/cast/transport/CastAdbGateway.kt",
+            "../car-integration/src/main/kotlin/com/byd/clusternav/cast/transport/CastAdbGateway.kt",
         ).map(Paths::get).first(Files::exists).toFile().readText()
     }
 

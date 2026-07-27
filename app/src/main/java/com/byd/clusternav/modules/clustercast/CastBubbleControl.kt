@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
+import com.byd.clusternav.cast.platform.CastAppCatalog
 
 /**
  * Single owner of the floating-bubble opt-in so the Cluster Cast screen toggle and the app-manager
