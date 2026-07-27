@@ -60,6 +60,20 @@ Bước 1 chạy step `capture-state` bốn lần (đó là cách nó chụp b�
 - Máy phải nổ trong phiên dài: 26/7 mất cả phiên vì ACC standby.
 - Phiên trên xe **chỉ đo và ghi**. Không sửa code rồi cài trong phiên.
 
+## Bản dựng mang ra xe mai
+
+```
+ClusterNav-0.72-vehicle-test-56b676e20567-release.apk
+sha256 f44ef7ed25f34378921850d250dc295775e94de8eea2d22a2923a43ec1925317
+```
+
+Đã kiểm off-car: DEX **không còn** vdmap/DadbBridge/PersistentDeviceShell/deadreckon, **có**
+NavScreenScan/SpeedReading/ClusterAttestation; Manifest không còn VdMapActivity; E2E emulator 18/18.
+
+Lưu ý: bản này **chưa sửa** điều kiện phát `30,16,35` — cố ý, vì luật đúng phụ thuộc kết quả
+`reissue-policy`. Nên đừng kỳ vọng bấm Chiếu trong app là cụm lên; phần chiếu hôm nay vẫn chạy bằng
+shell qua `carexec.sh`.
+
 ## Phiên 2026-07-28 — thứ tự chạy
 
 Mức rủi ro giờ in kèm mỗi candidate. Đọc nó trước khi bấm: `READ_ONLY` chạy được lúc đang lái,
