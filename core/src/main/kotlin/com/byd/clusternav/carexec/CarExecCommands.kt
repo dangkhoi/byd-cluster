@@ -20,7 +20,7 @@ object CarExecCommands {
             appendLine("${step.id}  [${step.feature}]  ${step.purpose}")
             appendLine("    tiền đề: ${step.precondition}")
             step.candidates.forEach { candidate ->
-                appendLine("    - ${candidate.id}  (verdict: ${candidate.verdictSource})")
+                appendLine("    - ${candidate.id}  (verdict: ${candidate.verdictSource}, rủi ro: ${candidate.risk})")
                 appendLine("        ${candidate.purpose}")
                 candidate.commands.forEach { appendLine("        $ $it") }
                 appendLine("        đạt khi: ${candidate.evidence}")
