@@ -100,7 +100,7 @@ class LayeringRulesTest {
      * - `CastOperationStatus` — theo dõi trạng thái thao tác cho màn hình, thuộc vòng đời UI.
      * - `ModuleRegistry` — hạ tầng đăng ký module của chính app.
      */
-    private val pureFilesStillInApp = 3
+    private val pureFilesStillInApp = 2
 
     @Test
     fun `so file thuan con nam trong app chi duoc giam`() {

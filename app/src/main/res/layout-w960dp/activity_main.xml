@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  Home cho màn RỘNG (đầu xe 1920×1080 → w1280dp; biến thể này phủ từ w960dp).
+
+  Vì sao cần: bản dọc duy nhất xếp hai thẻ chồng nhau, nên trên màn xe thẻ Cluster Cast rơi HẲN xuống dưới
+  vùng thấy được — mở app ra không thấy Cast ở đâu, phải cuộn mới biết nó tồn tại. Màn Cast đã có biến thể
+  w960dp/w1280dp từ trước, chỉ Home là thiếu.
+
+  Nguyên tắc lấy từ V1: mọi thứ trên MỘT màn, thao tác chính bấm được ngay, chi tiết mới phải đi sâu. Trên
+  màn ngang thì "một màn" nghĩa là hai cột, không phải một cột dài.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="@dimen/screen_pad">
+
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="ClusterNav" android:textColor="@color/text_primary"
+        android:textSize="@dimen/text_title" android:fontFamily="sans-serif-medium" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="2dp" android:layout_marginBottom="10dp"
+        android:text="Hai hệ thống độc lập · Navigation + HUD và Cluster Cast"
+        android:textColor="@color/text_secondary" android:textSize="@dimen/text_label" />
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:orientation="horizontal">
+
+        <!-- ── Cột trái: Navigation + HUD ─────────────────────────────────────────────────────────── -->
+        <ScrollView android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1" android:fillViewport="true">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:background="@drawable/card_bg"
+                android:padding="@dimen/card_pad">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Navigation + HUD" android:textColor="@color/text_primary"
+                        android:textSize="@dimen/text_status" android:fontFamily="sans-serif-medium" />
+                    <Switch android:id="@+id/switch_enabled" android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" android:text="Bật"
+                        android:textColor="@color/text_secondary" />
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginTop="8dp">
+                    <View android:id="@+id/dot_status" android:layout_width="12dp" android:layout_height="12dp"
+                        android:layout_marginEnd="10dp" android:background="@drawable/status_dot" />
+                    <TextView android:id="@+id/txt_status" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Đang chờ nguồn" android:textColor="@color/text_secondary" />
+                </LinearLayout>
+
+                <!-- Hai dòng trạng thái đứng cạnh nhau: chúng là một cặp, đọc cùng lúc. -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="6dp">
+                    <TextView android:id="@+id/txt_lane_status" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Cụm: tắt" android:textColor="@color/text_secondary" />
+                    <TextView android:id="@+id/txt_hud_status" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="HUD: tắt" android:textColor="@color/text_secondary" />
+                </LinearLayout>
+
+                <CheckBox android:id="@+id/cb_lane" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="6dp"
+                    android:minHeight="@dimen/touch_min" android:text="Bật đầu ra làn cụm độc lập"
+                    android:textColor="@color/text_secondary" />
+                <CheckBox android:id="@+id/cb_hud" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
+                    android:text="Bật đầu ra HUD độc lập" android:textColor="@color/text_secondary" />
+                <CheckBox android:id="@+id/cb_interpolate" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
+                    android:text="Nội suy cự ly tới chỗ rẽ" android:textColor="@color/text_secondary" />
+                <CheckBox android:id="@+id/cb_acc_booster" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
+                    android:text="Đọc thêm cự ly từ màn dẫn đường" android:textColor="@color/text_secondary" />
+
+                <Button android:id="@+id/btn_reconnect_nav" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
+                    android:text="Cấp quyền / kết nối lại" android:textAllCaps="false"
+                    android:textColor="@color/brand" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="8dp">
+                    <Button android:id="@+id/btn_nav_details" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1"
+                        android:minHeight="@dimen/touch_min" android:background="@drawable/btn_primary"
+                        android:text="Mở Navigation" android:textAllCaps="false" android:textColor="@color/white" />
+                    <Button android:id="@+id/btn_nav_stop" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1"
+                        android:layout_marginStart="10dp" android:minHeight="@dimen/touch_min"
+                        android:background="@drawable/btn_warning_outline" android:text="Dừng toàn bộ"
+                        android:textAllCaps="false" android:textColor="@color/warn_amber" />
+                </LinearLayout>
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- ── Cột phải: Cluster Cast ──────────────────────────────────────────────────────────────── -->
+        <ScrollView android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1" android:layout_marginStart="@dimen/gap" android:fillViewport="true">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:background="@drawable/card_bg"
+                android:padding="@dimen/card_pad">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Cluster Cast" android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_status" android:fontFamily="sans-serif-medium" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginTop="8dp">
+                    <View android:id="@+id/dot_cast" android:layout_width="12dp" android:layout_height="12dp"
+                        android:layout_marginEnd="10dp" android:background="@drawable/status_dot" />
+                    <TextView android:id="@+id/txt_cast_status" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Sẵn sàng" android:textColor="@color/text_secondary" />
+                </LinearLayout>
+                <Button android:id="@+id/btn_cast_details" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                    android:minHeight="@dimen/touch_min" android:background="@drawable/btn_primary"
+                    android:text="Mở Cluster Cast" android:textAllCaps="false" android:textColor="@color/white" />
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+</LinearLayout>
