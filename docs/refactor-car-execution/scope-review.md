@@ -125,3 +125,42 @@ thật, khác loại với chuyện nội suy. Nếu nó dùng để **tính** (
 N km/h", và `read()` vẽ một khung monospace gồm tốc độ, cự ly thô từ notification, anchor, giá trị nội
 suy đang đẩy lên cụm và ETA. Nó **không tính gì** bằng km/h và **không đẩy** số đó lên cụm hay HUD — chỉ
 để so trên đường khi bật/tắt nội suy. Nên không trùng với đồng hồ tốc độ của xe. Không phải bỏ.
+
+## 10. Chốt phần off-car — 2026-07-27 21:30
+
+### Đã xong tối nay
+
+| Việc | Kết quả |
+|---|---|
+| Xoá Dead Reckon / mock-location | 1.096 dòng biến khỏi cây; bài kiểm ĐẢO CHIỀU thành "phải biến mất" |
+| Nợ test Navigation | 42 → **96** bài kiểm |
+| `SpeedReading` tách sang `:core` | bất biến "không đọc được ≠ 0" lần đầu có kiểm |
+| `NavScreenScan` tách sang `:core` | heuristic đọc màn hình lần đầu có kiểm (10 bài) |
+| `RECONNECT_SOURCE` | **lỗi thật**: khai trong enum mà không nơi nào cấp → nguồn mất cập nhật là không có nút nào |
+| `disabledReasons` | **lỗi thật**: map luôn rỗng → nút mờ không giải thích được |
+| Đường ra cụm/HUD | 3 bài kiểm dựng lại đúng ca đã treo Cast: `submit` không chặn, hàng đầy báo FAULT có lý do, `close` không treo |
+| `RecordedDevice` mapping sai | `PROFILE_STATE` từng trỏ vào file settings → thông điệp trách oan "định dạng"; đã sửa + bài kiểm hình dạng fixture |
+| CRLF | 0 file còn CRLF trong `:app` và `:core` |
+
+**696 bài kiểm xanh** (app 364 · core 318 · car-integration 14). `core leak: 0`, `car-int leak: 0`.
+
+### Off-car còn lại — đều BỊ CHẶN hoặc CẦN QUYẾT ĐỊNH, không phải bị bỏ
+
+| Việc | Chặn bởi |
+|---|---|
+| Xoá engine V1 (5.970 dòng, 8 điểm adb) | V2 phải chạy được trên xe trước |
+| Sửa điều kiện phát `30,16,35` | chờ kết quả `reissue-policy` mai — sửa trước là đoán |
+| Nối `AttestationNeed` vào bộ chiếu trạng thái | phần lõi xong; UI làm cuối theo đúng hai đường ray |
+| Đổi tên package 26 file `:core` | chờ xoá V1 để không đổi hai lần |
+| `vd_map` (185 dòng, 2 file) | **cần chủ dự án quyết** giữ hay bỏ |
+| Fixture `am get-current-user` | cần một lệnh trên xe, đã dặn trong `run-on-car.md` |
+
+### Cố ý KHÔNG làm, kèm lý do
+
+- **5 file thuần còn trong `:app`** (`CastOperationStatus`, `CastActivityRefresh`, `CastActivityWork`,
+  `ModuleRegistry`, `NavAccessibilitySource`): dời bây giờ là churn không thêm giá trị kiểm nào; ratchet
+  đang canh để con số không tăng.
+- **`NavDiag` (50 dòng) không có bài kiểm**: là vòng đệm chẩn đoán, sai thì hậu quả chỉ là màn debug hiển
+  thị lệch. Viết test cho nó chỉ để con số đẹp hơn.
+- **Chữa ca luồng giao kẹt** (dựng lại executor): chưa có bằng chứng ngoài đời rằng nó xảy ra; giới hạn
+  đã ghi ngay tại chỗ cấp `RETRY_*` để không hứa điều làm không được.

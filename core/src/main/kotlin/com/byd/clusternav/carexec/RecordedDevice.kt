@@ -39,7 +39,12 @@ class RecordedDevice(private val recordings: Map<CommandKind, String>) : ShellGa
             put(CommandKind.AM_STACK_LIST, "am-stack-list-occupied.txt")
             put(CommandKind.WM_DISPLAYS, "dumpsys-display-occupied.txt")
             put(CommandKind.DISPLAY_STATE, "dumpsys-display-occupied.txt")
-            put(CommandKind.PROFILE_STATE, "globals-occupied.txt")
+            // PROFILE_STATE là `am get-current-user`, tức MỘT SỐ (id user đang hoạt động). Trước
+            // 2026-07-27 nó bị trỏ vào globals-occupied.txt — file chứa giá trị settings. Parser đọc
+            // không ra số nên báo "active Android profile format unsupported", một thông điệp trách oan
+            // định dạng của xe trong khi lỗi nằm ở mapping của chính ta. Chưa có bản ghi thật cho lệnh
+            // này, nên để trống và nói thẳng là thiếu.
+            put(CommandKind.PROFILE_STATE, "am-get-current-user.txt")
             put(CommandKind.ANIMATION_STATE, "globals-occupied.txt")
             // Chụp được ở phiên 27/7 chiều (`appops get com.byd.clusternav` trên xe thật). Trước đó
             // quan sát off-car dừng ở đây và nói rõ thiếu gì, thay vì bịa một chuỗi rỗng rồi để parser

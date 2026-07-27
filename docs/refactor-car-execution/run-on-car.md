@@ -120,6 +120,16 @@ carexec.sh run reissue.return-then-recast       # đường phục hồi giả �
 Nếu `full-while-warm` không treo thì đường app đơn giản hẳn: cứ phát lại vô điều kiện, không cần
 đoán chiếu đang mở hay đóng — mà Q1 đã chứng minh là không đoán được.
 
+### Hai fixture còn thiếu — chụp ngay đầu phiên
+
+```
+adb shell am get-current-user            > fixtures/am-get-current-user.txt
+adb shell settings get global window_animation_scale   # đối chiếu globals-occupied.txt
+```
+
+`observe --recorded` đang dừng ở `PROFILE_STATE` vì chưa có bản ghi thật cho `am get-current-user`.
+Có nó là cả chuỗi quan sát chạy được off-car, không cần xe.
+
 ### Đánh cờ ngay tại chỗ
 
 ```
