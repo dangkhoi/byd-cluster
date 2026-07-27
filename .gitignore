@@ -79,4 +79,5 @@ docs/_handoff/vehicle-candidate.json
 # file is a build gate artifact, regenerated whenever HEAD moves.
 docs/_handoff/*-committed-exact-source.json
 docs/_handoff/*-check.json
-oncar-emulator-*/
+oncar-emulator-*/oncar-q1-*/
+oncar-carexec-*/

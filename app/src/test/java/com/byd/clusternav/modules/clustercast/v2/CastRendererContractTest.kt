@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test
 
 class CastRendererContractTest {
     /** Hai phép không phát lệnh ra xe nên luôn bật: xem Chẩn đoán, và chọn app để chuẩn bị. */
-    private val ALWAYS = setOf(CastAction.OPEN_DIAGNOSTICS, CastAction.SELECT_TARGET_APP)
+    private val ALWAYS = setOf(CastAction.OPEN_DIAGNOSTICS, CastAction.SELECT_TARGET_APP, CastAction.OPEN_APP_MANAGER)
 
     @Test fun `renderer exports every action exactly once and only projector allowed actions are enabled`() {
         val state = CastUiStateProjector.project(base().copy(

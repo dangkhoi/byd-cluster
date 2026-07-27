@@ -285,7 +285,7 @@ class CastUiStateProjectorTest {
      * Các bài kiểm dưới đây ghim phần action RIÊNG của từng trạng thái; việc nhóm này luôn có mặt ở mọi
      * trạng thái do NoDeadEndStateTest canh.
      */
-    private val ALWAYS = setOf(CastAction.OPEN_DIAGNOSTICS, CastAction.SELECT_TARGET_APP)
+    private val ALWAYS = setOf(CastAction.OPEN_DIAGNOSTICS, CastAction.SELECT_TARGET_APP, CastAction.OPEN_APP_MANAGER)
 
     private fun assertEnum(name: String, actual: List<String>) {
         val enums = artifact["enums"] as Map<*, *>
