@@ -125,27 +125,18 @@ class ClusterCastActivity : Activity() {
         outState.putInt(STATE_FOCUS_ID, currentFocus?.id ?: android.view.View.NO_ID)
         super.onSaveInstanceState(outState)
     }
+    private val appListView: CastAppListView by lazy { CastAppListView(this, chosenApps, chosenEmpty, apps, catalog, rowActions) }
+
     private fun loadApps() {
         work.misc {
             val values = catalog.installed(runtime.automation.config().defaultPackage)
             val preselected = appBinding.preselect(selectedPackage, values)
             postUi {
-                apps.removeAllViews()
-                chosenApps.removeAllViews()
-                // Đã chọn thì lên trên kèm panel; chưa chọn nằm im ở dưới — khỏi cuộn tìm xem đã tick gì.
-                val (picked, rest) = values.partition { it.packageName in catalog.favorites() }
-                picked.forEach { app ->
-                    chosenApps.addView(CastAppRows.build(this@ClusterCastActivity, app, rowActions))
-                }
-                chosenEmpty.visibility = if (picked.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
-                rest.forEach { app ->
-                    apps.addView(CastAppRows.build(this@ClusterCastActivity, app, rowActions))
-                }
-                if (values.isEmpty()) apps.addView(text("Không đọc được danh sách app", 13f, 0xFF555555.toInt()))
                 if (selectedPackage == null && preselected != null) {
                     selectedPackage = preselected
                     selected.text = "Mặc định: " + (values.firstOrNull { it.packageName == preselected }?.label ?: preselected)
                 }
+                appListView.setApps(values)
                 refresh()
             }
         }
@@ -160,11 +151,11 @@ class ClusterCastActivity : Activity() {
      * Bật thì đồng thời chọn làm target, vì đó gần như luôn là ý của người bấm; tắt thì chỉ rút khỏi nút nổi
      * và KHÔNG đụng gì tới cụm.
      */
-    private val rowActions by lazy {
+    private val rowActions: CastRowActions by lazy {
         CastRowActions(
             catalog = catalog,
-            favoriteWriter = { pkg, on -> appBinding.setFavorite(pkg, on) },
             onChosen = { pkg -> selectApp(pkg, pkg) },
+            onReflow = { appListView.reflow() },
             background = { work.misc(it) },
             clusterSize = {
                 facade.observedState()?.geometry?.bounds

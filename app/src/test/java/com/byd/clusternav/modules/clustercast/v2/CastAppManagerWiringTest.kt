@@ -31,7 +31,9 @@ class CastAppManagerWiringTest {
         // 2026-07-27: lưới 4 cột một-target đổi thành hàng app kiểu v0.3x — chạm app = tick xanh + vào nút
         // nổi, panel chỉnh khung/DPI và nút chiếu nằm ngay dưới app đó. Việc dựng hàng chuyển sang
         // `CastAppRows`, nên chỗ cần canh là lời gọi đó.
-        assertTrue(activity.contains("CastAppRows.build"))
+        // Việc dựng hàng app chuyển sang CastAppListView (Activity chỉ ủy quyền), nên canh ở đó.
+        val appList = source("main/java/com/byd/clusternav/modules/clustercast/CastAppListView.kt")
+        assertTrue(appList.contains("CastAppRows.build"))
         assertTrue(activity.contains("appBinding.preselect"))
         assertTrue(activity.contains("catalog.installed(runtime.automation.config().defaultPackage)"))
         assertTrue(activity.contains("appBinding.model(castActionExported)"))

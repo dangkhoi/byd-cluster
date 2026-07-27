@@ -64,6 +64,21 @@ class FloatingBubbleService : Service() {
     private var statusLabel: TextView? = null
     private var menuPanel: LinearLayout? = null
     private var params: WindowManager.LayoutParams? = null
+
+    // Mờ khi rảnh để không đè map; chạm hoặc đổi trạng thái chiếu thì rõ ngay rồi tự mờ lại (v0.57).
+    private val fade = Runnable { setBubbleAlpha(IDLE_ALPHA) }
+    private fun setBubbleAlpha(a: Float) {
+        val layout = params ?: return
+        val view = bubble ?: return
+        if (layout.alpha == a) return
+        layout.alpha = a
+        runCatching { windowManager?.updateViewLayout(view, layout) }
+    }
+    private fun wakeBubble() {
+        handler.removeCallbacks(fade)
+        setBubbleAlpha(ACTIVE_ALPHA)
+        handler.postDelayed(fade, FADE_DELAY_MS)
+    }
     private fun goHome() {
         runCatching {
             startActivity(
@@ -164,15 +179,14 @@ class FloatingBubbleService : Service() {
         }
         primaryButton = bubbleText("", MENU_MIN_DP).apply { visibility = View.GONE }
         statusLabel = bubbleText("", 0).apply { textSize = 10f; visibility = View.GONE }
+        // Nghỉ = ĐÚNG MỘT vòng tròn, như v0.57. Bản V2 trước xếp cả "Dừng chiếu" + nhãn trạng thái thành một
+        // hàng chữ nhật nằm đè lên map — đó là cái chủ dự án nói xấu. Stop giờ nằm trong menu (chạm để mở),
+        // còn stopButton/primaryButton/statusLabel vẫn được tạo để applyProjection và test bám vào, nhưng
+        // KHÔNG nằm trên hàng nghỉ.
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            // The circle carries the visual weight; the host row itself stays invisible so nothing
-            // rectangular sits over the map underneath.
             setBackgroundColor(Color.TRANSPARENT)
-            addView(stopButton)
-            addView(primaryButton)
             addView(menuButton)
-            addView(statusLabel)
         }
         val type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
@@ -185,6 +199,7 @@ class FloatingBubbleService : Service() {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
+            alpha = IDLE_ALPHA
             // Default clear of the screen's own content instead of on top of the status card.
             x = clampX(saved?.first ?: (resources.displayMetrics.widthPixels - dp(84)))
             y = clampY(saved?.second ?: (resources.displayMetrics.heightPixels / 2 - dp(28)))
@@ -195,6 +210,7 @@ class FloatingBubbleService : Service() {
         primaryButton?.let { attachDrag(it, root, layout, manager) }
         bubble = root
         runCatching { manager.addView(root, layout) }
+        handler.postDelayed(fade, FADE_DELAY_MS)
     }
 
     /** Dragging changes only presentation preferences; the clamped position is persisted off-main. */
@@ -212,6 +228,7 @@ class FloatingBubbleService : Service() {
         handle.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    wakeBubble()
                     downX = event.rawX; downY = event.rawY
                     originX = layout.x; originY = layout.y; dragging = false
                     false
@@ -317,6 +334,7 @@ class FloatingBubbleService : Service() {
         }
         if (menuPanel != null) renderMenu(projection)
         applyFocusOrder(projection)
+        wakeBubble()
     }
 
     /** Deterministic Stop → apps → settings traversal for keyboard, rotary and TalkBack. */
@@ -381,6 +399,7 @@ class FloatingBubbleService : Service() {
     }
 
     private fun toggleMenu() {
+        wakeBubble()
         if (menuPanel != null) { closeMenu(); return }
         val manager = windowManager ?: return
         reloadEntries()
@@ -420,6 +439,23 @@ class FloatingBubbleService : Service() {
     private fun renderMenu(projection: BubbleProjection) {
         val panel = menuPanel ?: return
         panel.removeAllViews()
+        // Stop nằm ĐẦU menu, đúng v0.57. Chỉ hiện khi thực sự có gì để dừng (stop != HIDDEN), và chữ lấy
+        // thẳng từ projection để không lệch với màn chính.
+        if (projection.stop != BubbleStopControl.HIDDEN) {
+            panel.addView(TextView(this).apply {
+                text = "⏹ ${projection.stopLabel}"
+                textSize = 13f
+                setTextColor(Color.WHITE)
+                minimumHeight = dp(MENU_MIN_DP)
+                isFocusable = true
+                isEnabled = projection.stop == BubbleStopControl.AVAILABLE
+                alpha = if (isEnabled) 1f else .55f
+                contentDescription = "${projection.stopLabel}. ${projection.status}"
+                if (projection.stop == BubbleStopControl.AVAILABLE) {
+                    setOnClickListener { closeMenu(); requestStopOnce() }
+                }
+            })
+        }
         projection.menu.forEach { item ->
             val entry = entries.firstOrNull { it.packageName == item.packageName }
             panel.addView(LinearLayout(this).apply {
@@ -565,5 +601,8 @@ class FloatingBubbleService : Service() {
         private const val MENU_PANEL_WIDTH_DP = 300
         private val SETTINGS_VIEW_ID = View.generateViewId()
         internal const val STOP_ACK_DEADLINE_MS = 500L
+        private const val IDLE_ALPHA = 0.55f
+        private const val ACTIVE_ALPHA = 1.0f
+        private const val FADE_DELAY_MS = 3_000L
     }
 }

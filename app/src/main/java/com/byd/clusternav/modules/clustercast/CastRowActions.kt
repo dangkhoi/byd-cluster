@@ -17,8 +17,8 @@ import com.byd.clusternav.modules.clustercast.v2.CastRect
  */
 class CastRowActions(
     private val catalog: CastAppCatalog,
-    private val favoriteWriter: (String, Boolean) -> Unit,
     private val onChosen: (String) -> Unit,
+    private val onReflow: () -> Unit,
     private val background: (() -> Unit) -> Unit,
     private val clusterSize: () -> Pair<Int, Int>,
     private val activeTarget: () -> String?,
@@ -32,8 +32,12 @@ class CastRowActions(
     override fun chosen(packageName: String) = packageName in catalog.favorites()
 
     override fun setChosen(packageName: String, enabled: Boolean) {
-        favoriteWriter(packageName, enabled)
+        // Viết ĐỒNG BỘ (commit), không đẩy nền: nếu async thì reflow ngay sau đó đọc phải danh sách cũ và
+        // app không nhảy khu. Đây là một tập chuỗi nhỏ, commit trên main là chấp nhận được.
+        catalog.setFavorite(packageName, enabled)
         if (enabled) onChosen(packageName)
+        // Phân lại hai khu để app vừa tick nhảy lên trên (hoặc vừa bỏ thì rơi xuống lưới).
+        onReflow()
     }
 
     override fun scaleOf(packageName: String) = catalog.scaleOf(packageName)
