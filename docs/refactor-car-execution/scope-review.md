@@ -189,3 +189,24 @@ Cây: **19.048 → 18.953 dòng**, 124 → 116 file. `car-integration` còn 5 fi
 xanh, không đổi số — cả ba phần xoá đều không có bài kiểm nào, đúng như tình trạng của chúng.
 
 Mã ngoài sản phẩm đích giờ chỉ còn engine V1 (5.970 dòng), và nó chặn bởi việc V2 phải chạy được trên xe.
+
+## 12. Checklist kiến trúc 22:20 — hai lỗi của chính tôi
+
+Chạy đủ 5 bước. Bốn bước máy đạt (`core leak 0`, `car-int leak 0`, attestation phủ ba module, 3/3 đường
+dẫn còn sống). Phần mắt người bắt được hai thứ, cả hai do tôi làm trong cùng buổi:
+
+**1. 8 file test nằm sai chuồng** — kiểm lớp `:core` nhưng đặt trong `app/src/test`, trong đó hai file tôi
+viết tối nay. Đã dời; app 364 → 262, core 318 → 421, tổng giữ 697. Đã biến thành luật máy giữ
+(`LayeringRulesTest`), kiểm ngược bằng cách dời tạm một file → luật đổ và gọi tên.
+
+Vòng hai của cùng luật: bốn file trong số đó nằm ở **gốc package** `com.byd.clusternav` trong khi chủ thể
+ở `com.byd.clusternav.navigation`. Đã đưa vào đúng package.
+
+**2. Vi phạm P2 "migration only moves"** — lần tách `SpeedReading` không chỉ dời chỗ. Bản gốc chặn bằng
+`if (kmh < 0 || kmh > 400) return null`; với `NaN` thì **cả hai phép so đều false** nên `NaN` lọt qua và
+`lastGoodMps` thành `NaN` vĩnh viễn, khiến mọi phép so ngưỡng ở tầng trên (kể cả `speed < 2.0`) đều false.
+Tôi đã thêm chặn `NaN`/vô cực trong lúc tách — sửa hành vi lẫn vào một lần dời file.
+
+Bản vá đúng và có bài kiểm, nên giữ; nhưng đã **khai báo tường minh** trong KDoc của `SpeedReading` thay vì
+để nó lẫn vào diff. Bài học: P2 không phải luật hình thức — chính tôi vi phạm ngay lần tách đầu tiên trong
+buổi, và không có bước checklist thì nó đi vào lịch sử như "chỉ tách file".
