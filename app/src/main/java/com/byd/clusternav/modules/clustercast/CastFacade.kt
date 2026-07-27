@@ -1,5 +1,7 @@
 package com.byd.clusternav.modules.clustercast
 
+import com.byd.clusternav.modules.clustercast.v2.AdjustmentDraft
+import com.byd.clusternav.modules.clustercast.v2.AdjustmentResult
 import android.content.Context
 import com.byd.clusternav.modules.clustercast.v2.AutomationConfig
 import com.byd.clusternav.cast.platform.CastAndroidRuntime
@@ -259,6 +261,119 @@ class CastFacade private constructor(
 
     /** Nháp điều chỉnh khung/DPI. UI không cần biết nó nằm ở đâu. */
     fun markAdjustmentApplyFailed(reason: String) = runtime.adjustment.markApplyFailed(reason)
+
+    // ── nháp điều chỉnh khung / DPI ──
+    //
+    // Cả cụm phép này từng gọi thẳng `runtime.adjustment` từ Activity: mười chỗ, trong đó `applyGeometry`
+    // là một bộ điều phối 60 dòng có cả lập kế hoạch, phát lệnh, ngủ chờ, đọc lại và đánh dấu thất bại.
+    // Ratchet không thấy vì nó đi qua `runtime.`, không qua import kiểu. Đưa xuống đây để màn hình chỉ
+    // còn việc hỏi và hiển thị.
+
+    /**
+     * Kết cục hẹp cho nháp điều chỉnh. Màn hình chỉ cần biết "có nháp để vẽ" hoặc "không, vì lý do
+     * này"; `AdjustmentResult` của tầng dưới không cần lộ ra UI.
+     */
+    sealed interface DraftOutcome {
+        data class Ready(val draft: AdjustmentDraft) : DraftOutcome
+        data class Rejected(val reason: String) : DraftOutcome
+    }
+
+    private fun AdjustmentResult.narrow(): DraftOutcome = when (this) {
+        is AdjustmentResult.Ready -> DraftOutcome.Ready(draft)
+        is AdjustmentResult.Rejected -> DraftOutcome.Rejected(reason)
+    }
+
+    /** Mở nháp điều chỉnh từ quan sát hiện tại. */
+    fun openAdjustment(): DraftOutcome =
+        observedState()?.let(runtime.adjustment::open)?.narrow()
+            ?: DraftOutcome.Rejected("Không đọc được target/geometry")
+
+    fun undoAdjustment(): DraftOutcome = runtime.adjustment.undoLast().narrow()
+
+    fun restoreAdjustmentEntry(): DraftOutcome = runtime.adjustment.restoreEntry().narrow()
+
+    /** Đưa nháp về mặc định: ưu tiên baseline đã lưu, không có thì về ảnh chụp lúc mở. */
+    fun resetAdjustment(entrySnapshot: AcceptedGeometry): DraftOutcome =
+        runtime.adjustment.resetDefault(envelope()?.stableSession?.baseline?.geometry ?: entrySnapshot).narrow()
+
+    /** Chốt nháp bằng hai lần đọc lại. Trả về lý do nếu chưa lưu được. */
+    fun finishAdjustment(): String? {
+        val first = observedState() ?: return "Không đọc được geometry"
+        val second = observedState() ?: return "Không đọc được geometry lần hai"
+        return (runtime.adjustment.done(first, second) as? AdjustmentResult.Rejected)?.reason
+    }
+
+    /**
+     * Áp một khung: sửa nháp → mở phép ghi → lập kế hoạch → phát → BIND nháp vào transaction bằng cả
+     * operationId và epoch → chờ hội tụ → đọc lại hai lần.
+     *
+     * Thứ tự bind-trước-khi-chờ là lý do đường này không dùng được `executeAndSettle`; giờ nó nằm cùng
+     * chỗ với phần còn lại của máy móc nên trình tự không còn là việc của tầng UI.
+     */
+    fun applyGeometry(
+        geometry: AcceptedGeometry,
+        installed: (String) -> Boolean,
+        hasLauncher: (String) -> Boolean,
+        cancelAfterVerified: Boolean = false,
+        settleMillis: Long = 250,
+    ): GeometryOutcome {
+        val observed = observedState() ?: return GeometryOutcome.Rejected("Không đọc được target hiện tại")
+        (runtime.adjustment.edit(geometry) as? AdjustmentResult.Rejected)
+            ?.let { return GeometryOutcome.Rejected(it.reason) }
+        (runtime.adjustment.beginApply(observed) as? AdjustmentResult.Rejected)
+            ?.let { return GeometryOutcome.Rejected(it.reason) }
+        val pkg = observed.target?.packageName ?: return GeometryOutcome.Rejected("Target không xác định")
+        val plan = planGeometry(
+            pkg, geometry, observed.target, catalog.evidence(pkg, phoneSession(pkg)),
+            installed = installed(pkg), hasLauncher = hasLauncher(pkg),
+        )
+        return when (val execution = execute(plan, pkg)) {
+            is ExecutionResult.RecoveryRequired -> {
+                markAdjustmentApplyFailed(execution.reason)
+                GeometryOutcome.RecoveryRequired(execution.reason)
+            }
+            is ExecutionResult.Blocked -> {
+                markAdjustmentApplyFailed(execution.reason)
+                GeometryOutcome.Blocked(execution.reason)
+            }
+            is ExecutionResult.AwaitingVerification -> {
+                val bound = runtime.adjustment.bindExecution(execution.operationId, execution.epoch)
+                if (bound is AdjustmentResult.Rejected) {
+                    return GeometryOutcome.Rejected("Không bind được geometry transaction: ${bound.reason}")
+                }
+                Thread.sleep(settleMillis)
+                if (!observeAndComplete(execution.operationId)) {
+                    markAdjustmentApplyFailed("Geometry chưa hội tụ")
+                    return GeometryOutcome.NotVerified("Geometry chưa hội tụ")
+                }
+                val first = observedState()
+                val second = observedState()
+                if (first == null || second == null ||
+                    runtime.adjustment.recordVerifiedApply(first, second) is AdjustmentResult.Rejected
+                ) {
+                    markAdjustmentApplyFailed("Read-back geometry thất bại")
+                    return GeometryOutcome.NotVerified("Read-back geometry thất bại")
+                }
+                if (cancelAfterVerified) runtime.adjustment.cancelAfterRestore(first, second)
+                GeometryOutcome.Applied
+            }
+        }
+    }
+
+    /** Kết cục hẹp cho đường geometry: chỉ những gì màn hình cần biết để nói đúng sự thật. */
+    sealed interface GeometryOutcome {
+        /** Đã áp và đọc lại khớp. */
+        data object Applied : GeometryOutcome
+
+        /** Đã phát lệnh nhưng đọc lại không xác nhận. KHÔNG phải thành công. */
+        data class NotVerified(val reason: String) : GeometryOutcome
+
+        /** Nháp bị từ chối trước khi phát lệnh nào. */
+        data class Rejected(val reason: String) : GeometryOutcome
+
+        data class Blocked(val reason: String) : GeometryOutcome
+        data class RecoveryRequired(val reason: String) : GeometryOutcome
+    }
 
     /**
      * Kết cục hẹp dành cho UI.

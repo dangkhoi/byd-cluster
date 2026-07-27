@@ -44,6 +44,12 @@ object CastUiRenderer {
         val status = when {
             acknowledgementTimedOut && !durableStatusPriority -> "Chưa nhận xác nhận trong 500 ms"
             state.coarseState == CoarseState.COLD_PRISTINE -> "Chọn ứng dụng để chiếu"
+            // R13 — nói đúng phần đo được, không nói hơn. Bằng chứng cho ACTIVE_VERIFIED chỉ là cửa
+            // sổ đã nằm trên display cụm với đúng target và đúng khung; ngày 2026-07-27 xác nhận việc
+            // task nằm trên display 1 KHÔNG chứng minh cụm đang hiện app (dump cho thấy task hiển
+            // thị=true trong lúc tài xế vẫn thấy đồng hồ). Câu này nêu đúng cơ sở đó và mời người dùng
+            // nhìn cụm — người là cảm biến duy nhất hiện có cho tới khi có observable thật.
+            state.coarseState == CoarseState.ACTIVE_VERIFIED -> "Cửa sổ đã lên cụm · nhìn cụm để xác nhận"
             unavailable != null -> explain(unavailable)
             state.nextSafeAction == NextSafeAction.NONE -> "Sẵn sàng"
             else -> explain(state.nextSafeAction)

@@ -24,7 +24,7 @@ class CastArchitectureRatchetTest {
      * Số kiểu của tầng dưới mà UI còn import trực tiếp. Façade chỉ chặn được lời gọi; chừng nào con số
      * này còn lớn thì UI vẫn buộc chặt vào hình dạng bên trong.
      */
-    private val uiTypeCoupling = 26
+    private val uiTypeCoupling = 27
 
     /**
      * Số kiểu **của tầng dưới** (`:core` / `:car-integration`) mà UI còn import trực tiếp.
@@ -33,7 +33,7 @@ class CastArchitectureRatchetTest {
      * (`CastAndroidRuntime`, `CastAppCatalog`, `CastAndroidLifecycle`) — UI dùng chúng là app→app, không
      * phải vượt tầng. Con số này mới là khoảng cách thật tới lời tuyên bố "UI chỉ thấy façade".
      */
-    private val crossLayerCoupling = 26
+    private val crossLayerCoupling = 27
 
     /**
      * Số chỗ mở kết nối adb nằm ngoài :car-integration. Kiến trúc nói mọi transport thuộc một chỗ; đây
@@ -160,7 +160,15 @@ class CastArchitectureRatchetTest {
         /** Không phải UI: package của tầng dưới và của lớp nền tảng vừa tách theo module. */
         val NON_UI = listOf("/modules/clustercast/v2/", "/cast/platform/", "/cast/transport/")
 
-        val IMPORT = Regex("""import com\.byd\.clusternav\.modules\.clustercast\.v2\.([A-Za-z0-9_]+)""")
+        /**
+         * Đếm cả tên đầy đủ viết thẳng trong dòng code, không chỉ dòng `import`.
+         *
+         * 2026-07-27: đây là lỗi đo thứ năm của bộ ratchet này. `ClusterCastActivity` từng viết
+         * `com.byd.clusternav.modules.clustercast.v2.AdjustmentResult` ngay trong biểu thức; phép đo cũ
+         * chỉ nhìn dòng import nên coupling đó vô hình. Khi dọn sang import thì con số "tăng", trong khi
+         * thực tế nó vốn đã ở đó — đúng kiểu phép đo tự tạo ảo giác tiến bộ.
+         */
+        val IMPORT = Regex("""(?:import |[^A-Za-z0-9_.])com\.byd\.clusternav\.modules\.clustercast\.v2\.([A-Za-z0-9_]+)""")
         val DADB = Regex("""\bDadb\.create\(""")
         val DECLARATION = Regex(
             """(?m)^(?:internal )?(?:data )?(?:sealed )?(?:class|object|interface|enum class|fun) ([A-Za-z0-9_]+)""",

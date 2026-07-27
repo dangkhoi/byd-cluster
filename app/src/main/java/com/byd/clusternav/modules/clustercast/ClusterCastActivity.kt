@@ -1,5 +1,7 @@
 package com.byd.clusternav.modules.clustercast
 
+import com.byd.clusternav.modules.clustercast.v2.AcceptedGeometry
+import com.byd.clusternav.modules.clustercast.v2.AdjustmentDraft
 import android.app.Activity
 import android.os.Bundle
 import android.provider.Settings
@@ -204,97 +206,52 @@ class ClusterCastActivity : Activity() {
     }
     private fun openAdjustment() {
         work.misc {
-            val observed = facade.observedState()
-            val result = observed?.let(runtime.adjustment::open)
-                ?: com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected("Không đọc được target/geometry")
+            val result = facade.openAdjustment()
             postUi {
                 when (result) {
-                    is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected -> show("Không thể điều chỉnh: ${result.reason}")
-                    is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Ready -> showAdjustment(result.draft)
+                    is CastFacade.DraftOutcome.Rejected -> show("Không thể điều chỉnh: ${result.reason}")
+                    is CastFacade.DraftOutcome.Ready -> showAdjustment(result.draft)
                 }
             }
         }
     }
-    private fun showAdjustment(draft: com.byd.clusternav.modules.clustercast.v2.AdjustmentDraft) {
+    private fun showAdjustment(draft: AdjustmentDraft) {
         CastAdjustmentDialog.show(
             this,
             draft,
             onApply = { applyGeometry(it) },
-            onUndo = { editAdjustment(runtime.adjustment::undoLast) },
-            onRestore = { editAdjustment(runtime.adjustment::restoreEntry, cancelAfterVerified = true) },
-            onReset = { editAdjustment(mutation = {
-                val envelope = facade.envelope()
-                runtime.adjustment.resetDefault(envelope?.stableSession?.baseline?.geometry ?: draft.entrySnapshot)
-            }) },
+            onUndo = { editAdjustment(facade::undoAdjustment) },
+            onRestore = { editAdjustment(facade::restoreAdjustmentEntry, cancelAfterVerified = true) },
+            onReset = { editAdjustment(mutation = { facade.resetAdjustment(draft.entrySnapshot) }) },
             onDone = { finishAdjustment() },
         )
     }
-    private fun editAdjustment(mutation: () -> com.byd.clusternav.modules.clustercast.v2.AdjustmentResult,
+    private fun editAdjustment(mutation: () -> CastFacade.DraftOutcome,
         cancelAfterVerified: Boolean = false) = work.misc {
         when (val result = mutation()) {
-            is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Ready ->
+            is CastFacade.DraftOutcome.Ready ->
                 postUi { applyGeometry(result.draft.localDraft, cancelAfterVerified) }
-            is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected -> postUi { show(result.reason) }
+            is CastFacade.DraftOutcome.Rejected -> postUi { show(result.reason) }
         }
     }
-    private fun applyGeometry(geometry: com.byd.clusternav.modules.clustercast.v2.AcceptedGeometry,
-        cancelAfterVerified: Boolean = false) = runOperation("Đang áp geometry…", {
-        val observed = facade.observedState()
-            ?: return@runOperation "Không đọc được target hiện tại"
-        val edited = runtime.adjustment.edit(geometry)
-        if (edited is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected) return@runOperation edited.reason
-        val applying = runtime.adjustment.beginApply(observed)
-        if (applying is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected) return@runOperation applying.reason
-        val pkg = observed.target?.packageName ?: return@runOperation "Target không xác định"
-        val plan = facade.planGeometry(
-            pkg, geometry, observed.target, catalog.evidence(pkg, facade.phoneSession(pkg)),
-            installed = runCatching { packageManager.getPackageInfo(pkg, 0) }.isSuccess,
-            hasLauncher = packageManager.getLaunchIntentForPackage(pkg) != null,
-        )
-        // Nhánh geometry còn dùng ExecutionResult trực tiếp, có lý do: nó phải BIND nháp điều chỉnh vào
-        // transaction bằng cả operationId và epoch TRƯỚC khi chờ hội tụ, nên trình tự khác
-        // executeAndSettle. Bọc nó tử tế cần đưa cả CastAdjustmentWorkspace qua façade — việc riêng, chưa làm.
-        when (val execution = facade.execute(plan, pkg)) {
-            is ExecutionResult.AwaitingVerification -> {
-                val bound = runtime.adjustment.bindExecution(execution.operationId, execution.epoch)
-                if (bound is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected) {
-                    return@runOperation "Không bind được geometry transaction: ${bound.reason}"
-                }
-                Thread.sleep(250)
-                if (!facade.observeAndComplete(execution.operationId)) {
-                    facade.markAdjustmentApplyFailed("Geometry chưa hội tụ")
-                    "Geometry chưa xác minh"
-                } else {
-                    val first = facade.observedState()
-                    val second = facade.observedState()
-                    if (first == null || second == null || runtime.adjustment.recordVerifiedApply(first, second) is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected) {
-                        facade.markAdjustmentApplyFailed("Read-back geometry thất bại")
-                        "Geometry chưa xác minh"
-                    } else {
-                        if (cancelAfterVerified) runtime.adjustment.cancelAfterRestore(first, second)
-                        "Đã áp và xác minh geometry"
-                    }
-                }
+    private fun applyGeometry(geometry: AcceptedGeometry, cancelAfterVerified: Boolean = false) =
+        runOperation("Đang áp geometry…", {
+            when (val outcome = facade.applyGeometry(
+                geometry,
+                installed = { pkg -> runCatching { packageManager.getPackageInfo(pkg, 0) }.isSuccess },
+                hasLauncher = { pkg -> packageManager.getLaunchIntentForPackage(pkg) != null },
+                cancelAfterVerified = cancelAfterVerified,
+            )) {
+                CastFacade.GeometryOutcome.Applied -> "Đã áp và đọc lại được geometry"
+                is CastFacade.GeometryOutcome.NotVerified -> "Geometry chưa xác minh: ${outcome.reason}"
+                is CastFacade.GeometryOutcome.Rejected -> outcome.reason
+                is CastFacade.GeometryOutcome.Blocked -> "Geometry bị chặn: ${outcome.reason}"
+                is CastFacade.GeometryOutcome.RecoveryRequired -> "Geometry cần phục hồi: ${outcome.reason}"
             }
-            is ExecutionResult.RecoveryRequired -> {
-                facade.markAdjustmentApplyFailed(execution.reason)
-                "Geometry cần phục hồi: ${execution.reason}"
-            }
-            is ExecutionResult.Blocked -> {
-                facade.markAdjustmentApplyFailed(execution.reason)
-                "Geometry bị chặn: ${execution.reason}"
-            }
-        }
-    }, after = { if (!cancelAfterVerified) openAdjustment() })
+        }, after = { if (!cancelAfterVerified) openAdjustment() })
+
     private fun finishAdjustment() = runOperation("Đang chốt geometry…", {
-        val first = facade.observedState()
-            ?: return@runOperation "Không đọc được geometry"
-        val second = facade.observedState()
-            ?: return@runOperation "Không đọc được geometry lần hai"
-        when (val result = runtime.adjustment.done(first, second)) {
-            is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Ready -> "Đã lưu geometry"
-            is com.byd.clusternav.modules.clustercast.v2.AdjustmentResult.Rejected -> "Chưa thể lưu: ${result.reason}"
-        }
+        facade.finishAdjustment()?.let { "Chưa thể lưu: $it" } ?: "Đã lưu geometry"
     })
     private fun retryConnect() {
         selectedPackage?.let { executeCast(it); return }
