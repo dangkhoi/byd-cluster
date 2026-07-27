@@ -106,8 +106,16 @@ class NavigationSessionCoordinator(
             NavigationPermission.GRANTED -> if (session == null) allowed += NavigationAction.START_NAVIGATION
         }
         if (session != null) allowed += NavigationAction.STOP_NAVIGATION
+        // Nguồn không còn tươi thì phải có đường nối lại. Trước 2026-07-27 `RECONNECT_SOURCE` được khai
+        // trong enum mà KHÔNG nơi nào cấp — trình dịch chỉ ra khi bắt buộc `when` phải vét cạn. Nghĩa là
+        // notification ngừng cập nhật thì màn hình không có nút nào để người dùng bấm, chỉ còn tắt/bật lại
+        // toàn bộ. Cùng họ với ngõ cụt đã khoá Cluster Cast sáng cùng ngày.
+        if (session != null && source.freshness !is NavigationFreshness.Fresh) {
+            allowed += NavigationAction.RECONNECT_SOURCE
+        }
         addOutputActions(laneHealth, NavigationAction.ENABLE_CLUSTER_LANE, NavigationAction.DISABLE_CLUSTER_LANE, allowed)
         addOutputActions(hudHealth, NavigationAction.ENABLE_HUD, NavigationAction.DISABLE_HUD, allowed)
+        explainUnavailable(permission, session != null, laneHealth, hudHealth, allowed, disabled)
         NavigationUiState(interactionContext, source, laneHealth, hudHealth, allowed.toSet(), disabled.toMap())
     }
 
@@ -200,6 +208,45 @@ class NavigationSessionCoordinator(
     private fun output(target: NavigationOutputTarget): NavigationOutputPort = when (target) {
         NavigationOutputTarget.CLUSTER_LANE -> clusterLane
         NavigationOutputTarget.HUD -> hud
+    }
+
+    /**
+     * Ghi lý do cho MỌI phép không được cấp.
+     *
+     * Bản trước tạo map rồi truyền đi mà không ghi gì, nên màn hình không có gì để nói khi người dùng bấm
+     * vào một nút mờ. Đây là cùng một lỗi đã khoá người dùng ở Cluster Cast sáng 2026-07-27, chỉ khác là ở
+     * Navigation nó chưa gây hậu quả thấy được — chưa gây không có nghĩa là đúng.
+     *
+     * Cố ý KHÔNG thêm luật chặn mới: hàm này chỉ giải thích trạng thái đang có, không đổi phép nào.
+     */
+    private fun explainUnavailable(
+        permission: NavigationPermission,
+        hasSession: Boolean,
+        laneHealth: NavigationOutputHealth,
+        hudHealth: NavigationOutputHealth,
+        allowed: Set<NavigationAction>,
+        disabled: MutableMap<NavigationAction, NavigationActionDisabledReason>,
+    ) {
+        NavigationAction.entries.filterNot { it in allowed }.forEach { action ->
+            disabled[action] = when (action) {
+                NavigationAction.GRANT_NOTIFICATION_ACCESS ->
+                    NavigationActionDisabledReason.PERMISSION_ALREADY_GRANTED
+                NavigationAction.START_NAVIGATION ->
+                    if (permission != NavigationPermission.GRANTED) {
+                        NavigationActionDisabledReason.PERMISSION_REQUIRED
+                    } else NavigationActionDisabledReason.SESSION_ALREADY_RUNNING
+                NavigationAction.STOP_NAVIGATION -> NavigationActionDisabledReason.NO_ACTIVE_SESSION
+                NavigationAction.RECONNECT_SOURCE ->
+                    if (!hasSession) NavigationActionDisabledReason.NO_ACTIVE_SESSION
+                    else NavigationActionDisabledReason.SOURCE_IS_FRESH
+                NavigationAction.ENABLE_CLUSTER_LANE -> NavigationActionDisabledReason.OUTPUT_ALREADY_ENABLED
+                NavigationAction.DISABLE_CLUSTER_LANE -> NavigationActionDisabledReason.OUTPUT_ALREADY_DISABLED
+                NavigationAction.ENABLE_HUD -> NavigationActionDisabledReason.OUTPUT_ALREADY_ENABLED
+                NavigationAction.DISABLE_HUD -> NavigationActionDisabledReason.OUTPUT_ALREADY_DISABLED
+                NavigationAction.RETRY_CLUSTER_LANE, NavigationAction.RETRY_HUD ->
+                    NavigationActionDisabledReason.OUTPUT_HAS_NO_FAULT
+            }
+        }
     }
 
     private fun addOutputActions(

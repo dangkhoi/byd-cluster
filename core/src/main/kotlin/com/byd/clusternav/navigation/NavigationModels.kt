@@ -104,12 +104,24 @@ enum class NavigationAction {
     RETRY_HUD
 }
 
+/**
+ * Vì sao một phép không dùng được.
+ *
+ * Trước 2026-07-27 enum này được khai, được luồn qua `NavigationUiState`, và **không nơi nào ghi vào** —
+ * map `disabledReasons` luôn rỗng. Nghĩa là màn hình chỉ biết phép nào bật, không biết nói vì sao phép
+ * kia tắt. Đúng lỗi mà Cluster Cast đã trả giá trong ngày: người dùng thấy nút mờ và không có gì để làm
+ * tiếp. Giờ mọi phép không được cấp đều phải có một lý do đọc được.
+ */
 enum class NavigationActionDisabledReason {
     PERMISSION_REQUIRED,
+    PERMISSION_ALREADY_GRANTED,
+    SESSION_ALREADY_RUNNING,
     NO_ACTIVE_SESSION,
     SOURCE_NOT_FRESH,
     OUTPUT_ALREADY_ENABLED,
-    OUTPUT_ALREADY_DISABLED
+    OUTPUT_ALREADY_DISABLED,
+    OUTPUT_HAS_NO_FAULT,
+    SOURCE_IS_FRESH,
 }
 
 data class NavigationFrameContent(
