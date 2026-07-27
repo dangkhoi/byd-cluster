@@ -122,7 +122,9 @@ class ClusterCastActivity : Activity() {
             postUi {
                 apps.removeAllViews()
                 values.forEach { app ->
-                    apps.addView(appButton(app.label) {}.also { CastAppTiles.bind(it, app) { selectApp(app.label, app.packageName) } })
+                    apps.addView(appButton(app.label) {}.also {
+                        CastAppTiles.bind(it, app) { toggleApp(app.label, app.packageName, app.favorite) }
+                    })
                 }
                 if (values.isEmpty()) apps.addView(text("Không đọc được danh sách app", 13f, 0xFF555555.toInt()))
                 CastAppTiles.markSelected(apps, selectedPackage)
@@ -134,6 +136,26 @@ class ClusterCastActivity : Activity() {
             }
         }
     }
+    /**
+     * Chạm một ô app = BẬT/TẮT app đó trong menu nút nổi, đúng hành vi v0.3x mà chủ dự án dùng thật:
+     * tick app nào thì app đó vào nút nổi, có dấu ✓ ngay trên ô.
+     *
+     * V2 trước đây tách làm hai chỗ — chạm ô chỉ chọn target để chiếu, còn danh sách nút nổi nằm trong một
+     * hộp thoại riêng. Hai chỗ cho một ý định là lý do màn hình có cảm giác nhiều nút.
+     *
+     * Bật thì đồng thời chọn làm target, vì đó gần như luôn là ý của người bấm; tắt thì chỉ rút khỏi nút nổi
+     * và KHÔNG đụng gì tới cụm.
+     */
+    private fun toggleApp(label: String, packageName: String, wasFavorite: Boolean) {
+        appBinding.setFavorite(packageName, !wasFavorite)
+        if (wasFavorite) {
+            loadApps()
+            return
+        }
+        selectApp(label, packageName)
+        loadApps()
+    }
+
     private fun selectApp(label: String, packageName: String) {
         selectionExplicit = true
         selectedPackage = packageName
