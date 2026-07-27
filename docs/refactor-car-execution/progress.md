@@ -340,3 +340,43 @@ Ratchet file-thuần-còn-trong-`:app`: **7 → 3**, và ba file còn lại có 
 Còn đúng hai quy tắc không tự động được: P2 (chỉ-dời-chỗ, phải đọc diff) và Q2 (quyết định hay dữ liệu).
 
 632 test xanh. Checklist sạch: 0 leak, 0 đường dẫn chết, 0 file lạc chuồng.
+
+## 2026-07-27 chiều — đóng phần off-car
+
+| Việc | Kết quả |
+|---|---|
+| Đường release sau khi tách module | APK dựng lại được, DEX chứa `cast/platform`, `cast/transport`, `carexec/LocalDeviceShell`; `verifyExactSourceIdentity` xanh |
+| E2E emulator | **18/18** sau khi sửa 2 lỗi thật + làm harness sạch (trước đó chỉ 14 phép kiểm chạy được) |
+| R13 | Trạng thái nêu đúng cơ sở: "Cửa sổ đã lên cụm · nhìn cụm để xác nhận" |
+| R14 | Quét vét cạn ở `:core` + 4 bài kiểm ở `:app`; bắt được 2 ngõ cụt thật |
+| Máy móc geometry | 10 chỗ gọi `runtime.adjustment` trong Activity → 0 |
+| Transport | `PersistentDeviceShell` vào `:car-integration`; adb ngoài transport 9 → 8 |
+
+### Ba lỗi khoá người dùng tìm được trong ngày
+
+1. `stopRequested` không có recovery substate → tập hành động rỗng (quét vét cạn bắt).
+2. Tile chọn app khoá theo trạng thái cụm, dù chọn app không phát lệnh nào ra xe (E2E bắt).
+3. `activityActions` so bằng với hai tập cứng, trong lúc chờ trả về đúng `STOP` → **mất Chẩn đoán**; và vỡ im lặng mỗi khi tập phép đổi (đọc mã khi sửa lỗi 2 mới thấy).
+
+### Lỗi đo thứ năm của chính bộ ratchet
+
+Phép đếm coupling chỉ nhìn dòng `import`, nên tên đầy đủ viết thẳng trong biểu thức là vô hình.
+Dọn sang import làm con số "tăng" 26 → 27 trong khi coupling vốn đã ở đó. Số thật 28 → hạ về 27
+bằng `DraftOutcome`. Bài học đã ghi: **đọc tên bài kiểm, rồi đọc phạm vi nó quét.**
+
+### Ratchet cuối ngày
+
+| | Sáng | Chiều |
+|---|---|---|
+| coupling kiểu UI | 42 | **27** (phép đo đã trung thực hơn) |
+| coupling vượt tầng | 27 | **27** |
+| điểm mở adb ngoài transport | 13 | **8** (đều trong `ClusterCast.kt` V1) |
+| file thuần còn trong `:app` | 7 | **3** |
+| test | 353 | **648** |
+
+### Còn lại off-car
+
+- Đổi tên package cho 26 file `:core` — cố ý chờ xoá V1 để không đổi hai lần.
+- Mã Dead Reckon / mock-location (~1.095 LOC) giữ cho rollback.
+- Fixture `appops get` phải chụp trên xe (`observe --recorded` dừng ở `APP_OPS_STATE`).
+- **verdicts.tsv vẫn 0 dòng** — 20 candidate đã chạy bằng tay trên xe nhưng chưa qua runner.
