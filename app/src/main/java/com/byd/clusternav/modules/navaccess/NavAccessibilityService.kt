@@ -1,5 +1,8 @@
 package com.byd.clusternav.modules.navaccess
 
+import com.byd.clusternav.navigation.ScreenTextItem
+import com.byd.clusternav.navigation.NavScreenReading
+import com.byd.clusternav.navigation.NavScreenScan
 import com.byd.clusternav.navigation.NavParse
 import com.byd.clusternav.navigation.TurnDistanceInterpolator
 import android.accessibilityservice.AccessibilityService
@@ -23,9 +26,6 @@ class NavAccessibilityService : AccessibilityService() {
 
     private var lastProcessed = 0L
     private val maps = setOf("com.google.android.apps.maps", "app.revanced.android.apps.maps")
-    // Mẫu cự ly tới rẽ: "250 m", "1.2 km", "0,4 km". (ft/mi để nhận diện thẻ rẽ vùng imperial, parse vẫn metric.)
-    private val dist = Regex("""\b\d+([.,]\d+)?\s?(km|m|ft|mi)\b""", RegexOption.IGNORE_CASE)
-    private val timeTok = Regex("""\d+\s?(phút|min|giờ|h\b|hr)|\b\d{1,2}:\d{2}\b""", RegexOption.IGNORE_CASE)
 
     override fun onServiceConnected() {
         NavAccessibilitySource.connected = true
@@ -54,36 +54,32 @@ class NavAccessibilityService : AccessibilityService() {
         runCatching { root.recycle() }
     }
 
-    /** Gom mọi node có text + toạ độ, phân vùng trên/đáy, rút cự ly tới rẽ + đường + info đáy. */
+    /**
+     * Gom mọi node có text + toạ độ rồi giao phần QUYẾT ĐỊNH cho [NavScreenScan] trong `:core`.
+     *
+     * Trước 2026-07-27 heuristic chia dải trên/đáy, chọn token cự ly và chọn tên đường nằm ngay tại đây,
+     * nên đúng đoạn quyết định con số tài xế thấy trên cụm lại không có bài kiểm nào. Ở đây giờ chỉ còn
+     * việc đi cây `AccessibilityNodeInfo` và ghi kết quả — hai thứ thật sự cần Android.
+     */
     private fun scan(root: AccessibilityNodeInfo, now: Long) {
-        val items = ArrayList<Triple<String, Int, Int>>(64)   // (text, top, left)
+        val items = ArrayList<Triple<String, Int, Int>>(64)
         val screen = Rect(); root.getBoundsInScreen(screen)
-        val h = if (screen.height() > 0) screen.height() else 1080
         collect(root, items, 0)
         if (items.isEmpty()) return
 
-        val topBand = (h * 0.55).toInt()                      // thẻ rẽ nằm nửa trên; thanh đích nằm đáy
-        // Cự ly tới rẽ = token cự ly Ở NỬA TRÊN, cao nhất (top nhỏ nhất).
-        val turn = items.filter { it.second < topBand && dist.containsMatchIn(it.first) && !timeTok.containsMatchIn(it.first) }
-            .minByOrNull { it.second }
-        val meters = turn?.let { NavParse.parseMeters(it.first) } ?: -1
+        val reading = NavScreenScan.scan(
+            items.map { ScreenTextItem(it.first, it.second, it.third) },
+            screen.height(),
+        )
 
-        // Đường/lệnh kế = chuỗi DÀI nhất ở nửa trên, không phải cự ly/giờ (vd "Nguyễn Huệ", "Rẽ phải vào ...").
-        val road = items.filter { it.second < topBand && !dist.containsMatchIn(it.first) && !timeTok.containsMatchIn(it.first) && it.first.length >= 3 }
-            .maxByOrNull { it.first.length }?.first.orEmpty()
+        if (reading.road.isNotEmpty()) NavAccessibilitySource.road = reading.road
+        if (reading.bottomInfo.isNotEmpty()) NavAccessibilitySource.bottomInfo = reading.bottomInfo
 
-        // Info đáy (giờ tới · còn lại · phút) — debug, chưa đẩy cụm (cụm không có slot ETA no-root).
-        val bottom = items.filter { it.second > h * 0.78 && (dist.containsMatchIn(it.first) || timeTok.containsMatchIn(it.first)) }
-            .sortedBy { it.third }.joinToString(" · ") { it.first }
-
-        if (road.isNotEmpty()) NavAccessibilitySource.road = road
-        if (bottom.isNotEmpty()) NavAccessibilitySource.bottomInfo = bottom
-
-        if (meters in 0..50000) {
-            NavAccessibilitySource.turnMeters = meters
+        if (reading.turnMeters != NavScreenReading.UNKNOWN_METERS) {
+            NavAccessibilitySource.turnMeters = reading.turnMeters
             NavAccessibilitySource.lastReadAt = now
-            // TINH CHỈNH: ghi đè anchor bằng cự ly đọc trên màn (chỉ khi noti đã mở nav -> refine tự bỏ qua nếu chưa).
-            TurnDistanceInterpolator.refine(meters, now)
+            // Ghi đè anchor bằng cự ly đọc trên màn; refine tự bỏ qua nếu noti chưa mở nav.
+            TurnDistanceInterpolator.refine(reading.turnMeters, now)
             NavAccessibilitySource.refines++
         }
     }
