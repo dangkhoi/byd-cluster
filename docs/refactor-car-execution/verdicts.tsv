@@ -8,3 +8,7 @@ recordedAt	feature	step	candidate	verdict	source	endpoint	note
 2026-07-27T12:21:22.035794Z	CLUSTER_CAST	capture-state	capture.full-surface-flinger	OK	MEASURED	localhost:5555	
 2026-07-27T12:21:22.389921Z	CLUSTER_CAST	place	place.movestack	FAIL	MEASURED	localhost:5555	
 2026-07-27T12:23:43.418405Z	CLUSTER_CAST	observe	observe.dumpsys	OK	MEASURED	localhost:5555	
+2026-07-27T12:33:16.930786Z	CLUSTER_CAST	teardown	teardown.18-then-0	OK	HUMAN	localhost:5555	Parcel(0,0);
+2026-07-27T12:33:17.273157Z	CLUSTER_CAST	open-projection	open.seal-30-16-35	OK	HUMAN	localhost:5555	Parcel(0,0);
+2026-07-27T12:34:20.433912Z	CLUSTER_CAST	teardown	teardown.18-then-0	OK	HUMAN	localhost:5555	người xác nhận gauges trở lại là ở phiên SÁNG 27/7, không phải phiên chiều
+2026-07-27T12:35:10.798983Z	CLUSTER_CAST	open-projection	open.seal-30-16-35	OK	HUMAN	localhost:5555	người xác nhận cụm hiện app là ở phiên SÁNG 27/7, không phải phiên chiều

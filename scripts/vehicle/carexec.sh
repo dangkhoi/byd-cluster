@@ -55,7 +55,15 @@ if [[ "$needs_car" -eq 1 && -z "$HOST" ]]; then
 fi
 
 args="$command"
-[[ $# -gt 0 ]] && args="$args $*"
+# Bọc dấu ngoặc cho tham số có khoảng trắng. 2026-07-27: bản trước nối "$*" thành một chuỗi rồi
+# giao cho Gradle, mà Gradle cắt --args theo khoảng trắng — nên `--note "câu dài"` chỉ còn chữ đầu.
+# Ghi chú bị cắt ÂM THẦM còn tệ hơn không có, vì sổ vẫn trông như đã ghi đủ.
+for one in "$@"; do
+  case "$one" in
+    *" "*) args="$args \"$one\"" ;;
+    *)     args="$args $one" ;;
+  esac
+done
 [[ -n "$HOST" ]] && args="$args --host $HOST"
 args="$args --ledger $LEDGER"
 
