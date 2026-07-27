@@ -354,6 +354,37 @@ else
   skip "Cast screen unreachable; cast attempt not exercised"
 fi
 
+echo "=== O5b nút nổi phải khởi tạo được (không crash) ==="
+# 2026-07-27: nút nổi crash ngay khi bật vì `catalog` bị đọc trước khi gán, và bộ kiểm này KHÔNG bắt được vì
+# nó chưa bao giờ bật nút nổi. Một service không được start thì "no FATAL EXCEPTION" chỉ chứng minh service
+# đó không chạy.
+#
+# Phải bật qua ĐÚNG công tắc trên UI: service không export nên `am start-foreground-service` bị hệ thống
+# chặn, và nếu dùng cách đó thì bước kiểm này xanh mà rỗng.
+if [[ "$CAST_SCREEN" -eq 1 ]]; then
+  "${ADB[@]}" shell appops set "$PACKAGE" SYSTEM_ALERT_WINDOW allow > /dev/null 2>&1 || true
+  "${ADB[@]}" logcat -c > /dev/null 2>&1 || true
+  if tap_text "Nút nổi" 4; then
+    sleep 3
+    BUBBLE_RUNNING="$("${ADB[@]}" shell dumpsys activity services "$PACKAGE" 2>/dev/null \
+      | grep -c "FloatingBubbleService" || true)"
+    BUBBLE_CRASH="$("${ADB[@]}" logcat -d 2>/dev/null | grep -F "$PACKAGE" \
+      | grep -cE "UninitializedPropertyAccess|FATAL EXCEPTION" || true)"
+    "${ADB[@]}" shell dumpsys activity services "$PACKAGE" > "$EVIDENCE_DIR/bubble-service.txt" 2>&1 || true
+    if [[ "${BUBBLE_RUNNING:-0}" -eq 0 ]]; then
+      bad "bật công tắc rồi mà service nút nổi không xuất hiện (xem bubble-service.txt)"
+    elif [[ "${BUBBLE_CRASH:-0}" -ne 0 ]]; then
+      bad "service nút nổi crash khi khởi tạo (xem logcat trong evidence)"
+    else
+      ok "nút nổi bật được và khởi tạo không crash"
+    fi
+  else
+    skip "không tìm thấy công tắc nút nổi trên màn Cast"
+  fi
+else
+  skip "Cast screen unreachable; nút nổi không kiểm được"
+fi
+
 echo "=== O6 Stop is fail-closed and the animation/PIP baseline is intact ==="
 STOP_ENABLED="$(node_enabled cast_stop || echo unknown)"
 if [[ "${CAST_ATTEMPTED:-0}" -eq 1 && "$STOP_ENABLED" == "true" ]]; then
