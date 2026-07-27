@@ -26,6 +26,52 @@ class LayeringRulesTest {
     private val androidOrDadb = Regex("""(?m)^import (android|androidx|dadb)\.""")
     private val androidOnly = Regex("""(?m)^import android""")
 
+    /**
+     * Test của logic `:core` phải nằm trong `:core`.
+     *
+     * Checklist thủ công 2026-07-27 bắt được 8 file test nằm sai chuồng, trong đó hai file do chính tôi
+     * viết cùng tối. Hại thật sự: bộ test riêng của `:core` không phủ chính lớp của nó, nên có thể phá
+     * `:core` mà chỉ biết khi chạy bộ test Android — và tệ hơn, một test như thế có thể lỡ phụ thuộc
+     * Android mà không ai thấy, làm mất luôn ý nghĩa "core chạy được không cần thiết bị".
+     *
+     * Tiêu chí: test trong `:app` mà KHÔNG import Android và KHÔNG dùng khai báo nào của riêng `:app` thì
+     * nó đang kiểm `:core`. Ngoại lệ phải kể tên và nói lý do, không được để danh sách trống mọc dần.
+     */
+    @Test
+    fun `test cua logic core khong duoc nam trong app`() {
+        val appTests = root("app/src/test/java", "../app/src/test/java") ?: return
+        val appMain = root("app/src/main/java", "../app/src/main/java") ?: return
+        val coreMain = root("core/src/main/kotlin", "../core/src/main/kotlin") ?: return
+
+        val declaration = Regex(
+            """(?m)^(?:internal |private )?(?:data |sealed |enum |abstract )*(?:class|object|interface|fun|val) ([A-Za-z0-9_]+)""",
+        )
+        fun declarations(root: Path) = kotlinFiles(root)
+            .flatMap { declaration.findAll(it.toFile().readText()).map { match -> match.groupValues[1] } }
+            .toSet()
+
+        val appOnly = declarations(appMain) - declarations(coreMain)
+
+        // Ngoại lệ: đối tượng kiểm của nó là build script CỦA `:app`, nên nó thuộc `:app` dù không chạm
+        // Android hay lớp Kotlin nào.
+        val allowed = setOf("BuildArtifactNamingTest.kt")
+
+        val misplaced = kotlinFiles(appTests)
+            .filter { it.fileName.toString() !in allowed }
+            .filter { file ->
+                val text = file.toFile().readText()
+                val touchesAndroid = androidOrDadb.containsMatchIn(text) || text.contains("Robolectric")
+                val touchesAppOnly = appOnly.any { name -> Regex("""\b${Regex.escape(name)}\b""").containsMatchIn(text) }
+                !touchesAndroid && !touchesAppOnly
+            }
+            .map { it.fileName.toString() }
+
+        assertTrue(
+            misplaced.isEmpty(),
+            "test chỉ dùng logic :core mà nằm trong :app — dời sang core/src/test: $misplaced",
+        )
+    }
+
     @Test
     fun `core khong duoc biet Android hay dadb`() {
         val root = root("core/src/main/kotlin", "../core/src/main/kotlin") ?: return

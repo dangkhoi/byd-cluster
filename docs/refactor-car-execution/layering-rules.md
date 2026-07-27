@@ -182,3 +182,22 @@ không cao — bốn lần xếp sai chuồng, bốn lần phép đo sai đối 
 
 Nên cách dùng tài liệu này: chạy §4 sau **mỗi** lần dời, và với các dòng "chưa cưỡng chế" thì đừng tin
 lời tôi, hãy hỏi bằng chứng.
+
+## 6. Bổ sung 2026-07-27 — luật mới do checklist thủ công tìm ra
+
+**Test của logic `:core` phải nằm trong `:core`.** Checklist bắt 8 file test sai chuồng, trong đó **hai
+file do chính tôi viết cùng tối** (`NavigationNoDeadEndTest`, `NavigationWedgedWorkerTest`).
+
+Hại thật sự, không phải chuyện thẩm mỹ: bộ test riêng của `:core` không phủ chính lớp của nó, nên có thể
+phá `:core` mà chỉ biết khi chạy bộ test Android — và tệ hơn, một test như thế có thể lỡ phụ thuộc Android
+mà không ai thấy, làm mất luôn ý nghĩa "core chạy được không cần thiết bị".
+
+Tiêu chí máy dùng: test trong `:app` mà không import Android và không dùng khai báo nào của riêng `:app`
+thì nó đang kiểm `:core`. Ngoại lệ phải **kể tên kèm lý do** — hiện có đúng một:
+`BuildArtifactNamingTest` (đối tượng kiểm là build script *của* `:app`).
+
+Sau khi dời: app 364 → 261 test, core 318 → 421, tổng vẫn 696 — không mất bài nào.
+
+Đã kiểm ngược bằng cách dời tạm `NavParseTest` sang `:app` → luật đổ đúng chỗ và **gọi tên file**.
+
+Bảng enforcement cập nhật: luật này giờ **máy giữ**, không còn nằm ở phần "tôi phải tự giữ".
