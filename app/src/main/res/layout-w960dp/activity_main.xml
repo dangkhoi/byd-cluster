@@ -66,13 +66,15 @@
                 <CheckBox android:id="@+id/cb_hud" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
                     android:text="Bật đầu ra HUD độc lập" android:textColor="@color/text_secondary" />
-                <CheckBox android:id="@+id/cb_interpolate" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
-                    android:text="Nội suy cự ly tới chỗ rẽ" android:textColor="@color/text_secondary" />
-                <CheckBox android:id="@+id/cb_acc_booster" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
-                    android:text="Đọc thêm cự ly từ màn dẫn đường" android:textColor="@color/text_secondary" />
 
+                                <!-- MỘT công tắc cho một mục đích. Hai phần bên dưới là hai nửa của cùng một cơ chế: nội suy
+                trừ dần cự ly theo tốc độ xe giữa hai lần notification, còn bộ đọc màn Maps kéo mốc về đúng
+                số thật. Tách làm hai checkbox là bày ra cơ chế thay vì ý định — và tệ hơn: tắt nội suy thì
+                bộ đọc màn CHẠY MÀ VÔ NGHĨA, vì `refine()` bỏ qua khi chưa có mốc. -->
+                <CheckBox android:id="@+id/cb_distance_assist" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
+                android:textColor="@color/text_secondary"
+                android:text="Hỗ trợ cự ly" />
                 <Button android:id="@+id/btn_reconnect_nav" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:layout_marginTop="8dp"
                     android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
