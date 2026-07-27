@@ -90,6 +90,7 @@ lại lúc cụm đang có app không treo máy thì đường app đơn giản 
 | Test cho Navigation + HUD | chưa ai kiểm; nợ lớn nhất về chất lượng |
 | Đổi tên package 26 file `:core` | chờ xoá V1 để không đổi hai lần |
 | Quyết `vd_map` giữ hay bỏ | chưa ai nhắc |
+| `NavRealtimeModule` đổi tốc độ ra km/h ở hai chỗ — để làm gì? | nghi trùng với đồng hồ tốc độ sẵn có của xe |
 | Fixture profile cho `observe --recorded` | chặn chuỗi quan sát off-car |
 | ~~Dead Reckon / mock 1 096 dòng~~ | **xong** — xoá hẳn 2026-07-27 theo quyết định của chủ dự án |
 
@@ -102,3 +103,22 @@ call thay vì ranh giới, đếm theo package, quét sai module, đếm trong t
 
 Quy tắc rút ra, đã áp dụng: **mọi tuyên bố thành công phải có một phép đọc lại độc lập.** Chính
 `wc -l` trên sổ verdict là thứ giữ cho phiên xe hôm nay không mất trắng.
+
+## 9. Nợ ghi thêm 2026-07-27 21:00 — km/h trong `NavRealtimeModule`
+
+Chủ dự án hỏi `SpeedProvider` có bỏ được chưa. **Chưa**, vì còn ba người dùng trong mã sống:
+`ClusterBroadcaster` (nội suy cự ly tới điểm rẽ), `NavRealtimeModule` (đổi ra km/h), và
+`ClusterCast.kt` của V1.
+
+Nhân đó tách rõ hai chuyện hay bị lẫn:
+
+| | Ai làm | Có trùng với xe? |
+|---|---|---|
+| Nội suy **cự ly tới điểm rẽ** giữa hai lần notification | ClusterNav | Không. Chỉ ĐỌC tốc độ, không ghi gì vào xe. Đang dùng hàng ngày để hạ lag notification |
+| Suy **vị trí** khi mất GPS (Dead Reckon + mock) | ClusterNav, **đã bỏ hẳn** | Có. `CARTEST.md` mốc C1 ghi: nếu mock không đè được thì head unit dùng GPS OEM riêng → dừng hướng này. Xe còn có thể tự DR từ CAN |
+
+**Nợ cần soi:** `NavRealtimeModule` đổi `SpeedProvider.mps()` ra km/h ở hai chỗ (dòng 34 và 76).
+Nếu số đó chỉ để **hiển thị** thì cụm đã có đồng hồ tốc độ của xe, và hiển thị lại là dư — trùng lặp
+thật, khác loại với chuyện nội suy. Nếu nó dùng để **tính** (ngưỡng, đếm ngược) thì giữ.
+
+Chưa kiểm, ghi nợ đúng như đang biết: hai chỗ gọi, chưa rõ dùng để hiển thị hay để tính.
