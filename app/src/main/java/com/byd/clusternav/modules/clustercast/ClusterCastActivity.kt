@@ -13,7 +13,6 @@ import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.CastAndroidLifecycle
 import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
 import com.byd.clusternav.modules.clustercast.v2.CastManualIntentResult
-import com.byd.clusternav.modules.clustercast.v2.CastManualTargetReader
 import com.byd.clusternav.modules.clustercast.v2.EngineVersion
 import com.byd.clusternav.modules.clustercast.v2.CastIntent
 import com.byd.clusternav.modules.clustercast.v2.CastIntentKind
@@ -51,7 +50,7 @@ class ClusterCastActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         catalog = CastAppCatalog(applicationContext)
-        runtime = CastAndroidRuntime.create(applicationContext); facade = CastFacade.wrapping(runtime)
+        runtime = CastAndroidRuntime.create(applicationContext); facade = CastFacade.wrapping(runtime, catalog)
         refreshReader = CastActivityRefreshReader(runtime, catalog, operationStatus)
         appBinding = CastAppManagerBinding(applicationContext, catalog, runtime.automation, { work.misc(it) }, ::executeCast)
         setContentView(R.layout.activity_cluster_cast)
@@ -153,7 +152,7 @@ class ClusterCastActivity : Activity() {
     private fun executeCast(pkg: String, destructive: Boolean): Unit = runOperation(
         if (destructive) "Đang tắt app rồi chiếu lại…" else "Đang xác minh target và chuẩn bị Cluster Cast…",
         block = {
-            val r = facade.runManualIntent(pkg, manualTargetReader(), allowDestructive = destructive, preferredDensityDpi = catalog.clusterDensityDpi(pkg), clusterStyle = catalog.clusterStyle(pkg))
+            val r = facade.runManualIntent(pkg, allowDestructive = destructive, preferredDensityDpi = catalog.clusterDensityDpi(pkg), clusterStyle = catalog.clusterStyle(pkg))
             if (!destructive && CastRetryPrompt.escalatable(r, protectedTarget(pkg)) && facade.observedState()?.target?.packageName != pkg) {
                 postUi { if (!destroyed) CastRetryPrompt.show(this, pkg) { executeCast(pkg, true) } }
             }
@@ -181,7 +180,7 @@ class ClusterCastActivity : Activity() {
             val token = operationStatus.begin("Đang tiếp tục lựa chọn mới nhất: $pending…")
             postUi { statusTimers.cancelStatusExpiry(); refresh() }
             val selectionRevision = work.currentSelectionRevision()
-            val result = runCatching { facade.resumePendingIntent(manualTargetReader()) }
+            val result = runCatching { facade.resumePendingIntent() }
                 .getOrElse {
                     work.finishMutation(mutationRevision)
                     completeOperation(token, "Lỗi: ${it.message}")
@@ -203,7 +202,6 @@ class ClusterCastActivity : Activity() {
             }
         }
     }
-    private fun manualTargetReader() = CastManualTargetReader { catalog.snapshot(it, facade.phoneSession(it)) }
     private fun openAdjustment() {
         work.misc {
             val observed = facade.observedState()
@@ -253,6 +251,9 @@ class ClusterCastActivity : Activity() {
             installed = runCatching { packageManager.getPackageInfo(pkg, 0) }.isSuccess,
             hasLauncher = packageManager.getLaunchIntentForPackage(pkg) != null,
         )
+        // Nhánh geometry còn dùng ExecutionResult trực tiếp, có lý do: nó phải BIND nháp điều chỉnh vào
+        // transaction bằng cả operationId và epoch TRƯỚC khi chờ hội tụ, nên trình tự khác
+        // executeAndSettle. Bọc nó tử tế cần đưa cả CastAdjustmentWorkspace qua façade — việc riêng, chưa làm.
         when (val execution = facade.execute(plan, pkg)) {
             is ExecutionResult.AwaitingVerification -> {
                 val bound = runtime.adjustment.bindExecution(execution.operationId, execution.epoch)
@@ -334,14 +335,11 @@ class ClusterCastActivity : Activity() {
             projectionComponent = true, consequenceConfirmed = true,
         )
         val plan = facade.planRecover(pkg, proof, catalog.evidence(pkg, disconnected))
-        when (val result = facade.execute(plan, pkg)) {
-            is ExecutionResult.AwaitingVerification -> {
-                Thread.sleep(250)
-                if (facade.observeAndComplete(result.operationId)) "Đã phục hồi và xác minh"
-                else "Phục hồi chưa hội tụ; transaction được giữ để xử lý an toàn"
-            }
-            is ExecutionResult.RecoveryRequired -> "Cần phục hồi an toàn: ${result.reason}"
-            is ExecutionResult.Blocked -> "Phục hồi bị chặn: ${result.reason}"
+        when (val outcome = facade.executeAndSettle(plan, pkg)) {
+            is CastFacade.Outcome.Verified -> "Đã phục hồi và xác minh"
+            is CastFacade.Outcome.NotVerified -> "Phục hồi chưa hội tụ; transaction được giữ để xử lý an toàn"
+            is CastFacade.Outcome.RecoveryRequired -> "Cần phục hồi an toàn: ${outcome.reason}"
+            is CastFacade.Outcome.Blocked -> "Phục hồi bị chặn: ${outcome.reason}"
         }
     })
     private fun showPhysicalInstruction() {
@@ -390,13 +388,11 @@ class ClusterCastActivity : Activity() {
         if (envelope == null) return "Durable store unavailable"
         if (!facade.v2OwnsActions(envelope)) return "Stop owner is not V2"
         val plan = facade.planStop(pkg, pkg?.let { catalog.evidence(it, facade.phoneSession(it)) })
-        return when (val result = facade.execute(plan, pkg)) {
-            is ExecutionResult.AwaitingVerification -> {
-                Thread.sleep(250)
-                if (facade.observeAndComplete(result.operationId)) "Đã trả đồng hồ" else "Stop chưa xác minh"
-            }
-            is ExecutionResult.RecoveryRequired -> "Stop cần phục hồi: ${result.reason}"
-            is ExecutionResult.Blocked -> "Stop bị chặn: ${result.reason}"
+        return when (val outcome = facade.executeAndSettle(plan, pkg)) {
+            is CastFacade.Outcome.Verified -> "Đã trả đồng hồ"
+            is CastFacade.Outcome.NotVerified -> "Stop chưa xác minh"
+            is CastFacade.Outcome.RecoveryRequired -> "Stop cần phục hồi: ${outcome.reason}"
+            is CastFacade.Outcome.Blocked -> "Stop bị chặn: ${outcome.reason}"
         }
     }
     private fun runOperation(initial: String, block: () -> String, after: () -> Unit = {}) {

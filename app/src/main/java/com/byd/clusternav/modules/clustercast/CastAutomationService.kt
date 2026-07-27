@@ -21,7 +21,6 @@ import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
 import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.CastAutomationSettings
 import com.byd.clusternav.modules.clustercast.v2.CastManualIntentResult
-import com.byd.clusternav.modules.clustercast.v2.CastManualTargetReader
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -111,7 +110,7 @@ class CastAutomationService : Service() {
         settings: CastAutomationSettings,
         requestId: UUID,
     ) {
-        val envelope = CastFacade.wrapping(runtime).envelope() ?: run {
+        val envelope = CastFacade.wrapping(runtime, CastAppCatalog(applicationContext)).envelope() ?: run {
             settings.terminalize(requestId, AutomationRequestState.BLOCKED, AutomationReason.KNOWN_FAILURE)
             return
         }
@@ -121,7 +120,7 @@ class CastAutomationService : Service() {
             settings.terminalize(requestId, AutomationRequestState.SUPERSEDED, AutomationReason.STOP_SUPERSEDED)
             return
         }
-        if (CastFacade.wrapping(runtime).pendingIntentIsUserRequested(envelope)) {
+        if (CastFacade.wrapping(runtime, CastAppCatalog(applicationContext)).pendingIntentIsUserRequested(envelope)) {
             settings.terminalize(requestId, AutomationRequestState.SUPERSEDED, AutomationReason.USER_SUPERSEDED)
             return
         }
@@ -166,11 +165,10 @@ class CastAutomationService : Service() {
             settings.terminalize(requestId, AutomationRequestState.SUPERSEDED, AutomationReason.STOP_SUPERSEDED)
             return
         }
-        val catalog = CastAppCatalog(applicationContext) { CastFacade.wrapping(runtime).phoneSession(it) }
+        val catalog = CastAppCatalog(applicationContext) { CastFacade.wrapping(runtime, CastAppCatalog(applicationContext)).phoneSession(it) }
         val result = runCatching {
-            CastFacade.wrapping(runtime).runBootAutomationIntent(
+            CastFacade.wrapping(runtime, catalog).runBootAutomationIntent(
                 request.targetPackage,
-                CastManualTargetReader { catalog.snapshot(it, CastFacade.wrapping(runtime).phoneSession(it)) },
                 automationRequestId = requestId,
             )
         }.getOrElse { failure ->
@@ -181,7 +179,7 @@ class CastAutomationService : Service() {
             is CastManualIntentResult.Succeeded ->
                 settings.terminalize(requestId, AutomationRequestState.COMPLETED, null)
             is CastManualIntentResult.Blocked -> {
-                val current = CastFacade.wrapping(runtime).envelope()
+                val current = CastFacade.wrapping(runtime, CastAppCatalog(applicationContext)).envelope()
                 val stillCurrent = current?.bootAutomationRequest?.takeIf { it.requestId == requestId }
                 val reason = if (current?.transaction != null && stillCurrent != null && !stillCurrent.terminal) {
                     AutomationReason.PRIOR_JOURNAL

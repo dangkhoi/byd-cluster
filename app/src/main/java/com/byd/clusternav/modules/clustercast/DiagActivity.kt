@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast
 
+import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -38,7 +39,7 @@ class DiagActivity : Activity() {
     private fun refresh() {
         report.text = "Đang đọc…"
         Thread {
-            val facade = CastFacade.wrapping(runtime)
+            val facade = CastFacade.wrapping(runtime, CastAppCatalog(applicationContext))
             val observation = facade.observe()
             val value = buildString {
                 appendLine("mode=READ_ONLY")

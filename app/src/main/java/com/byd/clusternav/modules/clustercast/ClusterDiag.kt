@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast
 
+import com.byd.clusternav.carexec.LocalDeviceShell
 import android.content.Context
 import com.byd.clusternav.AdbKeys
 
@@ -50,9 +51,9 @@ object ClusterDiag {
         val summary = StringBuilder()
         sb.append("=== ClusterNav diag $stamp ===\npkg=$pkg\n")
         runCatching {
-            dadb.Dadb.create("localhost", 5555, AdbKeys.ensure(app)).use { adb ->
+            LocalDeviceShell.session(AdbKeys.ensure(app)) { shell ->
                 fun sh(c: String): String {
-                    val r = adb.shell(c)
+                    val r = shell(c)
                     return (r.output + (if (r.errorOutput.isNotBlank()) "\n[stderr] ${r.errorOutput}" else "")).trim()
                 }
                 // ★ v0.51 ĐO, KHÔNG NHẬN CỜ. `vd` truyền vào là ClusterCast.lastDisplayId — cờ RAM, chết theo

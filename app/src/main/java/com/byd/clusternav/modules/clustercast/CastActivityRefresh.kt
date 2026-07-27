@@ -37,7 +37,7 @@ internal class CastActivityRefreshReader(
     fun read(selectedPackage: String?, stopRequestedAt: Instant?): CastActivityRefreshResult {
         // A journal that still holds an unresolved operation makes the whole screen read-only, so give
         // it a chance to reach a terminal state before anything is rendered from it.
-        val facade = CastFacade.wrapping(runtime)
+        val facade = CastFacade.wrapping(runtime, catalog)
         if (facade.reconcileAbandoned()) facade.recordOperation("cleared an abandoned operation on refresh")
         // Không cần biết kiểu StoreRead/ObservationValue: façade trả thẳng thứ cần dùng.
         val envelope = facade.envelope()
@@ -72,7 +72,7 @@ internal class CastActivityRefreshReader(
         val selectedEligible = placementAllowed && selectedPackage?.let { packageName ->
             val current = envelope ?: return@let false
             runCatching {
-                facade.selectionReady(catalog.snapshot(packageName, facade.phoneSession(packageName)), current)
+                facade.selectionReady(packageName, current)
             }.getOrDefault(false)
         } == true
         return CastActivityRefreshResult(

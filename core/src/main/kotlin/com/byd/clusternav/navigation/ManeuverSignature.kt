@@ -1,8 +1,6 @@
-package com.byd.clusternav
+package com.byd.clusternav.navigation
 
 import com.byd.clusternav.navigation.ManeuverRegistry
-import android.graphics.Bitmap
-import android.util.Log
 
 /**
  * Suy HƯỚNG RẼ GMaps từ large-icon bằng "chữ ký tri giác" — PORT NGUYÊN VĂN cách Open BYD 2.3 / DashCast
@@ -18,6 +16,16 @@ import android.util.Log
  * Mã giữ đúng từng bước của wm0.b với tham số c() dùng (f=1.0, z=false): ngưỡng = max -> đếm pixel sáng nhất.
  */
 object ManeuverSignature {
+
+    /**
+     * Ghi chú chẩn đoán. Mặc định không làm gì.
+     *
+     * Trước 2026-07-27 lớp này gọi `android.util.Log` trực tiếp, và đó là một trong hai lý do 226 dòng
+     * thuật toán nhận dạng hướng rẽ phải sống trong `:app` — cùng với việc nhận `android.graphics.Bitmap`.
+     * Cả hai đều không phải nhu cầu thật của thuật toán. App gắn logger Android vào đây khi khởi tạo.
+     */
+    var note: (String) -> Unit = {}
+
     private const val TAG = "ManeuverSig"
     private const val GRID = 15                 // 15×15 = 225 ô
     private const val BITS = GRID * GRID
@@ -38,21 +46,21 @@ object ManeuverSignature {
     }
 
     /** -> mã AMAP NEW_ICON từ ảnh mũi tên, hoặc null nếu mờ/không khớp. */
-    fun classify(bmp: Bitmap?): Int? {
+    fun classify(bmp: PixelFrame?): Int? {
         if (bmp == null || bmp.width < 8 || bmp.height < 8) return null
         val s = signature(bmp) ?: run { set("(mờ)", -1); return null }
         val name = match(s.bits) ?: matchNCC(s.fill)   // #3: Hamming trượt → NCC fallback (suy giảm dần)
-            ?: run { set("(không khớp)", -1); Log.i(TAG, "no match (Hamming>$MAX_HAMMING, NCC<$NCC_MIN)"); return null }
+            ?: run { set("(không khớp)", -1); note("no match (Hamming>$MAX_HAMMING, NCC<$NCC_MIN)"); return null }
         val amap = nameToAmap(name)
         set(name, amap)
-        Log.i(TAG, "sig '$name' -> amap=$amap")
+        note("sig '$name' -> amap=$amap")
         return amap
     }
 
     private fun set(n: String, a: Int) { lastName = n; lastAmap = a }
 
     /** -> mã icon HAL GỐC (1..49, enum HudController) từ ảnh, hoặc null. Cho đường ghi-thẳng-HAL (dadb/NavOpen). */
-    fun classifyHal(bmp: Bitmap?): Int? {
+    fun classifyHal(bmp: PixelFrame?): Int? {
         if (bmp == null || bmp.width < 8 || bmp.height < 8) return null
         val s = signature(bmp) ?: return null
         val name = match(s.bits) ?: matchNCC(s.fill) ?: return null   // #3: NCC fallback
@@ -60,12 +68,11 @@ object ManeuverSignature {
     }
 
     // ── chữ ký 225-bit (port wm0.c -> wm0.b với f=1.0, z=false) ──
-    private fun signature(bmp: Bitmap): Sig? {
+    private fun signature(bmp: PixelFrame): Sig? {
         val w = bmp.width; val h = bmp.height
         val n = w * h
         if (n <= 0) return null
-        val px = IntArray(n)
-        runCatching { bmp.getPixels(px, 0, w, 0, 0, w, h) }.getOrElse { return null }
+        val px = bmp.argb() ?: return null
 
         // z2: ảnh có alpha? — app gốc CHỈ xét pixel[0] (giữ y nguyên dù lạ; large-icon góc trên trong suốt).
         val hasAlpha = ((px[0] ushr 24) and 0xFF) < 255

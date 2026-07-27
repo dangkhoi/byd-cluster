@@ -23,7 +23,7 @@ class CastArchitectureRatchetTest {
      * Số kiểu của tầng dưới mà UI còn import trực tiếp. Façade chỉ chặn được lời gọi; chừng nào con số
      * này còn lớn thì UI vẫn buộc chặt vào hình dạng bên trong.
      */
-    private val uiTypeCoupling = 31
+    private val uiTypeCoupling = 30
 
     /**
      * Số kiểu **của tầng dưới** (`:core` / `:car-integration`) mà UI còn import trực tiếp.
@@ -32,16 +32,21 @@ class CastArchitectureRatchetTest {
      * (`CastAndroidRuntime`, `CastAppCatalog`, `CastAndroidLifecycle`) — UI dùng chúng là app→app, không
      * phải vượt tầng. Con số này mới là khoảng cách thật tới lời tuyên bố "UI chỉ thấy façade".
      */
-    private val crossLayerCoupling = 27
+    private val crossLayerCoupling = 26
 
     /**
      * Số chỗ mở kết nối adb nằm ngoài :car-integration. Kiến trúc nói mọi transport thuộc một chỗ; đây
      * là khoảng cách còn lại tới lời tuyên bố đó.
      *
-     * 8 trong 13 chỗ nằm trong ClusterCast.kt — engine V1 cũ vẫn còn trong cây. Xoá nó là cách rẻ nhất
-     * để hạ phần lớn con số này, và phải làm sau khi V2 thật sự chạy được trên xe, không phải trước.
+     * 13 → 9 ngày 27/7: bốn chỗ lẻ (`NavConnect` tự chữa listener, `ClusterDiag`, `MockLoc` tự cấp quyền,
+     * `UpdateChecker` cài bản mới) đã đi qua `LocalDeviceShell` trong `:car-integration`. Trình tự được giữ
+     * nguyên bằng API `session` vì `NavConnect` ngủ 1.5 giây giữa hai lệnh trên cùng phiên — đổi thành hai
+     * phiên rời là đổi hành vi của một đường tự-chữa vốn mong manh.
+     *
+     * 9 còn lại: 8 trong `ClusterCast.kt` (engine V1 cũ, chỉ xoá được sau khi V2 chạy trên xe) và 1 trong
+     * `DadbBridge.kt` (giữ phiên lâu dài, không vừa với helper phiên-ngắn).
      */
-    private val adbEntryPointsOutsideTransport = 13
+    private val adbEntryPointsOutsideTransport = 9
 
     @Test
     fun `ui type coupling to the lower layer only shrinks`() {

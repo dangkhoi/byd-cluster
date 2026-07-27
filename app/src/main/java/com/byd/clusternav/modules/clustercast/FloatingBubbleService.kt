@@ -28,7 +28,6 @@ import com.byd.clusternav.modules.clustercast.v2.CastAndroidLifecycle
 import com.byd.clusternav.modules.clustercast.v2.CastAndroidRuntime
 import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.CastAppEntry
-import com.byd.clusternav.modules.clustercast.v2.CastManualTargetReader
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -79,7 +78,7 @@ class FloatingBubbleService : Service() {
     override fun onCreate() {
         super.onCreate()
         runtime = CastAndroidRuntime.create(applicationContext)
-        facade = CastFacade.wrapping(runtime)
+        facade = CastFacade.wrapping(runtime, catalog)
         catalog = CastAppCatalog(applicationContext) { facade.phoneSession(it) }
         if (!catalog.bubbleEnabled()) { stopSelf(); return }
         if (!startForegroundOnce()) { stopSelf(); return }
@@ -494,7 +493,6 @@ class FloatingBubbleService : Service() {
             runCatching {
                 facade.runManualIntent(
                     packageName,
-                    CastManualTargetReader { catalog.snapshot(it, facade.phoneSession(it)) },
                     preferredDensityDpi = catalog.clusterDensityDpi(packageName),
                     clusterStyle = catalog.clusterStyle(packageName),
                 )
