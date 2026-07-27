@@ -1,6 +1,5 @@
-package com.byd.clusternav
+package com.byd.clusternav.navigation
 
-import com.byd.clusternav.navigation.NavFormat
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
