@@ -256,6 +256,10 @@ class NavigationSessionCoordinator(
         allowed: MutableSet<NavigationAction>
     ) {
         allowed += if (health.enabled) disable else enable
+        // Giới hạn đã biết (đo 2026-07-27, NavigationWedgedWorkerTest): nếu luồng giao duy nhất kẹt ở I/O
+        // bỏ qua interrupt thì thử lại KHÔNG thể thành công — hàng vẫn đầy, luồng vẫn kẹt. Vẫn cấp RETRY vì
+        // phần lớn FAULT là do một lần giao lỗi và thử lại chữa được; nhưng đừng coi RETRY là bảo đảm.
+        // Muốn chữa ca kẹt thật thì phải dựng lại executor, và chưa có bằng chứng ngoài đời rằng nó xảy ra.
         if (health.status is NavigationOutputStatus.FAULT) {
             allowed += if (health.target == NavigationOutputTarget.CLUSTER_LANE) {
                 NavigationAction.RETRY_CLUSTER_LANE

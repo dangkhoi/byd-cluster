@@ -32,6 +32,25 @@ class RealFixtureParsingTest {
     }
 
     @Test
+    fun `fixture phai khop voi lenh ma no dai dien`() {
+        // 2026-07-27: `PROFILE_STATE` (lệnh `am get-current-user`, trả MỘT SỐ) từng bị trỏ vào
+        // globals-occupied.txt — file chứa giá trị settings. Parser đọc không ra số nên báo "active
+        // Android profile format unsupported", tức trách oan định dạng của xe trong khi lỗi ở mapping của
+        // chính ta. Bài kiểm chặn đúng lớp lỗi đó: fixture nào tồn tại thì nội dung phải đúng hình dạng.
+        val shapes = mapOf<String, (String) -> Boolean>(
+            "am-get-current-user.txt" to { text -> text.trim().toIntOrNull() != null },
+            "globals-occupied.txt" to { text -> text.lineSequence().any { it.contains("=") } },
+            "appops-get-clusternav.txt" to { text -> text.contains(":") },
+            "am-stack-list-occupied.txt" to { text -> text.contains("Stack id=") },
+        )
+        val wrong = shapes.filter { (name, shape) ->
+            val text = runCatching { fixture(name) }.getOrNull()
+            text != null && !shape(text)
+        }.keys
+        assertTrue(wrong.isEmpty(), "fixture có nội dung không đúng hình dạng lệnh: $wrong")
+    }
+
+    @Test
     fun `khong the phan biet cum dang hien app hay dong ho bang dumpsys display`() {
         // Q1, trả lời ngày 2026-07-27 19:38–19:40 với NGƯỜI XÁC NHẬN cả hai đầu:
         //   19:38 chủ xe: "vietmap lên ok nhé"  → cụm hiện app
