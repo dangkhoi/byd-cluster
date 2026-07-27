@@ -20,7 +20,7 @@ dự án này đang tránh.
 | car-exec (đánh giá) | 10 | 2 242 | công cụ, không xuất xưởng |
 | ~~Dead Reckon / mock-location~~ | ~~6~~ | ~~1 096~~ | **đã xoá hẳn 2026-07-27** |
 | HAL / infra | 2 | 264 | có |
-| vd_map (thử nghiệm cũ) | 2 | 185 | **không** |
+| ~~vd_map (thử nghiệm cũ)~~ | ~~2~~ | ~~185~~ | **đã xoá 2026-07-27** |
 | **Tổng** | **124** | **20 145** | |
 
 **Sau khi xoá Dead Reckon: 6 155 dòng (32%) còn nằm ngoài sản phẩm đích** (bản đầu là 7 251 / 36%). Trong đó engine V1 là phần lớn nhất và cũng là phần
@@ -152,7 +152,7 @@ suy đang đẩy lên cụm và ETA. Nó **không tính gì** bằng km/h và **
 | Sửa điều kiện phát `30,16,35` | chờ kết quả `reissue-policy` mai — sửa trước là đoán |
 | Nối `AttestationNeed` vào bộ chiếu trạng thái | phần lõi xong; UI làm cuối theo đúng hai đường ray |
 | Đổi tên package 26 file `:core` | chờ xoá V1 để không đổi hai lần |
-| `vd_map` (185 dòng, 2 file) | **cần chủ dự án quyết** giữ hay bỏ |
+| ~~`vd_map`~~ | **xoá 21:35** theo quyết định của chủ dự án: "chạy được cast rồi không dùng nữa" |
 | Fixture `am get-current-user` | cần một lệnh trên xe, đã dặn trong `run-on-car.md` |
 
 ### Cố ý KHÔNG làm, kèm lý do
@@ -164,3 +164,28 @@ suy đang đẩy lên cụm và ETA. Nó **không tính gì** bằng km/h và **
   thị lệch. Viết test cho nó chỉ để con số đẹp hơn.
 - **Chữa ca luồng giao kẹt** (dựng lại executor): chưa có bằng chứng ngoài đời rằng nó xảy ra; giới hạn
   đã ghi ngay tại chỗ cấp `RETRY_*` để không hứa điều làm không được.
+
+## 11. Xoá `vd_map` và cả chuỗi transport chỉ nó dùng — 21:40
+
+Chủ dự án: *"chạy đc cast rồi ko dùng vd_map này nữa, xoá đi"*.
+
+`vd_map` chiếu app map vào một `VirtualDisplay` gắn `SurfaceView` để hiện ở **màn giữa** — không liên
+quan cụm. Nó chưa dùng được thật: chú thích của chính nó ghi *"v1: CHỦ YẾU để HIỂN THỊ… Chạm cần
+INJECT_EVENTS (app thường bị chặn)"*, tức map hiện ra mà không bấm được. Nó cũng là **ngoại lệ kiến trúc
+duy nhất** của dự án (module duy nhất cần `<activity>` riêng trong Manifest).
+
+Xoá nó kéo theo một chuỗi, và đây là phần đáng ghi: **`DadbBridge` không còn ai dùng**, vì `vd_map` là
+người dùng duy nhất. Nên xoá luôn `DadbBridge` và `PersistentDeviceShell` — cái transport tôi vừa tạo
+buổi chiều cùng ngày để chứa nó. Giữ một transport không ai gọi chỉ là nợ chờ mục.
+
+| Xoá | Dòng |
+|---|---:|
+| `modules/vdmap/` (2 file) | 185 |
+| `modules/hal/DadbBridge.kt` | 39 |
+| `carexec/PersistentDeviceShell.kt` | 61 |
+| dòng `ModuleRegistry` + khối `<activity>` Manifest | 12 |
+
+Cây: **19.048 → 18.953 dòng**, 124 → 116 file. `car-integration` còn 5 file / 802 dòng. 696 bài kiểm
+xanh, không đổi số — cả ba phần xoá đều không có bài kiểm nào, đúng như tình trạng của chúng.
+
+Mã ngoài sản phẩm đích giờ chỉ còn engine V1 (5.970 dòng), và nó chặn bởi việc V2 phải chạy được trên xe.
