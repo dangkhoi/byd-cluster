@@ -1,5 +1,6 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.navigation.SpeedReading
 import com.byd.clusternav.navigation.TurnDistanceInterpolator
 import android.content.Context
 import android.content.ContextWrapper
@@ -16,7 +17,7 @@ import android.content.ContextWrapper
 object SpeedProvider {
     @Volatile private var dev: Any? = null
     @Volatile private var speedMethod: java.lang.reflect.Method? = null   // cache 1 lần (device ổn định) — khỏi scan getMethods() mỗi tick
-    @Volatile private var lastGoodMps = 0.0
+    private val reading = SpeedReading()
 
     /**
      * ★★ W1-3 (senior review 2026-07-21) — "KHÔNG ĐỌC ĐƯỢC" phải là một GIÁ TRỊ RIÊNG, không được giả dạng 0.
@@ -35,15 +36,14 @@ object SpeedProvider {
         val m = speedMethod ?: runCatching {
             d.javaClass.methods.firstOrNull { it.name == "getCurrentSpeed" && it.parameterTypes.isEmpty() }
         }.getOrNull()?.also { speedMethod = it } ?: return null
-        val kmh = runCatching { (m.invoke(d) as? Number)?.toDouble() }.getOrNull() ?: return null
-        if (kmh < 0 || kmh > 400) return null             // sentinel/không hợp lệ → KHÔNG BIẾT, không phải 0
-        lastGoodMps = kmh / 3.6
-        return lastGoodMps
+        val kmh = runCatching { (m.invoke(d) as? Number)?.toDouble() }.getOrNull()
+        // Quyết định nằm ở [SpeedReading] trong :core nên kiểm được ngoài xe; ở đây chỉ còn việc đọc.
+        return reading.acceptKmh(kmh)
     }
 
     /** Tốc độ hiện tại (m/s), suy biến về giá trị đọc được gần nhất. CHỈ dùng cho hiển thị/nội suy —
      *  cổng an toàn phải dùng [mpsOrNull]. */
-    fun mps(): Double = mpsOrNull() ?: lastGoodMps
+    fun mps(): Double = mpsOrNull() ?: reading.lastGoodMps
 
     private fun device(): Any? {
         dev?.let { return it }
