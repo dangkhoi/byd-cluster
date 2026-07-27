@@ -205,7 +205,10 @@ class CastRendererContractTest {
         assertTrue(selection.indexOf("refresh()") in 0 until selection.indexOf("work.selection"))
         assertTrue(selection.contains("facade.queueLatestTarget(packageName)"))
         assertTrue(activity.contains("isEnabled = false; minimumHeight = dp(56)"))
-        assertTrue(activity.contains("if (values.isEmpty()) apps.addView") && activity.contains("refresh()\n            }"))
+        // 2026-07-27: dựng danh sách app chuyển sang CastAppListView; ca "danh sách rỗng" giờ canh ở đó.
+        val appList = source("main/java/com/byd/clusternav/modules/clustercast/CastAppListView.kt")
+        assertTrue(appList.contains("if (loaded.isEmpty())"))
+        assertTrue(activity.contains("refresh()"))
         listOf(
             "main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt",
             "main/java/com/byd/clusternav/modules/clustercast/DiagActivity.kt",
