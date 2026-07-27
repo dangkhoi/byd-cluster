@@ -42,7 +42,20 @@ import java.util.concurrent.atomic.AtomicLong
 class FloatingBubbleService : Service() {
     private lateinit var runtime: CastAndroidRuntime.Runtime
     private lateinit var facade: CastFacade
-    private lateinit var catalog: CastAppCatalog
+    /**
+     * Khởi tạo TRỄ, không phải `lateinit`.
+     *
+     * `catalog` cần `facade` (để hỏi phiên điện thoại) còn `facade` cần `catalog` — vòng tròn. Nó chạy được
+     * vì lambda hoãn việc đọc `facade` tới lúc gọi thật. Nhưng với `lateinit` thì thứ tự hai dòng gán trở
+     * thành thứ quyết định app sống hay chết: 2026-07-27 commit 00e5438 chèn `facade = ...` LÊN TRÊN dòng
+     * gán `catalog`, và nút nổi crash ngay khi bật —
+     * `UninitializedPropertyAccessException: lateinit property catalog has not been initialized`.
+     *
+     * `by lazy` làm sai thứ tự đó thành KHÔNG THỂ: ai đọc trước thì nó dựng lúc đó.
+     */
+    private val catalog: CastAppCatalog by lazy {
+        CastAppCatalog(applicationContext) { facade.phoneSession(it) }
+    }
     private var windowManager: WindowManager? = null
     private var bubble: LinearLayout? = null
     private var menuButton: TextView? = null
@@ -79,7 +92,6 @@ class FloatingBubbleService : Service() {
         super.onCreate()
         runtime = CastAndroidRuntime.create(applicationContext)
         facade = CastFacade.wrapping(runtime, catalog)
-        catalog = CastAppCatalog(applicationContext) { facade.phoneSession(it) }
         if (!catalog.bubbleEnabled()) { stopSelf(); return }
         if (!startForegroundOnce()) { stopSelf(); return }
         if (!Settings.canDrawOverlays(this)) { stopSelf(); return }
