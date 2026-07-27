@@ -1,2 +1,0 @@
-recordedAt	feature	step	candidate	verdict	source	endpoint	note
-2026-07-27T07:49:01.689953Z	CLUSTER_CAST	observe	observe.dumpsys	SKIPPED	MEASURED	localhost:5555	test

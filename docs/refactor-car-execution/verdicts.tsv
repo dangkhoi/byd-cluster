@@ -1,1 +1,10 @@
 recordedAt	feature	step	candidate	verdict	source	endpoint	note
+2026-07-27T07:49:01.689953Z	CLUSTER_CAST	observe	observe.dumpsys	SKIPPED	MEASURED	localhost:5555	test
+2026-07-27T12:21:05.722361Z	CLUSTER_CAST	observe	observe.dumpsys	OK	MEASURED	localhost:5555	
+2026-07-27T12:21:06.451733Z	CLUSTER_CAST	probe-profile	probe.services-and-display	OK	MEASURED	localhost:5555	
+2026-07-27T12:21:07.173326Z	CLUSTER_CAST	teardown	teardown.18-then-0	OK	HUMAN	localhost:5555	
+2026-07-27T12:21:07.539131Z	CLUSTER_CAST	open-projection	open.seal-30-16-35	OK	HUMAN	localhost:5555	
+2026-07-27T12:21:21.671243Z	CLUSTER_CAST	place	place.freeform-then-resize	OK	MEASURED	localhost:5555	
+2026-07-27T12:21:22.035794Z	CLUSTER_CAST	capture-state	capture.full-surface-flinger	OK	MEASURED	localhost:5555	
+2026-07-27T12:21:22.389921Z	CLUSTER_CAST	place	place.movestack	FAIL	MEASURED	localhost:5555	
+2026-07-27T12:23:43.418405Z	CLUSTER_CAST	observe	observe.dumpsys	OK	MEASURED	localhost:5555	

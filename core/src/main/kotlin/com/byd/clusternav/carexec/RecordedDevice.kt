@@ -41,9 +41,10 @@ class RecordedDevice(private val recordings: Map<CommandKind, String>) : ShellGa
             put(CommandKind.DISPLAY_STATE, "dumpsys-display-occupied.txt")
             put(CommandKind.PROFILE_STATE, "globals-occupied.txt")
             put(CommandKind.ANIMATION_STATE, "globals-occupied.txt")
-            // APP_OPS_STATE chưa có bản ghi nào: phiên trên xe 27/7 không chụp `appops get`. Vì thế
-            // quan sát off-car hiện dừng ở đó và nói rõ thiếu gì, thay vì bịa một chuỗi rỗng rồi để
-            // parser kết luận "đọc được và không có gì". Bổ sung bằng step capture-state ở phiên tới.
+            // Chụp được ở phiên 27/7 chiều (`appops get com.byd.clusternav` trên xe thật). Trước đó
+            // quan sát off-car dừng ở đây và nói rõ thiếu gì, thay vì bịa một chuỗi rỗng rồi để parser
+            // kết luận "đọc được và không có gì".
+            put(CommandKind.APP_OPS_STATE, "appops-get-clusternav.txt")
             return RecordedDevice(map)
         }
     }

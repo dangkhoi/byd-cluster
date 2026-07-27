@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast
 
+import com.byd.clusternav.modules.clustercast.v2.NON_DISPATCHING_ACTIONS
 import com.byd.clusternav.modules.clustercast.v2.CastAction
 import com.byd.clusternav.cast.platform.CastAndroidRuntime
 import com.byd.clusternav.cast.platform.CastAppCatalog
@@ -16,13 +17,12 @@ internal data class CastActivityRefreshResult(
 
 /**
  * Các phép KHÔNG phát lệnh nào ra xe, nên một phép ghi đang chờ không có lý do gì khoá chúng.
- * Chọn app và mở danh sách app chỉ ghi tuỳ chọn cục bộ; Chẩn đoán chỉ đọc.
+ *
+ * Lấy từ [NON_DISPATCHING_ACTIONS] ở `:core` thay vì tự liệt kê — bản tự liệt kê đã lệch với projector
+ * ngay lần sửa kế tiếp. Thêm `CHOOSE_ANOTHER_APP`: đổi target cũng không phát lệnh, nhưng nó chỉ đi qua
+ * khi trạng thái vốn đã cho (phép giao), nên không tự nới quyền.
  */
-private val NON_DISPATCHING = setOf(
-    CastAction.OPEN_DIAGNOSTICS,
-    CastAction.SELECT_TARGET_APP,
-    CastAction.CHOOSE_ANOTHER_APP,
-)
+private val NON_DISPATCHING = NON_DISPATCHING_ACTIONS + CastAction.CHOOSE_ANOTHER_APP
 
 /**
  * Thu hẹp tập phép khi đang chờ một phép ghi hội tụ.

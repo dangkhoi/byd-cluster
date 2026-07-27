@@ -27,6 +27,23 @@ class WrapperContractTest {
     }
 
     @Test
+    fun `so verdict phai la duong dan tuyet doi`() {
+        // 2026-07-27: bản tương đối bị Gradle giải theo thư mục module, nên `verdict` ghi vào
+        // car-integration/docs/... trong khi file git theo dõi nằm ở gốc. Runner in "đã ghi" mà sổ thật
+        // vẫn rỗng — cả một buổi ra xe suýt mất trắng, vì mọi verdict đều rơi vào một file bóng.
+        val script = wrapper
+        val ledgerLine = script.lines().first { line -> line.startsWith("LEDGER=") }
+        assertTrue(
+            ledgerLine.contains("\$ROOT/"),
+            "LEDGER phải neo vào \$ROOT, không thì Gradle giải theo thư mục module: $ledgerLine",
+        )
+        assertTrue(
+            script.lines().any { line -> line.startsWith("ROOT=") },
+            "phải khai báo ROOT trước khi dùng, không thì set -u làm script chết",
+        )
+    }
+
+    @Test
     fun `moi lenh cua CLI deu duoc vo cho phep`() {
         val commands = Regex(""""([a-z0-9]+)" ->""").findAll(cli).map { it.groupValues[1] }.toSet() - "observe"
         (commands + "observe").forEach { command ->

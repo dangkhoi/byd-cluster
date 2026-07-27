@@ -299,6 +299,22 @@ enum class CastAction {
      */
     SELECT_TARGET_APP,
 }
+
+/**
+ * Những phép KHÔNG phát lệnh nào ra xe.
+ *
+ * Một nguồn duy nhất, vì ngày 2026-07-27 danh sách này từng tồn tại ở hai chỗ — `alwaysAllowed` trong
+ * projector và `NON_DISPATCHING` trong tầng UI — rồi lệch nhau ngay lần sửa kế tiếp. Ai cần biết "phép
+ * này có đụng xe không" thì đọc ở đây.
+ *
+ * `OPEN_APP_MANAGER` nằm trong danh sách vì màn cấu hình chỉ ghi tuỳ chọn cục bộ; phép `cast` duy nhất
+ * bên trong nó vẫn đi qua cổng engine như mọi lần chiếu khác.
+ */
+val NON_DISPATCHING_ACTIONS: Set<CastAction> = setOf(
+    CastAction.OPEN_DIAGNOSTICS,
+    CastAction.SELECT_TARGET_APP,
+    CastAction.OPEN_APP_MANAGER,
+)
 enum class CoarseState {
     UNKNOWN, COLD_PRISTINE, LEGACY_ACTIVE_READ_ONLY, PREPARING, ACTIVATING, SWITCHING, VERIFYING,
     STOP_REQUESTED, RESTORING, RECOVERING, IDLE_VERIFIED, ACTIVE_VERIFIED,

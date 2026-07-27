@@ -4,11 +4,15 @@
 #
 # Vì sao cần vỏ: gõ "./gradlew --offline -q :car-integration:run --args=..." mười lần một phiên thì dễ sai.
 set -euo pipefail
-cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
 
 : "${JAVA_HOME:=/opt/homebrew/opt/openjdk@17}"
 export JAVA_HOME
-LEDGER="${CAREXEC_LEDGER:-docs/refactor-car-execution/verdicts.tsv}"
+# Đường dẫn TUYỆT ĐỐI. 2026-07-27: bản tương đối bị Gradle giải theo thư mục module, nên `verdict`
+# ghi vào car-integration/docs/... trong khi file git theo dõi nằm ở gốc — runner in "đã ghi" mà sổ
+# thật vẫn rỗng. Một buổi ra xe suýt mất trắng vì thế.
+LEDGER="${CAREXEC_LEDGER:-$ROOT/docs/refactor-car-execution/verdicts.tsv}"
 HOST="${CAR_HOST:-}"
 
 usage() {

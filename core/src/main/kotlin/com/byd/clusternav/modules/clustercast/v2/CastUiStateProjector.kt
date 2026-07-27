@@ -155,11 +155,14 @@ object CastUiStateProjector {
 
     /**
      * Nhóm phép không bao giờ bị khoá, vì chúng không phát lệnh nào ra xe: xem Chẩn đoán để biết vì
-     * sao, và chọn app để chuẩn bị. Gộp ở một chỗ để không trạng thái nào lỡ bỏ sót — thay vì nhớ
+     * sao, chọn app để chuẩn bị, và mở màn cấu hình app.
+     *
+     * Màn cấu hình có đúng MỘT phép phát lệnh (`cast` từ trong danh sách), và phép đó vẫn đi qua cổng
+     * engine như mọi lần chiếu khác — nên mở màn hình không bao giờ đụng tới xe. Ba việc còn lại của nó
+     * (đánh dấu app ưa dùng, đặt DPI/kiểu khung, bật nút nổi) chỉ ghi tuỳ chọn cục bộ. Gộp ở một chỗ để không trạng thái nào lỡ bỏ sót — thay vì nhớ
      * thêm tay ở từng nhánh, cách đã bỏ sót hai lần trong ngày 27/7.
      */
-    private fun alwaysAllowed(actions: Set<CastAction>): Set<CastAction> =
-        actions + CastAction.OPEN_DIAGNOSTICS + CastAction.SELECT_TARGET_APP
+    private fun alwaysAllowed(actions: Set<CastAction>): Set<CastAction> = actions + NON_DISPATCHING_ACTIONS
 
     private fun state(
         input: CastProjectionInput,

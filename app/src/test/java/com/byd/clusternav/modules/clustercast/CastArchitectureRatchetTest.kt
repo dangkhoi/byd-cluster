@@ -24,7 +24,7 @@ class CastArchitectureRatchetTest {
      * Số kiểu của tầng dưới mà UI còn import trực tiếp. Façade chỉ chặn được lời gọi; chừng nào con số
      * này còn lớn thì UI vẫn buộc chặt vào hình dạng bên trong.
      */
-    private val uiTypeCoupling = 27
+    private val uiTypeCoupling = 28
 
     /**
      * Số kiểu **của tầng dưới** (`:core` / `:car-integration`) mà UI còn import trực tiếp.
@@ -33,7 +33,7 @@ class CastArchitectureRatchetTest {
      * (`CastAndroidRuntime`, `CastAppCatalog`, `CastAndroidLifecycle`) — UI dùng chúng là app→app, không
      * phải vượt tầng. Con số này mới là khoảng cách thật tới lời tuyên bố "UI chỉ thấy façade".
      */
-    private val crossLayerCoupling = 27
+    private val crossLayerCoupling = 28
 
     /**
      * Số chỗ mở kết nối adb nằm ngoài :car-integration. Kiến trúc nói mọi transport thuộc một chỗ; đây
