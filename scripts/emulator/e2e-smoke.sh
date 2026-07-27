@@ -206,6 +206,10 @@ echo "=== O1 candidate resolution ==="
 echo "=== O2 install and cold launch ==="
 "${ADB[@]}" logcat -c -b all >/dev/null 2>&1 || true
 inspect_installed_package > "$EVIDENCE_DIR/pre-install-state.txt" 2>&1 || true
+# Xoá dữ liệu app trước khi cài. 2026-07-27: thiếu bước này nên O5 chạy trên journal sót lại từ
+# lần trước; một lần bị kẹt ở "cần xử lý thủ công" là mọi lần sau đều fail, và kết quả của bộ kiểm
+# phụ thuộc thứ tự lịch sử chứ không phụ thuộc bản dựng đang kiểm.
+"${ADB[@]}" shell pm clear "$PACKAGE" > "$EVIDENCE_DIR/state-reset.txt" 2>&1 || true
 if "${ADB[@]}" install -r "$APK" > "$EVIDENCE_DIR/install.txt" 2>&1 \
   && grep -q "^Success" "$EVIDENCE_DIR/install.txt"; then
   ok "install -r accepted the exact candidate"
