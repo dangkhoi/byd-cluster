@@ -13,6 +13,17 @@ nói rõ cái nào máy cưỡng chế được, cái nào còn phải tự gi�
 - Có, và nó **gọi API Android cục bộ của app** (Context, PackageManager, DisplayManager, AtomicFile,
   View, Service, Bitmap) → **`:app`**
 
+**Q1b. Nếu nó cần một *kiểu* của Android nhưng không cần *hành vi* nào của Android → tách port.**
+Đây là dạng lỗi tinh vi nhất đã gặp: `ManeuverSignature` (226 LOC) và `ArrowClassifier` (66 LOC) là thuật
+toán thuần, chỉ cần `width`, `height` và mảng ARGB, nhưng nhận `android.graphics.Bitmap` và gọi
+`android.util.Log`. Theo Q1 thì "cần Android" nên được ở `:app` — hệ quả thật là **292 dòng logic chưa
+từng có một test nào**. Cách chữa: khai báo cái tối thiểu ở `:core` (`PixelFrame`), để lớp bọc ở `:app`,
+và biến log thành seam mặc định không làm gì.
+
+**Phân biệt với trường hợp KHÔNG tách:** nếu code chỉ *mang* đối tượng nền tảng đi tới chỗ dùng nó thật
+(`NotificationParser`, `NavState` chuyển Bitmap tới chỗ vẽ), thì port sẽ làm mất chính đối tượng cần vẽ —
+để ở `:app`. Ranh giới là: **đọc thuộc tính** thì tách được, **truyền tiếp để nền tảng dùng** thì không.
+
 **Q2. Nó là quyết định, dữ liệu, hay trình bày?**
 Quyết định và dữ liệu đều thuộc `:core`. "Trình bày" nghĩa là *mô hình* hiển thị (projector) thì vẫn
 `:core`; chỉ khi nó chạm View/Activity mới là `:app`.

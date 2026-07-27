@@ -1,5 +1,6 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.carexec.LocalDeviceShell
 import android.content.ComponentName
 import android.content.Context
 import android.service.notification.NotificationListenerService
@@ -53,10 +54,10 @@ object NavConnect {
         try {
             runCatching {
                 val keyPair = AdbKeys.ensure(app)   // key CHUNG, sinh nguyên tử + khóa chung (chống đua với MockLoc.selfGrant)
-                dadb.Dadb.create("localhost", 5555, keyPair).use { adb ->
-                    adb.shell("cmd notification disallow_listener $COMP")
+                LocalDeviceShell.session(keyPair) { sh ->
+                    sh("cmd notification disallow_listener $COMP")
                     Thread.sleep(1500)
-                    adb.shell("cmd notification allow_listener $COMP")
+                    sh("cmd notification allow_listener $COMP")
                 }
                 // Fallback cho chắc.
                 NotificationListenerService.requestRebind(ComponentName(app, NavNotificationListener::class.java))

@@ -186,7 +186,7 @@ class CastRendererContractTest {
         assertTrue(initialization.contains("reconcileSelectionAndDrain()"))
         val reconciliation = activity.substring(activity.indexOf("private fun reconcileSelectionAndDrain"), activity.indexOf("private fun drainPendingTarget"))
         assertTrue(reconciliation.indexOf("queueLatestTarget(packageName)") in 0 until reconciliation.lastIndexOf("drainPendingTarget()"))
-        val resume = activity.substring(activity.indexOf("private fun drainPendingTarget"), activity.indexOf("private fun manualTargetReader"))
+        val resume = activity.substring(activity.indexOf("private fun drainPendingTarget"), activity.indexOf("private fun openAdjustment"))
         assertTrue(resume.indexOf("currentSelectionRevision()") in 0 until resume.indexOf("resumePendingIntent"))
         assertTrue(resume.contains("isCurrentSelection(selectionRevision)"))
         assertTrue(resume.contains("target == pending"))

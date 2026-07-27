@@ -8,6 +8,7 @@ import com.byd.clusternav.modules.clustercast.v2.CastManualIntentResult
 import com.byd.clusternav.modules.clustercast.v2.CastManualTargetReader
 import com.byd.clusternav.modules.clustercast.v2.CastSessionEnvelope
 import com.byd.clusternav.modules.clustercast.v2.ClusterStyle
+import com.byd.clusternav.modules.clustercast.v2.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.CastIntent
 import com.byd.clusternav.modules.clustercast.v2.CastRolloutFlags
 import com.byd.clusternav.modules.clustercast.v2.ExecutionResult
@@ -49,7 +50,20 @@ import java.util.UUID
  * thật sẽ diễn ra ở S1 khi các capability được định nghĩa lại; điều façade mua được ngay hôm nay là một
  * đường ranh duy nhất và đo được, thay vì mười bốn đường rò.
  */
-class CastFacade private constructor(private val runtime: CastAndroidRuntime.Runtime) {
+class CastFacade private constructor(
+    private val runtime: CastAndroidRuntime.Runtime,
+    private val catalog: CastAppCatalog,
+) {
+
+    /**
+     * Đọc trạng thái target cho tầng dưới.
+     *
+     * Trước 2026-07-27 ba file UI phải tự lắp `CastManualTargetReader { catalog.snapshot(...) }` rồi truyền
+     * xuống — tức màn hình phải biết tầng dưới cần đọc gì về target. Façade tự lắp từ catalog nó đang giữ.
+     */
+    private fun targets(): CastManualTargetReader =
+        CastManualTargetReader { catalog.snapshot(it, phoneSession(it)) }
+
 
     /** Quan sát trạng thái cụm. Đây là I/O: đừng gọi trên main thread. */
     fun observe(): ObservationValue<ObservedState> = runtime.coordinator.observe()
@@ -129,14 +143,13 @@ class CastFacade private constructor(private val runtime: CastAndroidRuntime.Run
      */
     fun runManualIntent(
         packageName: String,
-        targets: CastManualTargetReader,
         origin: CastIntentOrigin = CastIntentOrigin.USER,
         automationRequestId: UUID? = null,
         allowDestructive: Boolean = false,
         preferredDensityDpi: Int? = null,
         clusterStyle: ClusterStyle = ClusterStyle.CURVED,
     ): CastManualIntentResult = runtime.coordinator.runManualIntent(
-        packageName, runtime.vehicleFacts, targets, origin, automationRequestId,
+        packageName, runtime.vehicleFacts, targets(), origin, automationRequestId,
         allowDestructive, preferredDensityDpi, clusterStyle,
     )
 
@@ -148,8 +161,8 @@ class CastFacade private constructor(private val runtime: CastAndroidRuntime.Run
 
     fun queueLatestTarget(packageName: String): Boolean = runtime.coordinator.queueLatestTarget(packageName)
 
-    fun resumePendingIntent(targets: CastManualTargetReader): CastManualIntentResult? =
-        runtime.coordinator.resumePendingIntent(targets)
+    fun resumePendingIntent(): CastManualIntentResult? =
+        runtime.coordinator.resumePendingIntent(targets())
 
     /** Ngân sách chờ xác nhận Stop, tính bằng ms. UI chỉ cần con số, không cần biết ai định nghĩa. */
     fun stopAcknowledgementGraceMillis(): Long = CastUiRenderer.STOP_ACK_GRACE_MILLIS
@@ -169,16 +182,15 @@ class CastFacade private constructor(private val runtime: CastAndroidRuntime.Run
     fun unavailableReason(reason: DisabledReason): String = CastBubbleProjection.unavailable(reason)
 
     /** App đang chọn có đủ điều kiện để chiếu ngay không. */
-    fun selectionReady(snapshot: CastManualTargetSnapshot, envelope: CastSessionEnvelope): Boolean =
-        snapshot.eligibilityFor(envelope) is CastManualTargetEligibility.Ready
+    fun selectionReady(packageName: String, envelope: CastSessionEnvelope): Boolean =
+        targets().read(packageName).eligibilityFor(envelope) is CastManualTargetEligibility.Ready
 
     /** Chiếu do tự động hoá lúc khởi động, không phải do người bấm. */
     fun runBootAutomationIntent(
         packageName: String,
-        targets: CastManualTargetReader,
         automationRequestId: UUID,
     ): CastManualIntentResult = runManualIntent(
-        packageName, targets, CastIntentOrigin.BOOT_AUTO, automationRequestId,
+        packageName, CastIntentOrigin.BOOT_AUTO, automationRequestId,
     )
 
     /** Ý định đang treo có phải do người bấm không. */
@@ -248,10 +260,53 @@ class CastFacade private constructor(private val runtime: CastAndroidRuntime.Run
     /** Nháp điều chỉnh khung/DPI. UI không cần biết nó nằm ở đâu. */
     fun markAdjustmentApplyFailed(reason: String) = runtime.adjustment.markApplyFailed(reason)
 
+    /**
+     * Kết cục hẹp dành cho UI.
+     *
+     * Trước 2026-07-27 Activity match trực tiếp `ExecutionResult` ở tám nhánh để dựng câu thông báo, tức
+     * màn hình phải biết taxonomy kết cục của tầng dưới. Nó cũng phải tự `Thread.sleep(250)` chờ hội tụ —
+     * một chi tiết thi hành không có việc gì ở tầng UI.
+     */
+    sealed interface Outcome {
+        /** Đã phát lệnh và quan sát xác nhận. */
+        data class Verified(val operationId: UUID) : Outcome
+
+        /** Đã phát lệnh nhưng quan sát chưa xác nhận. KHÔNG phải thành công. */
+        data class NotVerified(val operationId: UUID, val reason: String) : Outcome
+
+        /** Không phát được, kèm lý do đọc được. */
+        data class Blocked(val reason: String) : Outcome
+
+        /** Cần phục hồi trước khi làm tiếp. */
+        data class RecoveryRequired(val reason: String) : Outcome
+    }
+
+    /**
+     * Chạy một plan rồi chờ hội tụ, trả về kết cục hẹp.
+     *
+     * [settleMillis] là chi tiết thi hành, để ở đây chứ không để UI tự ngủ.
+     */
+    fun executeAndSettle(plan: PlanResult, targetPackage: String?, settleMillis: Long = 250): Outcome =
+        when (val result = execute(plan, targetPackage)) {
+            is ExecutionResult.AwaitingVerification -> {
+                Thread.sleep(settleMillis)
+                if (observeAndComplete(result.operationId)) {
+                    Outcome.Verified(result.operationId)
+                } else {
+                    Outcome.NotVerified(result.operationId, "quan sát chưa hội tụ")
+                }
+            }
+            is ExecutionResult.RecoveryRequired -> Outcome.RecoveryRequired(result.reason)
+            is ExecutionResult.Blocked -> Outcome.Blocked(result.reason)
+            else -> Outcome.Blocked("kết cục không xác định")
+        }
+
     companion object {
-        fun of(context: Context): CastFacade = CastFacade(CastAndroidRuntime.create(context))
+        fun of(context: Context): CastFacade =
+            CastFacade(CastAndroidRuntime.create(context), CastAppCatalog(context.applicationContext))
 
         /** Dùng khi caller đã giữ Runtime; không tạo control plane thứ hai. */
-        fun wrapping(runtime: CastAndroidRuntime.Runtime): CastFacade = CastFacade(runtime)
+        fun wrapping(runtime: CastAndroidRuntime.Runtime, catalog: CastAppCatalog): CastFacade =
+            CastFacade(runtime, catalog)
     }
 }

@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.mockloc
 
+import com.byd.clusternav.carexec.LocalDeviceShell
 import android.content.Context
 import android.location.Criteria
 import android.location.Location
@@ -167,8 +168,8 @@ object MockLoc {
             try {
                 runCatching {
                     val kp = com.byd.clusternav.AdbKeys.ensure(app)   // key CHUNG, sinh nguyên tử + khóa chung (chống đua NavConnect)
-                    dadb.Dadb.create("localhost", 5555, kp).use { adb ->
-                        val r = adb.shell("appops set ${app.packageName} android:mock_location allow")
+                    LocalDeviceShell.session(kp) { shell ->
+                        val r = shell("appops set ${app.packageName} android:mock_location allow")
                         // CHỈ latch granted khi lệnh THẬT SỰ chạy OK (exitCode 0) — shell() KHÔNG throw khi appops fail;
                         // latch mù sẽ khoá vĩnh viễn retry nếu 1 lần fail thoáng qua.
                         if (r.exitCode == 0) {

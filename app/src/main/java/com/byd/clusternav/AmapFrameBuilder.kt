@@ -1,5 +1,7 @@
 package com.byd.clusternav
 
+import android.util.Log
+import com.byd.clusternav.navigation.ManeuverSignature
 import com.byd.clusternav.navigation.ArrowClassifier
 import com.byd.clusternav.navigation.NavFormat
 import com.byd.clusternav.navigation.NavParse
@@ -17,6 +19,13 @@ import android.content.Intent
  *  - NEW_ICON = index AMAP 0..28 (AmapService tự remap CAN qua TurnIdMapToCAN — KHÔNG tự remap ở đây).
  */
 object AmapFrameBuilder {
+
+    // Gắn logger Android vào seam của thuật toán trong :core. Thuật toán không biết Android; app quyết
+    // định ghi log ở đâu.
+    init {
+        ManeuverSignature.note = { Log.i("ManeuverSig", it) }
+    }
+
     const val ACTION = "AUTONAVI_STANDARD_BROADCAST_SEND"
     const val KEY_TYPE_GUIDE = 10001
     const val KEY_TYPE_STATE = 10019
@@ -35,7 +44,7 @@ object AmapFrameBuilder {
         val exit = NavFormat.roundaboutExit(s.maneuverText.ifBlank { s.road })
         var icon = if (exit in 1..10) 11    // vòng xuyến CÓ số nhánh -> ÉP icon 11 để AmapService remap glyph nhánh-ra (11+exit)
             else s.maneuverIcon.takeIf { it in 0..28 }
-                ?: ManeuverSignature.classify(s.arrow)
+                ?: ManeuverSignature.classify(s.arrow?.asPixelFrame())
                 ?: NavFormat.maneuverVerbIcon(s.maneuverText.ifBlank { s.road })
                 ?: ArrowClassifier.classify(s.arrow?.asPixelFrame())
                 ?: 9
