@@ -27,6 +27,22 @@ class WrapperContractTest {
     }
 
     @Test
+    fun `tham so nhieu tu phai duoc boc ngoac`() {
+        // 2026-07-27: bản trước nối "$*" thành một chuỗi rồi giao cho Gradle, mà Gradle cắt --args theo
+        // khoảng trắng — nên `--note "câu dài"` chỉ còn chữ đầu. Sổ vẫn trông như đã ghi đủ, nên ghi chú
+        // bị cắt âm thầm còn tệ hơn không có ghi chú.
+        val script = wrapper
+        assertTrue(
+            script.contains("for one in \"\$@\""),
+            "phải lặp từng tham số, không được nối \"\$*\" rồi phó mặc Gradle cắt",
+        )
+        assertTrue(
+            script.contains("*\" \"*)"),
+            "phải nhận diện tham số có khoảng trắng để bọc ngoặc",
+        )
+    }
+
+    @Test
     fun `so verdict phai la duong dan tuyet doi`() {
         // 2026-07-27: bản tương đối bị Gradle giải theo thư mục module, nên `verdict` ghi vào
         // car-integration/docs/... trong khi file git theo dõi nằm ở gốc. Runner in "đã ghi" mà sổ thật

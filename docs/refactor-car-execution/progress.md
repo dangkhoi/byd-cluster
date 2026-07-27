@@ -380,3 +380,50 @@ bằng `DraftOutcome`. Bài học đã ghi: **đọc tên bài kiểm, rồi đ�
 - Mã Dead Reckon / mock-location (~1.095 LOC) giữ cho rollback.
 - Fixture `appops get` phải chụp trên xe (`observe --recorded` dừng ở `APP_OPS_STATE`).
 - **verdicts.tsv vẫn 0 dòng** — 20 candidate đã chạy bằng tay trên xe nhưng chưa qua runner.
+
+## 2026-07-27 19:30 — ĐÍNH CHÍNH kết luận Q1
+
+Chủ xe cho biết: **trước khi phiên test bắt đầu, VietMap đã được cast lên cụm** trong lúc chạy xe
+về. Nghĩa là chiếu đã MỞ ngay từ đầu phiên, và bản chụp tôi ghi nhãn "S0-idle" thực chất không
+phải trạng thái nghỉ.
+
+### Điều này phá mắt xích nào
+
+Kết luận "không tín hiệu nào phân biệt chiếu mở/đóng" dựa vào giả định: `18,0` thật sự đóng chiếu
+và `30,16,35` thật sự mở lại, **trong phiên đó**. Bằng chứng duy nhất tôi có là `Parcel(0,0)` —
+chỉ nói IPC thành công, không nói cụm đã đổi. Không ai nhìn cụm trong lúc tôi bật/tắt.
+
+Hai cách giải thích đều khớp dữ liệu:
+
+1. Không có tín hiệu nào phân biệt được (kết luận ban đầu).
+2. Chiếu **không đổi trạng thái** suốt phiên — nên tôi đã so hai bản chụp của CÙNG một trạng thái,
+   và "giống hệt" là hiển nhiên.
+
+Không có cách nào tách hai khả năng đó bằng dữ liệu đang có. **Q1 vẫn MỞ.**
+
+### Đã thử dùng fixture sáng làm đối chứng — không dùng được
+
+Bản `sf-FULL-projection-CLOSED.txt` sáng nay có người xác nhận "về rồi", nhưng lúc đó **không có
+task nào trên cụm** (`numLayers=0`, 17 layer `bydAdd`), còn hai bản chiều đều có task
+(`numLayers=2`, 10 layer). Khác 1288 dòng là do khác task, không phải do chiếu. Đối chứng sai
+biến số nên vô giá trị.
+
+Cũng đã soi phần `activities` khác 40 dòng giữa hai bản: **toàn bộ là timestamp.**
+
+### Phần vẫn đứng vững sau đính chính
+
+- Fixture `appops get` đã chụp được (không phụ thuộc trạng thái chiếu).
+- `place.movestack` FAIL thật: `am stack move-task` báo Exception.
+- Task nằm trên display 1 với `visible=true` trong khi `18,0` đã trả `Parcel(0,0)` — tiếp tục xác
+  nhận "task trên display 1" không phải bằng chứng đang chiếu.
+- Logcat `xdja_AutoContainerService` ghi nhận lệnh gửi tới — chứng minh ĐÃ PHÁT LỆNH.
+- Lỗi sổ verdict ghi vào file bóng: thật, đã sửa, đã khoá bằng test.
+
+### Việc cần làm để chốt Q1 — 60 giây, cần người nhìn cụm
+
+1. Chủ xe xác nhận đang thấy map trên cụm → chụp snapshot, ghi nhãn bằng chính lời anh.
+2. Gửi `18,0` → hỏi anh thấy gì → chụp, ghi nhãn.
+3. Gửi `30,16,35` → hỏi anh thấy gì → chụp, ghi nhãn.
+
+Chỉ khi ba nhãn đó do người xác nhận thì phép so mới có nghĩa. Bài học: **không tự dựng "sự thật"
+từ một công thức chưa được kiểm trong chính phiên đó.**
