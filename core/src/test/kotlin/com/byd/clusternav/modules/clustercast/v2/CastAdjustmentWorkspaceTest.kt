@@ -92,6 +92,82 @@ class CastAdjustmentWorkspaceTest {
         assertEquals(entry, loaded(store).stableSession!!.acceptedGeometry)
     }
 
+    @Test
+    fun `resetDefault reaches the baseline geometry through the identical apply-verify-done path as any manual adjustment`() {
+        // Khoá hành vi của nút "Reset mặc định" trong CastAdjustmentDialog (onReset -> facade.resetAdjustment
+        // -> runtime.adjustment.resetDefault). resetDefault(defaultGeometry) chỉ là `edit(defaultGeometry)` —
+        // KHÔNG có state/nhánh riêng nào bỏ qua vòng xác minh hai-mẫu hay bỏ qua Done tường minh. Test này
+        // dựng lại đúng khuôn của test "undo" ở trên nhưng thay undoLast() bằng resetDefault(), chứng minh
+        // cả hai đi qua chung một chuỗi mutateDraft -> beginApply -> bindExecution -> recordVerifiedApply -> done.
+        val atomic = MemoryAtomicBytes()
+        val store = activeStore(atomic)
+        val workspace = CastAdjustmentWorkspace(store)
+        workspace.open(observed(entry))
+        workspace.edit(changed)
+        workspace.beginApply(observed(entry))
+        val firstId = id("first")
+        store.locked { bumpEpoch { envelope -> envelope.copy(transaction = geometryTransaction(firstId, envelope.durableEpoch)) } }
+        workspace.bindExecution(firstId, 1)
+        store.locked { update { it.copy(transaction = null) } }
+        workspace.recordVerifiedApply(observed(changed), observed(changed))
+
+        // Cụm đang chiếu `changed`. Người dùng bấm "Reset mặc định" thay vì tự chỉnh tay.
+        val reset = workspace.resetDefault(entry) as AdjustmentResult.Ready
+        assertEquals(entry, reset.draft.localDraft)
+        assertEquals(AdjustmentApplyState.SAVED_ONLY, reset.draft.applyState, "resetDefault phải để lại state y hệt edit() thường — không có state riêng cho reset")
+
+        workspace.beginApply(observed(changed))
+        val resetId = id("reset")
+        store.locked { bumpEpoch { envelope -> envelope.copy(transaction = geometryTransaction(resetId, envelope.durableEpoch)) } }
+        workspace.bindExecution(resetId, 2)
+        store.locked { update { it.copy(transaction = null) } }
+        val verified = (workspace.recordVerifiedApply(observed(entry), observed(entry)) as AdjustmentResult.Ready).draft
+        assertEquals(AdjustmentApplyState.APPLIED_VERIFIED, verified.applyState)
+        assertEquals(entry, verified.lastVerifiedApply)
+        assertEquals(entry, loaded(store).stableSession!!.acceptedGeometry, "Apply chưa Done thì accepted geometry chưa được đổi — giống hệt mọi adjustment khác")
+
+        workspace.done(observed(entry), observed(entry))
+        assertEquals(entry, loaded(store).stableSession!!.acceptedGeometry, "Reset mặc định phải chốt qua Done tường minh y hệt bất kỳ điều chỉnh nào khác")
+        assertNull(loaded(store).adjustmentDraft)
+    }
+
+    @Test
+    fun `beginApply rejects invalid geometry and protected residue through Ready, not Rejected`() {
+        // Khoá đúng cái bẫy round-1 nghi ngờ ở CastFacade.applyGeometry: khi CastGeometry.validate
+        // từ chối (GEOMETRY_LIMITED hoặc PROTECTED_SESSION), beginApply KHÔNG trả AdjustmentResult.Rejected
+        // -- nó trả Ready bọc draft chưa chuyển sang APPLYING, kèm validationError. Một caller chỉ ép kiểu
+        // `as? AdjustmentResult.Rejected` sẽ bỏ sót cả hai nhánh này và tưởng nhầm là được phép tiếp tục
+        // plan/execute. Contract thật sự caller phải theo: đọc `draft.applyState == APPLYING`, không chỉ
+        // đọc kiểu bọc ngoài.
+        val atomic = MemoryAtomicBytes()
+        val store = activeStore(atomic)
+        val workspace = CastAdjustmentWorkspace(store)
+        workspace.open(observed(entry))
+
+        // 1) Hình học không hợp lệ (right <= left) -> GEOMETRY_LIMITED.
+        val invalid = AcceptedGeometry(CastRect(100, 0, 50, 720), 160, "seal")
+        workspace.edit(invalid)
+        val invalidResult = workspace.beginApply(observed(entry))
+        assertTrue(invalidResult is AdjustmentResult.Ready, "beginApply bọc từ chối trong Ready, không phải Rejected")
+        val invalidDraft = (invalidResult as AdjustmentResult.Ready).draft
+        assertEquals(
+            AdjustmentApplyState.SAVED_ONLY, invalidDraft.applyState,
+            "draft không được chuyển sang APPLYING khi validate từ chối",
+        )
+        assertEquals(DisabledReason.GEOMETRY_LIMITED.name, invalidDraft.validationError)
+
+        // 2) Hình học hợp lệ nhưng residue được bảo vệ đã xuất hiện từ lúc mở nháp -> PROTECTED_SESSION.
+        workspace.edit(changed)
+        val protectedObserved = observed(entry).copy(
+            protectedResidue = ProtectedResidue("com.other.protected", 9, ResidueVisibility.HIDDEN),
+        )
+        val protectedResult = workspace.beginApply(protectedObserved)
+        assertTrue(protectedResult is AdjustmentResult.Ready, "beginApply bọc từ chối trong Ready, không phải Rejected")
+        val protectedDraft = (protectedResult as AdjustmentResult.Ready).draft
+        assertEquals(AdjustmentApplyState.SAVED_ONLY, protectedDraft.applyState)
+        assertEquals(DisabledReason.PROTECTED_SESSION.name, protectedDraft.validationError)
+    }
+
     private fun activeStore(atomic: MemoryAtomicBytes): CastSessionStore = CastSessionStore(atomic).also { store ->
         store.locked {
             initialize("boot")

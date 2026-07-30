@@ -140,23 +140,41 @@ class CastRendererContractTest {
         )
     }
 
-    @Test fun `non-pristine or different Unknown reason remains Diagnostics only`() {
-        val cases = listOf(
-            StoreRead.Loaded(pristine().copy(durableEpoch = 1L)) to
-                ObservationValue.Unknown(MISSING_NAMED_CLUSTER_DISPLAY_REASON),
-            StoreRead.Loaded(pristine()) to ObservationValue.Unknown("display observation unavailable"),
+    @Test fun `a different Unknown reason (not the exact missing-cluster-display one) remains Diagnostics only`() {
+        val model = CastRuntimeUi.render(
+            StoreRead.Loaded(pristine()),
+            ObservationValue.Unknown("display observation unavailable"),
+            instant(2_000),
         )
-        cases.forEach { (storeRead, observation) ->
-            val model = CastRuntimeUi.render(storeRead, observation, instant(2_000))
-            assertEquals(
-                ALWAYS,
-                model.actions.filter { it.enabled }.map { it.action }.toSet(),
-            )
-        }
+        assertEquals(ALWAYS, model.actions.filter { it.enabled }.map { it.action }.toSet())
+    }
+
+    /**
+     * 2026-07-29: before this fix, a non-zero epoch alone (with `stableSession`/`transaction` both
+     * null) kept this Diagnostics-only forever — `durableEpoch == 0L` used to be equivalent to
+     * "nothing recorded" only because nothing else ever nulled `stableSession` after the epoch moved
+     * past zero. `CastCoordinator.reconcileUnobservableIdleSession()` now does exactly that for a
+     * stale post-reboot idle claim, so this same envelope shape (nothing recorded, missing cluster
+     * display) must reach cold-pristine and offer CAST regardless of the epoch value. See
+     * `CastReconcileUnobservableIdleSessionTest`/`CastPostBootIdleRecoveryTest` (core) for the
+     * coordinator-level half of this fix.
+     */
+    @Test fun `a non-zero epoch with nothing else recorded now reaches cold pristine, not Diagnostics only`() {
+        val model = CastRuntimeUi.render(
+            StoreRead.Loaded(pristine().copy(durableEpoch = 1L)),
+            ObservationValue.Unknown(MISSING_NAMED_CLUSTER_DISPLAY_REASON),
+            instant(2_000),
+        )
+        assertEquals(
+            ALWAYS + setOf(CastAction.CAST, CastAction.CHOOSE_ANOTHER_APP, CastAction.OPEN_APP_MANAGER),
+            model.actions.filter { it.enabled }.map { it.action }.toSet(),
+        )
     }
 
     @Test fun `Activity separates tokenized operation status from Stop acknowledgement`() {
-        val activity = source("main/java/com/byd/clusternav/modules/clustercast/ClusterCastActivity.kt")
+        // 2026-07-29: đổi target từ ClusterCastActivity (xoá) sang MainActivityCastController — cùng
+        // logic operationStatus/statusTimers, chỉ khác Activity nào giữ nó.
+        val activity = source("main/java/com/byd/clusternav/modules/clustercast/MainActivityCastController.kt")
         val timers = source("main/java/com/byd/clusternav/modules/clustercast/CastActivityStatusTimers.kt")
         assertTrue(activity.contains("operationStatus.begin(initial)"))
         assertTrue(activity.contains("operationStatus.complete(token, message"))
@@ -177,44 +195,88 @@ class CastRendererContractTest {
         assertTrue(activity.lineSequence().count() < 501)
     }
 
-    @Test fun `manual Cast owns bootstrap and lifecycle only resumes durable pending placement`() {
-        val activity = source("main/java/com/byd/clusternav/modules/clustercast/ClusterCastActivity.kt")
-        val refreshReader = source("main/java/com/byd/clusternav/modules/clustercast/CastActivityRefresh.kt")
-        // 2026-07-27: Activity đi qua CastFacade; hợp đồng giữ nguyên là "không tự gọi bootstrap"
-        assertEquals(0, Regex("(coordinator|facade)\\.bootstrap\\(").findAll(activity).count())
-        assertEquals(1, Regex("facade\\.runManualIntent\\(").findAll(activity).count())
-        assertTrue(activity.contains("facade.resumePendingIntent"))
-        val initialization = activity.substring(activity.indexOf("facade.initialize"), activity.indexOf("override fun onNewIntent"))
-        assertTrue(initialization.contains("reconcileSelectionAndDrain()"))
-        val reconciliation = activity.substring(activity.indexOf("private fun reconcileSelectionAndDrain"), activity.indexOf("private fun drainPendingTarget"))
-        assertTrue(reconciliation.indexOf("queueLatestTarget(packageName)") in 0 until reconciliation.lastIndexOf("drainPendingTarget()"))
-        val resume = activity.substring(activity.indexOf("private fun drainPendingTarget"), activity.indexOf("private fun openAdjustment"))
-        assertTrue(resume.indexOf("currentSelectionRevision()") in 0 until resume.indexOf("resumePendingIntent"))
-        assertTrue(resume.contains("isCurrentSelection(selectionRevision)"))
-        assertTrue(resume.contains("target == pending"))
-        assertTrue(resume.contains("selectedPackage == null || selectedPackage == pending"))
-        assertTrue(activity.contains("work.mutationSnapshot()"))
-        assertTrue(activity.contains("work.isCurrentMutation(mutationSnapshot)"))
-        assertTrue(activity.contains("&& result.selectedEligible"))
-        // 2026-07-27: phép kiểm eligibility chuyển vào façade; hợp đồng giữ nguyên là chỉ chiếu khi Ready.
-        assertTrue(refreshReader.contains("facade.selectionReady("))
-        val selection = activity.substring(
-            activity.indexOf("private fun selectApp"),
-            activity.indexOf("private fun openAppManager"),
-        )
-        assertTrue(selection.indexOf("refresh()") in 0 until selection.indexOf("work.selection"))
-        assertTrue(selection.contains("facade.queueLatestTarget(packageName)"))
-        assertTrue(activity.contains("isEnabled = false; minimumHeight = dp(56)"))
-        // 2026-07-27: dựng danh sách app chuyển sang CastAppListView; ca "danh sách rỗng" giờ canh ở đó.
-        val appList = source("main/java/com/byd/clusternav/modules/clustercast/CastAppListView.kt")
-        assertTrue(appList.contains("if (loaded.isEmpty())"))
-        assertTrue(activity.contains("refresh()"))
+    /**
+     * 2026-07-29: đơn giản hoá theo docs/specs/cast-simplified-active-app-toggle.html — không còn màn
+     * chọn app (`selectApp`/`queueLatestTarget`/`resumePendingIntent`/`CastAppListView`), vì bong bóng tự
+     * dò app đang mở và chiếu thẳng, còn auto-start-khi-mở-app cũng gọi thẳng `executeCast`. Cái CÒN PHẢI
+     * giữ đúng: không nơi nào tự gọi `coordinator.bootstrap()` trực tiếp — mọi cast đi qua đúng MỘT cửa
+     * `facade.runManualIntent(...)`, và bootstrap chỉ xảy ra bên trong façade/coordinator khi cần.
+     */
+    @Test fun `manual Cast owns bootstrap, no surface calls coordinator bootstrap directly`() {
+        val controller = source("main/java/com/byd/clusternav/modules/clustercast/MainActivityCastController.kt")
+        assertEquals(0, Regex("(coordinator|facade)\\.bootstrap\\(").findAll(controller).count())
+        assertEquals(1, Regex("facade\\.runManualIntent\\(").findAll(controller).count())
+        assertTrue(controller.contains("work.mutationSnapshot()"))
+        assertTrue(controller.contains("work.isCurrentMutation(mutationSnapshot)"))
         listOf(
             "main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt",
             "main/java/com/byd/clusternav/modules/clustercast/DiagActivity.kt",
             "main/java/com/byd/clusternav/modules/clustercast/CastLifecycleReceiver.kt",
             "main/java/com/byd/clusternav/RebindReceiver.kt",
         ).forEach { relative -> assertFalse(source(relative).contains("coordinator.bootstrap("), relative) }
+    }
+
+    /**
+     * 2026-07-29: cả hai bề mặt giờ đơn giản như nhau — không còn `CastRetryPrompt`/`allowDestructive`
+     * (hộp thoại tự leo thang escalate) ở bất kỳ đâu; tap đầu tiên luôn không-destructive trên cả bong
+     * bóng lẫn auto-start-khi-mở-app, cùng một hình dạng gọi `facade.runManualIntent(...)`.
+     */
+    @Test fun `bubble tap-to-cast dispatches the same runManualIntent shape as Home's auto-start Cast`() {
+        val bubble = source("main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt")
+        val controller = source("main/java/com/byd/clusternav/modules/clustercast/MainActivityCastController.kt")
+        assertEquals(1, Regex("facade\\.runManualIntent\\(").findAll(bubble).count())
+        val bubbleDispatch = bubble.substring(
+            bubble.indexOf("private fun dispatchTarget"),
+            bubble.indexOf("private fun requestStopOnce"),
+        )
+        assertTrue(bubbleDispatch.contains("catalog.clusterDensityDpi(packageName)"))
+        assertTrue(bubbleDispatch.contains("catalog.clusterStyle(packageName)"))
+        assertFalse(bubbleDispatch.contains("allowDestructive"))
+        assertFalse(bubbleDispatch.contains("CastRetryPrompt"))
+        val controllerDispatch = controller.substring(
+            controller.indexOf("private fun executeCast"),
+            controller.indexOf("private fun executeStop"),
+        )
+        assertTrue(controllerDispatch.contains("catalog.clusterDensityDpi(pkg)"))
+        assertTrue(controllerDispatch.contains("catalog.clusterStyle(pkg)"))
+        assertFalse(controllerDispatch.contains("allowDestructive"))
+        assertFalse(controllerDispatch.contains("CastRetryPrompt"))
+    }
+
+    /**
+     * FIXED 2026-07-28 (was a KNOWN GAP found during bubble-menu-actions re-verification): the Activity
+     * completes a user Stop with TWO steps -- `facade.requestStop()` (durably marks
+     * `stopRequested=true`, fences in-flight work; per `CastManualIntentTest`'s "Stop at bootstrap
+     * stable boundary…" / "…ordinary cast…" cases this alone issues ZERO `CommandKind`) and then, once
+     * accepted with nothing in flight, the shared `CastFacade.continueStopAfterAcknowledgement(...)`,
+     * which actually plans and dispatches the opcode sequence that returns the cluster to the clock.
+     * `FloatingBubbleService.requestStopOnce()` used to only make the first call, so tapping "Dừng
+     * chiếu" in the bubble menu recorded the Stop request and updated the projected status without
+     * ever returning the cluster display. It now drives the same second step through the same shared
+     * façade method the Activity uses -- not a bubble-local reimplementation of plan/execute.
+     */
+    @Test fun `bubble requestStopOnce now drives the same continueStopAfterAcknowledgement dispatch as the Activity`() {
+        // 2026-07-29: đổi target từ ClusterCastActivity (xoá) sang MainActivityCastController.
+        val activity = source("main/java/com/byd/clusternav/modules/clustercast/MainActivityCastController.kt")
+        assertTrue(activity.contains("facade.requestStop()"))
+        val delegateCall = "facade.continueStopAfterAcknowledgement { pkg -> catalog.evidence(pkg, facade.phoneSession(pkg)) }"
+        assertTrue(activity.contains(delegateCall))
+
+        val bubble = source("main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt")
+        val bubbleStop = bubble.substring(
+            bubble.indexOf("private fun requestStopOnce"),
+            bubble.indexOf("private fun bubbleText"),
+        )
+        assertTrue(bubbleStop.contains("facade.requestStop()"))
+        // The bubble must not reimplement plan/execute locally -- it delegates to the same shared call.
+        assertFalse(bubbleStop.contains("facade.planStop("))
+        assertFalse(bubbleStop.contains("facade.executeAndSettle("))
+        assertTrue(bubbleStop.contains(delegateCall))
+
+        val facadeSrc = source("main/java/com/byd/clusternav/modules/clustercast/CastFacade.kt")
+        assertTrue(facadeSrc.contains("fun continueStopAfterAcknowledgement(evidenceFor: (String) -> TargetEvidence?): String"))
+        assertTrue(facadeSrc.contains("val plan = planStop(pkg, pkg?.let(evidenceFor))"))
+        assertTrue(facadeSrc.contains("executeAndSettle(plan, pkg)"))
     }
 
     private fun bootstrapTransaction() = CastTransaction(

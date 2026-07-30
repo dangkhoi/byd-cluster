@@ -7,37 +7,37 @@ import android.app.Service
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
-import android.view.KeyEvent
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import com.byd.clusternav.R
-import com.byd.clusternav.modules.clustercast.v2.BubbleFocusTarget
 import com.byd.clusternav.modules.clustercast.v2.BubbleProjection
-import com.byd.clusternav.modules.clustercast.v2.BubbleStopControl
 import com.byd.clusternav.cast.platform.CastAndroidLifecycle
 import com.byd.clusternav.cast.platform.CastAndroidRuntime
 import com.byd.clusternav.cast.platform.CastAppCatalog
-import com.byd.clusternav.cast.platform.CastAppEntry
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Presentation-only overlay host for the canonical Cast model.
+ * Presentation-only overlay host for the canonical Cast model. One circle, one action.
  *
- * It renders the same [com.byd.clusternav.modules.clustercast.v2.CastRenderModel] the Activity uses,
- * dispatches only currently exported canonical actions through the one process runtime, and sends at
- * most one typed Stop request. It never infers policy from localized text and never opens the
- * Activity to send a second Stop.
+ * v0.72 (docs/specs/cast-simplified-active-app-toggle.html): a single tap does exactly one of two
+ * things, decided purely by [BubbleProjection.projecting] — never a menu, never a second gesture.
+ * Idle → cast whatever app is genuinely foregrounded on the home display right now (no app picker).
+ * Projecting → Stop, the same typed request/dispatch the old Activity used. It renders the same
+ * [com.byd.clusternav.modules.clustercast.v2.CastRenderModel] the rest of the app uses and never
+ * infers policy from localized text.
  */
 class FloatingBubbleService : Service() {
     private lateinit var runtime: CastAndroidRuntime.Runtime
@@ -58,11 +58,7 @@ class FloatingBubbleService : Service() {
     }
     private var windowManager: WindowManager? = null
     private var bubble: LinearLayout? = null
-    private var menuButton: TextView? = null
-    private var primaryButton: TextView? = null
-    private var stopButton: TextView? = null
-    private var statusLabel: TextView? = null
-    private var menuPanel: LinearLayout? = null
+    private var circle: TextView? = null
     private var params: WindowManager.LayoutParams? = null
 
     // Mờ khi rảnh để không đè map; chạm hoặc đổi trạng thái chiếu thì rõ ngay rồi tự mờ lại (v0.57).
@@ -79,25 +75,53 @@ class FloatingBubbleService : Service() {
         setBubbleAlpha(ACTIVE_ALPHA)
         handler.postDelayed(fade, FADE_DELAY_MS)
     }
-    private fun goHome() {
-        runCatching {
-            startActivity(
-                Intent(Intent.ACTION_MAIN)
-                    .addCategory(Intent.CATEGORY_HOME)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
+    /**
+     * Vòng tròn đổi hình theo trạng thái chiếu — điểm mấu chốt của v0.57 để "một chạm không nhầm":
+     * rỗng viền xanh = cụm đang là đồng hồ, đặc xanh = đang có app trên cụm.
+     *
+     * Trạng thái vào đây từ [BubbleProjection.projecting] (dữ liệu chiếu), không phải từ cờ RAM hay từ
+     * việc dò chữ trong nhãn.
+     */
+    private fun paintBubble(projecting: Boolean) {
+        val view = circle ?: return
+        view.text = if (projecting) "▣" else "▢"
+        view.setTextColor(if (projecting) Color.WHITE else BRAND)
+        view.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (projecting) BRAND else BRAND_LIGHT)
+            setStroke(dp(2), BRAND)
         }
     }
 
     private val handler = Handler(Looper.getMainLooper())
-    private val projecting = AtomicBoolean(false)
+
+    /**
+     * Bốn chốt độc lập, mỗi chốt canh ĐÚNG MỘT lượt việc nền. Tên nói rõ nó canh cái gì:
+     * [projectionInFlight] KHÔNG phải "cụm đang chiếu" — chỗ đó là [BubbleProjection.projecting], và tên
+     * cũ (`projecting`) đứng ngay cạnh `projection.projecting` là một cái bẫy đọc nhầm chờ sẵn.
+     */
+    private val projectionInFlight = AtomicBoolean(false)
+
+    /**
+     * Có ai đó xin vẽ lại trong lúc lượt trước còn chạy.
+     *
+     * Trước 2026-07-29 lượt xin đó bị NUỐT (`compareAndSet` thất bại là return luôn), mà hai chỗ xin
+     * quan trọng nhất lại là "vừa chiếu xong" và "vừa dừng xong". Rơi trúng nhịp 15s là vòng tròn giữ
+     * nguyên hình cũ tới 15 giây — và cú chạm kế tiếp làm ĐÚNG CÁI NGƯỢC LẠI với thứ đang ở trên cụm.
+     * Gộp nhịp thay vì bỏ nhịp: lượt đang chạy xong thì chạy bù đúng một lượt.
+     */
+    private val projectionPending = AtomicBoolean(false)
     private val stopInFlight = AtomicBoolean(false)
     private val dispatchInFlight = AtomicBoolean(false)
+
+    /** Một cú chạm đang đọc sự thật. Không có nó, chạm dồn dập là bấy nhiêu vòng I/O ra xe song song. */
+    private val tapInFlight = AtomicBoolean(false)
     @Volatile private var stopRequestedAtMs = 0L
     private val generation = AtomicLong(0)
     @Volatile private var destroyed = false
-    @Volatile private var entries: List<CastAppEntry> = emptyList()
-    private var lastProjection: BubbleProjection? = null
+
+    /** Ghi trên luồng vẽ, đọc trên làn nền lúc chạm — phải `@Volatile` để lần đọc kia không thấy bản cũ. */
+    @Volatile private var lastProjection: BubbleProjection? = null
     private var foregroundStarted = false
     private val refresh = object : Runnable {
         override fun run() { projectState(); handler.postDelayed(this, REFRESH_INTERVAL_MS) }
@@ -107,29 +131,38 @@ class FloatingBubbleService : Service() {
         super.onCreate()
         runtime = CastAndroidRuntime.create(applicationContext)
         facade = CastFacade.wrapping(runtime, catalog)
-        if (!catalog.bubbleEnabled()) { stopSelf(); return }
+        if (!requestOverlayIfMissing()) { stopSelf(); return }
         if (!startForegroundOnce()) { stopSelf(); return }
-        if (!Settings.canDrawOverlays(this)) { stopSelf(); return }
         showBubble()
-        Thread {
+        background("cluster-cast-bubble-rehydrate") {
             runCatching { CastAndroidLifecycle.rehydrate(applicationContext) }
-            val loaded = runCatching { catalog.installed(runtime.automation.config().defaultPackage) }
-                .getOrDefault(emptyList())
-            handler.post {
-                if (destroyed) return@post
-                entries = loaded
-                handler.post(refresh)
-            }
-        }.start()
+            handler.post { if (!destroyed) handler.post(refresh) }
+        }
     }
 
+    /**
+     * Một lượt việc nền có TÊN, và nói được là nó có khởi động được hay không.
+     *
+     * Bốn chỗ trong file này tự `Thread { … }.start()`. Nếu `start()` ném (hết luồng/bộ nhớ) NGAY SAU khi
+     * một chốt `compareAndSet` đã được giữ thì chốt đó không bao giờ được nhả — nút nổi im lặng vĩnh viễn
+     * cho tới khi khởi động lại app, đúng cái ngõ cụt mà CLAUDE.md §5 bắt phải có đường trả lại. Trả về
+     * `false` để chỗ gọi tự hoàn tác chốt của nó.
+     */
+    private fun background(name: String, block: () -> Unit): Boolean =
+        runCatching { Thread(block, name).start() }.isSuccess
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!catalog.bubbleEnabled()) { stopSelf(startId); return START_NOT_STICKY }
+        if (!requestOverlayIfMissing()) { stopSelf(startId); return START_NOT_STICKY }
         if (!startForegroundOnce()) { stopSelf(startId); return START_NOT_STICKY }
-        if (!Settings.canDrawOverlays(this)) { stopSelf(startId); return START_NOT_STICKY }
-        // An explicit Retry/Start after a permission grant may attach the overlay, still with zero dispatch.
         showBubble()
         return START_STICKY
+    }
+
+    /** Nút nổi mặc định BẬT (v0.72) — không còn công tắc enable/disable. Thiếu quyền thì tự xin luôn. */
+    private fun requestOverlayIfMissing(): Boolean {
+        if (Settings.canDrawOverlays(this)) return true
+        CastBubbleControl.requestOverlay(this)
+        return false
     }
 
     private fun startForegroundOnce(): Boolean = foregroundStarted || runCatching {
@@ -137,7 +170,7 @@ class FloatingBubbleService : Service() {
         foregroundStarted = true
         true
     }.getOrElse {
-        android.util.Log.e("ClusterCastBubble", "startForeground denied", it)
+        android.util.Log.e(TAG, "startForeground denied", it)
         false
     }
 
@@ -145,7 +178,6 @@ class FloatingBubbleService : Service() {
         destroyed = true
         generation.incrementAndGet()
         handler.removeCallbacksAndMessages(null)
-        closeMenu()
         bubble?.let { view -> runCatching { windowManager?.removeView(view) } }
         bubble = null
         super.onDestroy()
@@ -157,36 +189,25 @@ class FloatingBubbleService : Service() {
         if (bubble != null) return
         val manager = getSystemService(WINDOW_SERVICE) as WindowManager
         windowManager = manager
-        stopButton = bubbleText("Dừng chiếu", STOP_MIN_DP).apply {
-            id = STOP_VIEW_ID
-            setBackgroundResource(com.byd.clusternav.R.drawable.bubble_panel)
-            visibility = View.GONE
-            setOnClickListener { requestStopOnce() }
-        }
-        // V1 shape: a small translucent glyph, not a text label. The label lives in
-        // contentDescription so TalkBack and the rotary still announce the real state.
-        menuButton = bubbleText("", MENU_MIN_DP).apply {
-            id = MENU_BUTTON_ID
-            contentDescription = "Mở menu Cluster Cast"
+        // v0.57: vòng tròn 56dp, chữ tượng hình ô-màn-hình, KHÔNG nhãn chữ. Nhãn nằm ở contentDescription
+        // để TalkBack và núm xoay vẫn đọc đúng trạng thái thật. v0.72: đây là toàn bộ UI của nút nổi —
+        // không còn menu, không còn nút Dừng riêng — một chạm quyết định bởi trạng thái chiếu hiện tại.
+        circle = bubbleText("", BUBBLE_SIZE_DP).apply {
+            contentDescription = "Cluster Cast"
             gravity = Gravity.CENTER
-            setBackgroundResource(com.byd.clusternav.R.drawable.bubble_round)
-            val glyph = resources.getDrawable(com.byd.clusternav.R.drawable.ic_cast_bubble, theme)
-            val side = dp(22)
-            glyph?.setBounds(0, 0, side, side)
-            setCompoundDrawablesRelative(glyph, null, null, null)
-            compoundDrawablePadding = 0
-            setOnClickListener { toggleMenu() }
+            textSize = 24f
+            setPadding(0, 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(dp(BUBBLE_SIZE_DP), dp(BUBBLE_SIZE_DP))
+            setOnClickListener {
+                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                onPrimaryTap()
+            }
         }
-        primaryButton = bubbleText("", MENU_MIN_DP).apply { visibility = View.GONE }
-        statusLabel = bubbleText("", 0).apply { textSize = 10f; visibility = View.GONE }
-        // Nghỉ = ĐÚNG MỘT vòng tròn, như v0.57. Bản V2 trước xếp cả "Dừng chiếu" + nhãn trạng thái thành một
-        // hàng chữ nhật nằm đè lên map — đó là cái chủ dự án nói xấu. Stop giờ nằm trong menu (chạm để mở),
-        // còn stopButton/primaryButton/statusLabel vẫn được tạo để applyProjection và test bám vào, nhưng
-        // KHÔNG nằm trên hàng nghỉ.
+        paintBubble(projecting = false)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.TRANSPARENT)
-            addView(menuButton)
+            addView(circle)
         }
         val type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
@@ -205,9 +226,7 @@ class FloatingBubbleService : Service() {
             y = clampY(saved?.second ?: (resources.displayMetrics.heightPixels / 2 - dp(28)))
         }
         params = layout
-        listOfNotNull<View>(root, stopButton, menuButton, statusLabel)
-            .forEach { attachDrag(it, root, layout, manager) }
-        primaryButton?.let { attachDrag(it, root, layout, manager) }
+        attachDrag(root, root, layout, manager)
         bubble = root
         runCatching { manager.addView(root, layout) }
         handler.postDelayed(fade, FADE_DELAY_MS)
@@ -247,7 +266,7 @@ class FloatingBubbleService : Service() {
                     if (!dragging) return@setOnTouchListener false
                     val x = layout.x
                     val y = layout.y
-                    Thread { runCatching { catalog.setBubblePosition(x, y) } }.start()
+                    background("cluster-cast-bubble-position") { runCatching { catalog.setBubblePosition(x, y) } }
                     true
                 }
                 else -> false
@@ -267,30 +286,41 @@ class FloatingBubbleService : Service() {
 
     /** Bounded worker projection fenced by lifecycle generation, so stale callbacks cannot paint. */
     private fun projectState() {
-        if (destroyed || !projecting.compareAndSet(false, true)) return
+        if (destroyed) return
+        if (!projectionInFlight.compareAndSet(false, true)) {
+            // Đừng nuốt lượt xin: chạy bù sau khi lượt đang chạy kết thúc (xem [projectionPending]).
+            projectionPending.set(true)
+            return
+        }
         val token = generation.get()
-        Thread {
+        val started = background("cluster-cast-bubble-projection") {
             try {
                 runCatching { project(token) }
-                    .onFailure { android.util.Log.e("ClusterCastBubble", "projection failed", it) }
+                    .onFailure { android.util.Log.e(TAG, "projection failed", it) }
             } finally {
-                projecting.set(false)
+                projectionInFlight.set(false)
+                if (projectionPending.compareAndSet(true, false)) {
+                    handler.post { if (!destroyed) projectState() }
+                }
             }
-        }.start()
+        }
+        if (!started) projectionInFlight.set(false)
     }
 
-    private fun project(token: Long) {
+    /** Trả về chính bản chiếu vừa dựng, để đường CHẠM quyết định bằng nó thay vì bằng ảnh chụp cũ. */
+    private fun project(token: Long): BubbleProjection {
         val envelope = facade.envelope()
         val durableStop = envelope?.stopRequested == true
         val model = facade.renderModel()
         val projection = facade.bubbleProjection(
             model,
-            entries.map { it.row() },
+            emptyList(),
             envelope?.automationConfig?.defaultPackage,
             localStopRequested = localAckActive(durableStop) || durableStop,
             activeTargetPackage = envelope?.stableSession?.activeTarget?.packageName,
         )
         handler.post { applyProjection(projection, token) }
+        return projection
     }
 
     /**
@@ -298,8 +328,19 @@ class FloatingBubbleService : Service() {
      * acknowledgement budget expires, so the canonical control can never be pinned disabled.
      */
     private fun localAckActive(durableStop: Boolean): Boolean {
-        if (!stopInFlight.get()) return false
         if (durableStop) { stopInFlight.set(false); return false }
+        return stopAckPending()
+    }
+
+    /**
+     * Một lượt Stop vừa phát và CÒN trong ngân sách xác nhận — không phải một cái chốt sống mãi.
+     *
+     * Hết hạn thì tự nhả ngay tại đây, nên không có cửa nào để `requestStopOnce()` bị chốt cũ khoá vĩnh
+     * viễn (CLAUDE.md §3: không bao giờ gate một đường phục hồi bằng dữ liệu mà chỉ chính đường đó mới
+     * làm mới được).
+     */
+    private fun stopAckPending(): Boolean {
+        if (!stopInFlight.get()) return false
         if (android.os.SystemClock.elapsedRealtime() - stopRequestedAtMs > STOP_ACK_DEADLINE_MS) {
             stopInFlight.set(false)
             return false
@@ -310,250 +351,180 @@ class FloatingBubbleService : Service() {
     private fun applyProjection(projection: BubbleProjection, token: Long) {
         if (destroyed || token != generation.get() || bubble == null) return
         lastProjection = projection
-        stopButton?.apply {
-            visibility = if (projection.stop == BubbleStopControl.HIDDEN) View.GONE else View.VISIBLE
-            isEnabled = projection.stop == BubbleStopControl.AVAILABLE
-            alpha = if (isEnabled) 1f else .65f
-            text = projection.stopLabel
-            contentDescription = "${projection.stopLabel}. ${projection.status}"
-        }
-        menuButton?.apply {
-            contentDescription = "${projection.menuLabel}. ${projection.contentDescription}"
-        }
-        statusLabel?.apply {
-            text = projection.status
-            visibility = if (projection.stop == BubbleStopControl.HIDDEN) View.VISIBLE else View.GONE
-            contentDescription = projection.status
-        }
-        primaryButton?.apply {
-            val target = projection.primary
-            visibility = if (target == null) View.GONE else View.VISIBLE
-            text = target?.let { "Chiếu ${it.label.removeSuffix(" · mặc định")}" }.orEmpty()
-            contentDescription = text
-            setOnClickListener { target?.let { dispatchTarget(it.packageName) } }
-        }
-        if (menuPanel != null) renderMenu(projection)
-        applyFocusOrder(projection)
+        circle?.contentDescription = projection.contentDescription
+        paintBubble(projection.projecting)
         wakeBubble()
-    }
-
-    /** Deterministic Stop → apps → settings traversal for keyboard, rotary and TalkBack. */
-    private fun applyFocusOrder(projection: BubbleProjection) {
-        val views = projection.focusOrder.mapNotNull { target ->
-            when (target) {
-                BubbleFocusTarget.STOP -> stopButton
-                BubbleFocusTarget.APPS -> menuButton
-                BubbleFocusTarget.SETTINGS -> menuPanel?.findViewById<View>(SETTINGS_VIEW_ID)
-            }
-        }
-        views.forEachIndexed { index, view ->
-            view.isFocusable = true
-            view.nextFocusForwardId = views.getOrNull(index + 1)?.id ?: View.NO_ID
-        }
-    }
-
-    /** One tap renders local acknowledgement immediately and dispatches exactly one typed Stop. */
-    private fun requestStopOnce() {
-        val button = stopButton ?: return
-        if (!button.isEnabled) return
-        if (!stopInFlight.compareAndSet(false, true)) return
-        stopRequestedAtMs = android.os.SystemClock.elapsedRealtime()
-        button.isEnabled = false
-        button.alpha = .65f
-        button.text = "Đã yêu cầu dừng"
-        closeMenu()
-        val token = generation.get()
-        Thread {
-            val accepted = runCatching { facade.requestStop() }.getOrNull()
-            handler.post {
-                if (destroyed || token != generation.get()) return@post
-                if (accepted == null) {
-                    stopInFlight.set(false)
-                    stopButton?.apply { isEnabled = true; alpha = 1f; text = "Không lưu được Stop" }
-                }
-                projectState()
-            }
-        }.start()
     }
 
     /**
-     * Re-reads the app catalogue when the menu is opened.
-     *
-     * The list was loaded once when the service started and never again, so an app pinned afterwards
-     * never appeared: on the vehicle 2026-07-27 the screen showed four starred apps while the menu
-     * still said nothing was chosen. Opening the menu is the moment the list is about to be read, and
-     * it is operator-initiated, so it is the right place to refresh rather than polling the package
-     * manager on a timer.
+     * Một chạm, không cử chỉ ẩn nào khác (dự án cấm long-press/double-tap ẩn — xem
+     * `CastAccessibilityTest`): đang rảnh (đồng hồ) → chiếu đúng app đang mở trên màn chính, không cần
+     * chọn từ danh sách. Đang chiếu → về đồng hồ, tái dùng nguyên luồng Stop đã có. Không xác định được
+     * app đang mở → báo ngắn, không đoán mò, không mở gì thêm (docs/specs/cast-simplified-active-app-toggle.html).
      */
-    private fun reloadEntries() {
-        Thread {
-            val loaded = runCatching { catalog.installed(runtime.automation.config().defaultPackage) }
-                .getOrDefault(emptyList())
-            handler.post {
-                if (destroyed || loaded.isEmpty()) return@post
-                entries = loaded
-                lastProjection?.let { if (menuPanel != null) renderMenu(it) }
-                handler.post(refresh)
-            }
-        }.start()
-    }
-
-    private fun toggleMenu() {
-        wakeBubble()
-        if (menuPanel != null) { closeMenu(); return }
-        val manager = windowManager ?: return
-        reloadEntries()
-        val panel = LinearLayout(this).apply {
-            id = MENU_VIEW_ID
-            orientation = LinearLayout.VERTICAL
-            setBackgroundResource(com.byd.clusternav.R.drawable.bubble_panel)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            isFocusableInTouchMode = true
-            setOnKeyListener { _, keyCode, event ->
-                if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { closeMenu(); true } else false
-            }
-        }
-        val layout = WindowManager.LayoutParams(
-            dp(MENU_PANEL_WIDTH_DP),
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = params?.x ?: dp(18)
-            y = (params?.y ?: dp(160)) + dp(76)
-        }
-        panel.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE) { closeMenu(); true } else false
-        }
-        menuPanel = panel
-        val attached = runCatching { manager.addView(panel, layout) }.isSuccess
-        if (!attached) { menuPanel = null; return }
-        lastProjection?.let { renderMenu(it) }
-        panel.post { if (menuPanel === panel) panel.requestFocus() }
-        projectState()
-    }
-
-    private fun renderMenu(projection: BubbleProjection) {
-        val panel = menuPanel ?: return
-        panel.removeAllViews()
-        // Stop nằm ĐẦU menu, đúng v0.57. Chỉ hiện khi thực sự có gì để dừng (stop != HIDDEN), và chữ lấy
-        // thẳng từ projection để không lệch với màn chính.
-        if (projection.stop != BubbleStopControl.HIDDEN) {
-            panel.addView(TextView(this).apply {
-                text = "⏹ ${projection.stopLabel}"
-                textSize = 13f
-                setTextColor(Color.WHITE)
-                minimumHeight = dp(MENU_MIN_DP)
-                isFocusable = true
-                isEnabled = projection.stop == BubbleStopControl.AVAILABLE
-                alpha = if (isEnabled) 1f else .55f
-                contentDescription = "${projection.stopLabel}. ${projection.status}"
-                if (projection.stop == BubbleStopControl.AVAILABLE) {
-                    setOnClickListener { closeMenu(); requestStopOnce() }
+    private fun onPrimaryTap() {
+        // Đang có lượt chạy dở thì NÓI ra, đừng nuốt cú chạm: nút không phản hồi là thứ khiến người lái
+        // bấm dồn thêm trong lúc xe đang chạy.
+        if (dispatchInFlight.get() || stopAckPending()) { toast("Đang xử lý…"); return }
+        if (!tapInFlight.compareAndSet(false, true)) return
+        val token = generation.get()
+        val started = background("cluster-cast-bubble-tap") {
+            try {
+                // CLAUDE.md §5: "Cấm quyết định bằng cờ RAM. Kiểm bằng sự thật. Cờ chỉ để hiển thị."
+                // `lastProjection` chỉ được làm mới mỗi 15s, mà từ v0.72 cụm còn được đổi từ panel Home
+                // và từ tự-chiếu-lúc-khởi-động — tức nó có thể đi sau sự thật cả 15 giây. Quyết định
+                // Dừng-hay-Chiếu bằng ảnh chụp đó nghĩa là cú chạm có thể làm ĐÚNG CÁI NGƯỢC LẠI: đang
+                // chiếu mà lại phát một lượt cold-cast mới lên cụm đồng hồ lúc xe đang lăn bánh.
+                // Đọc lại đúng một lần ngay tại đây; [project] cũng vẽ lại vòng tròn nên hình và hành vi
+                // luôn cùng một sự thật. Không đọc được thì lùi về ảnh chụp — vẫn tốt hơn không làm gì.
+                val fresh = runCatching { project(token) }
+                    .onFailure { android.util.Log.e(TAG, "tap projection failed", it) }
+                    .getOrNull()
+                if (fresh?.projecting ?: (lastProjection?.projecting == true)) {
+                    handler.post { if (!destroyed) requestStopOnce() }
+                    return@background
                 }
-            })
-        }
-        projection.menu.forEach { item ->
-            val entry = entries.firstOrNull { it.packageName == item.packageName }
-            panel.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                minimumHeight = dp(MENU_MIN_DP)
-                isFocusable = true
-                isEnabled = item.enabled
-                alpha = if (item.enabled) 1f else .55f
-                contentDescription = buildString {
-                    append(item.label)
-                    if (!item.enabled) item.disabledReason?.let {
-                        append(". Không khả dụng: ").append(facade.unavailableReason(it))
+                if (foreignMutationInFlight()) {
+                    handler.post { if (!destroyed) toast("Đang có thao tác khác chạy — thử lại") }
+                    return@background
+                }
+                val excluded = setOfNotNull(packageName, homePackage())
+                val foreground = runCatching { facade.foregroundPackage(HOME_DISPLAY_ID, excluded) }
+                    .onFailure { android.util.Log.e(TAG, "foreground read failed", it) }
+                    .getOrNull()
+                handler.post {
+                    if (destroyed) return@post
+                    if (foreground != null) {
+                        dispatchTarget(foreground)
+                    } else {
+                        toast("Không xác định được app đang mở")
                     }
                 }
-                entry?.icon?.let { icon ->
-                    addView(ImageView(this@FloatingBubbleService).apply {
-                        setImageDrawable(icon)
-                        layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
-                            .apply { rightMargin = dp(10) }
-                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                    })
-                }
-                addView(TextView(this@FloatingBubbleService).apply {
-                    text = item.label
-                    textSize = 13f
-                    setTextColor(Color.WHITE)
-                })
-                if (item.enabled) setOnClickListener { dispatchTarget(item.packageName) }
-            })
+            } finally {
+                tapInFlight.set(false)
+            }
         }
-        if (projection.menu.isEmpty()) {
-            panel.addView(TextView(this).apply {
-                text = "Chưa chọn app nào — mở Cấu hình để chọn app cho nút nổi"
-                textSize = 12f
-                setTextColor(Color.WHITE)
-            })
-        }
-        panel.addView(View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1))
-                .apply { topMargin = dp(6); bottomMargin = dp(6) }
-            setBackgroundColor(0x3DFFFFFF)
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        })
-        panel.addView(TextView(this).apply {
-            text = "Về màn chính"
-            textSize = 13f
-            setTextColor(Color.WHITE)
-            minimumHeight = dp(MENU_MIN_DP)
-            isFocusable = true
-            contentDescription = "Về màn hình chính của xe"
-            setOnClickListener { closeMenu(); goHome() }
-        })
-        panel.addView(TextView(this).apply {
-            id = SETTINGS_VIEW_ID
-            text = "Cấu hình Cluster Cast"
-            textSize = 13f
-            setTextColor(Color.WHITE)
-            minimumHeight = dp(MENU_MIN_DP)
-            isFocusable = true
-            contentDescription = "Mở cấu hình Cluster Cast"
-            setOnClickListener { closeMenu(); openCastControls() }
-        })
+        if (!started) tapInFlight.set(false)
     }
 
-    private fun closeMenu() {
-        val panel = menuPanel ?: return
-        menuPanel = null
-        runCatching { windowManager?.removeView(panel) }
-        params?.let { layout ->
-            layout.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-            bubble?.let { view -> runCatching { windowManager?.updateViewLayout(view, layout) } }
-        }
-    }
+    /**
+     * Một transaction của bề mặt KHÁC đang chạy (panel Home, tự-chiếu-lúc-khởi-động, watchdog).
+     *
+     * Vì sao nút nổi phải tự hỏi câu này thay vì cứ phát rồi để tầng dưới từ chối: khi có transaction,
+     * `CastManualIntentRunner.run` KHÔNG từ chối — nó XẾP HÀNG, và `queueLatestTarget` ghi một
+     * `pendingIntent` gốc USER (`CastModels.withPendingPackage` mặc định `CastIntentOrigin.USER`) vào
+     * store BỀN. `CastSessionStore.initializeForBoot` CỐ Ý giữ lại pendingIntent gốc USER qua mọi lần
+     * khởi động, và `CastAutomationService.evaluate` terminalize yêu cầu tự-chiếu-lúc-khởi-động thành
+     * `USER_SUPERSEDED` khi thấy nó ⇒ MỘT cú chạm rơi trúng lúc bận sẽ tắt tự-chiếu-khi-khởi-động (R7)
+     * của MỌI lần khởi động sau đó.
+     *
+     * Chỗ rút hàng đợi duy nhất là `MainActivityCastController.drainPendingTarget()`, chạy lúc MỞ màn
+     * Home. Nút nổi là một service sống mãi — nó không có khoảnh khắc "mở app" nào để rút, và rút trên
+     * nhịp hẹn giờ thì thành một cú chiếu bất ngờ lúc nổ máy. Vậy nên nút nổi không được phép TẠO ra
+     * hàng đợi: một chạm là một hành động ngay, hoặc là một câu từ chối đọc được.
+     *
+     * Đây là cửa lịch sự, KHÔNG phải guard cứng: cửa cứng vẫn nằm ở tầng thi hành (`CastExecutor`
+     * kiểm lại `transaction == null` trong chính `store.locked`). Còn lại một khe TOCTOU vài mili giây
+     * — chấp nhận được, vì hậu quả khe đó đúng bằng hành vi hôm nay.
+     */
+    private fun foreignMutationInFlight(): Boolean = runCatching { facade.envelope()?.transaction != null }
+        .onFailure { android.util.Log.e(TAG, "durable read failed", it) }
+        .getOrDefault(false)
+
+    /** Gói launcher hiện tại, dò qua Intent chuẩn — không hardcode tên launcher (khác theo đời xe/ROM). */
+    private fun homePackage(): String? = runCatching {
+        packageManager.resolveActivity(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+            android.content.pm.PackageManager.MATCH_DEFAULT_ONLY,
+        )?.activityInfo?.packageName
+    }.getOrNull()
 
     /** Exported canonical action dispatch through the one process runtime and manual-intent owner. */
     private fun dispatchTarget(packageName: String) {
-        closeMenu()
         if (!dispatchInFlight.compareAndSet(false, true)) return
+        // v0.57 báo ngay "đang chiếu…" vì lệnh mất vài giây; không có nó thì chạm xong tưởng máy treo.
+        val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString() }
+            .getOrDefault(packageName)
+        toast("Chiếu $label…")
         val token = generation.get()
-        Thread {
-            runCatching {
+        val started = background("cluster-cast-bubble-dispatch") {
+            // Kết cục PHẢI nói ra. Bản trước `runCatching { … }` rồi bỏ cả kết quả lẫn lỗi: chiếu hỏng thì
+            // người lái chỉ thấy "Chiếu X…" rồi cụm không đổi gì, không một dòng log. Dùng đúng câu mà
+            // panel Home dùng cho cùng kết cục (`statusMessage()`), không tự viết bộ chữ thứ hai.
+            val message = runCatching {
                 facade.runManualIntent(
                     packageName,
                     preferredDensityDpi = catalog.clusterDensityDpi(packageName),
                     clusterStyle = catalog.clusterStyle(packageName),
-                )
-            }
+                ).statusMessage()
+            }.onFailure { android.util.Log.e(TAG, "cast dispatch failed", it) }
+                .getOrElse { "Không chiếu được $label" }
             dispatchInFlight.set(false)
-            handler.post { if (!destroyed && token == generation.get()) projectState() }
-        }.start()
+            handler.post {
+                if (destroyed || token != generation.get()) return@post
+                toast(message)
+                projectState()
+            }
+        }
+        if (!started) dispatchInFlight.set(false)
     }
 
-    private fun openCastControls() = startActivity(
-        Intent(this, ClusterCastActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-    )
+    /**
+     * One tap renders local acknowledgement immediately and dispatches exactly one typed Stop.
+     *
+     * The durable Stop request only journals `stopRequested=true` and fences any in-flight mutation --
+     * it never tears anything down by itself. Once the request is accepted with no in-flight
+     * transaction to wait out, continue exactly like the old Activity's Stop button did.
+     */
+    private fun requestStopOnce() {
+        // Một lượt Stop đang thật sự chạy trong ngân sách thì thôi; quá hạn thì [stopAckPending] tự nhả
+        // chốt ngay tại đây, nếu không `compareAndSet` bên dưới nuốt cú chạm mà không báo gì.
+        if (stopAckPending()) return
+        // Ghi mốc TRƯỚC khi giữ chốt: ai thấy chốt đang giữ thì cũng thấy mốc của đúng lượt đó, không
+        // phải mốc cũ còn sót. Ngược lại thì làn vẽ có thể coi lượt vừa phát là đã quá hạn và nhả sớm.
+        stopRequestedAtMs = android.os.SystemClock.elapsedRealtime()
+        if (!stopInFlight.compareAndSet(false, true)) return
+        val token = generation.get()
+        val started = background("cluster-cast-bubble-stop") {
+            val accepted = runCatching { facade.requestStop() }.getOrNull()
+            var dispatchFailed = false
+            var outcome: String? = null
+            if (accepted != null && accepted.transaction == null) {
+                outcome = runCatching { continueStopAfterAcknowledgement() }
+                    .onFailure { android.util.Log.e(TAG, "stop dispatch failed", it); dispatchFailed = true }
+                    .getOrElse { "Dừng chiếu thất bại" }
+            }
+            handler.post {
+                if (destroyed || token != generation.get()) return@post
+                if (accepted == null) {
+                    stopInFlight.set(false)
+                    toast("Không lưu được Stop")
+                } else {
+                    // Phát lệnh dọn dẹp hỏng thì chốt cục bộ phải nhả NGAY: giữ nó là khoá luôn cú chạm
+                    // kế tiếp trong khi cụm vẫn còn app trên đó.
+                    if (dispatchFailed) stopInFlight.set(false)
+                    // Kết cục nói ra bằng đúng câu panel Home dùng cho cùng đường Stop.
+                    outcome?.let { toast(it) }
+                }
+                projectState()
+            }
+        }
+        if (!started) stopInFlight.set(false)
+    }
+
+    /**
+     * Builds and executes the actual Stop plan once the request is durably acknowledged and no
+     * older mutation is still in flight. Delegates to the one shared implementation in
+     * [CastFacade.continueStopAfterAcknowledgement] so the raw mutation call lives in exactly one
+     * place instead of being copied per surface.
+     */
+    private fun continueStopAfterAcknowledgement(): String =
+        facade.continueStopAfterAcknowledgement { pkg -> catalog.evidence(pkg, facade.phoneSession(pkg)) }
+
+    /** Chỉ gọi trên luồng vẽ. `runCatching` vì Toast có thể bị chặn bởi cài đặt thông báo của xe. */
+    private fun toast(message: String) {
+        runCatching { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
+    }
 
     private fun bubbleText(value: String, minDp: Int) = TextView(this).apply {
         text = value
@@ -574,7 +545,7 @@ class FloatingBubbleService : Service() {
             )
         }
         val pending = PendingIntent.getActivity(
-            this, 0, Intent(this, ClusterCastActivity::class.java),
+            this, 0, Intent(this, com.byd.clusternav.MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         @Suppress("DEPRECATION")
@@ -590,19 +561,18 @@ class FloatingBubbleService : Service() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density + .5f).toInt()
 
     companion object {
-        private val STOP_VIEW_ID = View.generateViewId()
-        private val MENU_BUTTON_ID = View.generateViewId()
+        private const val TAG = "ClusterCastBubble"
         private const val NOTIFICATION_ID = 1042
+        /** Xe này luôn dùng display 0 cho màn chính (đã xác nhận qua nhiều dump thật — xem CastAmStackForegroundTest). */
+        private const val HOME_DISPLAY_ID = 0
         private const val REFRESH_INTERVAL_MS = 15_000L
-        private const val STOP_MIN_DP = 64
-        private const val MENU_MIN_DP = 56
-        private val MENU_VIEW_ID = View.generateViewId()
-        /** A menu wider than this covers the screen it floats over instead of sitting beside it. */
-        private const val MENU_PANEL_WIDTH_DP = 300
-        private val SETTINGS_VIEW_ID = View.generateViewId()
+        private const val BUBBLE_SIZE_DP = 56
         internal const val STOP_ACK_DEADLINE_MS = 500L
-        private const val IDLE_ALPHA = 0.55f
+        // Giá trị v0.57 đã chạy ngoài xe: mờ hẳn lúc rảnh để không đè map, 2,5s là đủ lâu để nhìn thấy.
+        private const val IDLE_ALPHA = 0.35f
         private const val ACTIVE_ALPHA = 1.0f
-        private const val FADE_DELAY_MS = 3_000L
+        private const val FADE_DELAY_MS = 2_500L
+        private val BRAND = 0xFF1565C0.toInt()
+        private val BRAND_LIGHT = 0xFFE6F1FB.toInt()
     }
 }

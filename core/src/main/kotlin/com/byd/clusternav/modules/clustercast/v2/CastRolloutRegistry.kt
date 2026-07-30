@@ -34,11 +34,17 @@ object CastRolloutRegistry {
      * Cast decisions: the requested flags are independent. At verified idle/no transaction there is
      * no action owner, so the requested Cast UI may become the next effective version and any pending
      * rollback is cleared. Working/active/recovery routing remains session-sticky.
+     *
+     * `pristineBoundary` dropped its `durableEpoch == 0L` requirement 2026-07-29: that check used to
+     * be equivalent to "nothing recorded" only because nothing ever nulled `stableSession` after the
+     * epoch moved past zero. `CastCoordinator.reconcileUnobservableIdleSession()` now does exactly
+     * that (clearing a stale idle claim this boot can never re-verify), so "nothing recorded" must be
+     * read directly off `stableSession == null && transaction == null`, not off the epoch.
      */
     fun resolve(envelope: CastSessionEnvelope, flags: CastRolloutFlags = defaults): RolloutDecision {
         val stableSession = envelope.stableSession
         val transaction = envelope.transaction
-        val pristineBoundary = stableSession == null && transaction == null && envelope.durableEpoch == 0L
+        val pristineBoundary = stableSession == null && transaction == null
         val safeBoundary = transaction == null &&
             (pristineBoundary || stableSession?.state == StableState.IDLE_VERIFIED)
         val requestedUi = if (flags.castUiV2) EngineVersion.V2 else EngineVersion.LEGACY

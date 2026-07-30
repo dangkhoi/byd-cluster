@@ -33,7 +33,7 @@ class CastColdBootstrapPreflightTest {
             ) is ColdBootstrapPreflight.Ready,
         )
         val blockedEnvelopes = listOf(
-            envelope.copy(durableEpoch = 1), envelope.copy(stopRequested = true),
+            envelope.copy(stopRequested = true),
             envelope.copy(pendingIntent = PendingCastIntent("com.example.maps")), envelope.copy(pendingUiRollback = true),
             envelope.copy(effectiveUiVersion = EngineVersion.LEGACY),
             envelope.copy(stableSession = idleSession()),
@@ -41,6 +41,16 @@ class CastColdBootstrapPreflightTest {
         blockedEnvelopes.forEach {
             assertTrue(CastColdBootstrapPreflight.inspect(it, facts(), raw()) is ColdBootstrapPreflight.Blocked)
         }
+        // 2026-07-29: a non-zero epoch alone no longer blocks bootstrap. It used to be equivalent to
+        // "stableSession/transaction were never set" only because nothing else ever nulled
+        // stableSession after the epoch moved past zero; `reconcileUnobservableIdleSession()` now does
+        // exactly that for a stale post-reboot idle claim, so a driver who cleared one must be able to
+        // bootstrap fresh again despite the epoch having moved. See
+        // `CastReconcileUnobservableIdleSessionTest`/`CastPostBootIdleRecoveryTest`.
+        assertTrue(
+            CastColdBootstrapPreflight.inspect(envelope.copy(durableEpoch = 1), facts(), raw())
+                is ColdBootstrapPreflight.Ready,
+        )
         // 0.72: unrelated logical displays (launcher-split, unnamed virtual surfaces) and stacks that
         // live on them exist on real vehicles and must not block bootstrap.
         listOf(
@@ -78,6 +88,33 @@ class CastColdBootstrapPreflightTest {
         ).forEach {
             assertTrue(CastColdBootstrapPreflight.inspect(envelope, facts(), it) is ColdBootstrapPreflight.Blocked)
         }
+    }
+
+    /**
+     * Fail-closed vehicle-identity gate: only the EXACT Seal DL3 tuple reaches Ready. A near-miss
+     * (single field off) must stay Blocked, not silently widen to a fuzzy "byd" substring match --
+     * that was the central risk flagged in review of the generic vehicle-profile catalog and is
+     * exactly what CastVehicleProfileCatalog.GENERIC_FALLBACK (dispatchImplemented = false) enforces.
+     */
+    @Test
+    fun `a near-miss vehicle tuple stays Blocked, never widened to a fuzzy match`() {
+        val envelope = pristineEnvelope()
+        val nearMiss = facts().copy(manufacturer = "BYD Auto")
+        val nearMissResult = CastColdBootstrapPreflight.inspect(envelope, nearMiss, raw())
+        assertTrue(nearMissResult is ColdBootstrapPreflight.Blocked)
+        assertTrue((nearMissResult as ColdBootstrapPreflight.Blocked).reason.contains("GENERIC_FALLBACK") ||
+            nearMissResult.reason.contains("exact"), nearMissResult.reason)
+
+        val dl5Marker = facts().copy(product = "DiLink5", device = "DiLink5")
+        val dl5Result = CastColdBootstrapPreflight.inspect(envelope, dl5Marker, raw())
+        assertTrue(dl5Result is ColdBootstrapPreflight.Blocked)
+        assertTrue((dl5Result as ColdBootstrapPreflight.Blocked).reason.contains("DiLink5"), dl5Result.reason)
+
+        // Explicit override to SEAL_DL3 short-circuits detection even for otherwise-unknown facts.
+        val overridden = CastColdBootstrapPreflight.inspect(
+            envelope, nearMiss, raw(), VehicleProfileId.SEAL_DL3,
+        )
+        assertTrue(overridden is ColdBootstrapPreflight.Ready)
     }
 
     private fun facts() = SealDl3BootstrapProfile.exactFacts

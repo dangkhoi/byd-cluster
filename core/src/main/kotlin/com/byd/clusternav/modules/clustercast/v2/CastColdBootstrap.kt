@@ -65,20 +65,33 @@ sealed interface ColdBootstrapPreflight {
 }
 
 object CastColdBootstrapPreflight {
+    /**
+     * `durableEpoch != 0L` dropped from the block list 2026-07-29: it used to be equivalent to
+     * "stableSession/transaction were never set" only because nothing ever nulled `stableSession`
+     * after the epoch moved past zero. `CastCoordinator.reconcileUnobservableIdleSession()` now does
+     * exactly that for a stale idle claim this boot can never re-verify (its cluster display is
+     * WindowManager-level and does not survive a reboot) — so a driver could clear that claim, see
+     * CAST offered again, tap it, and still get blocked here with a stale epoch reason. The remaining
+     * checks below (`stableSession`, `transaction`, `stopRequested`, `pendingIntent`,
+     * `adjustmentDraft`, `pendingUiRollback`, plus `rollout.actionOwner == null` above) already fully
+     * capture "nothing recorded, safe to bootstrap fresh" without needing the epoch itself to be zero.
+     */
     fun inspect(
         envelope: CastSessionEnvelope,
         facts: CastVehicleFacts,
         raw: RawObservation,
+        profileOverride: VehicleProfileId? = null,
     ): ColdBootstrapPreflight {
-        if (!SealDl3BootstrapProfile.eligible(facts)) return blocked("exact Seal DL3 facts required")
+        val vehicleProfile = CastVehicleProfileCatalog.resolve(facts, profileOverride)
+        if (!vehicleProfile.dispatchImplemented) return blocked(checkNotNull(vehicleProfile.blockedReason))
         val rollout = CastRolloutRegistry.resolve(envelope, CastRolloutRegistry.vehicleTestCandidate)
         if (envelope.effectiveUiVersion != EngineVersion.V2 || rollout.effectiveUiVersion != EngineVersion.V2 ||
             rollout.actionOwner != null
         ) return blocked("effective V2 with no action owner required")
-        if (envelope.durableEpoch != 0L || envelope.stableSession != null || envelope.transaction != null ||
+        if (envelope.stableSession != null || envelope.transaction != null ||
             envelope.stopRequested || envelope.pendingIntent != null || envelope.adjustmentDraft != null ||
             envelope.pendingUiRollback
-        ) return blocked("durable envelope is not pristine epoch 0")
+        ) return blocked("durable envelope is not pristine")
 
         val headers = when (val parsed = CastLogicalDisplayParser.parseHeaders(raw.displays)) {
             is CastDumpParse.Known -> parsed.value
@@ -190,9 +203,11 @@ internal class CastColdBootstrap(
         observe: (Long) -> ObservationValue<ObservedState>,
         pendingTarget: String? = null,
         style: ClusterStyle = ClusterStyle.CURVED,
+        profileOverride: VehicleProfileId? = null,
     ): ColdBootstrapResult {
         val id = operationId()
         val deadline = Math.addExact(nowEpochMillis(), timeoutMillis)
+        val resolvedProfile = CastVehicleProfileCatalog.resolve(facts, profileOverride)
         val raw = when (val inspected = inspectRaw(deadline)) {
             is ObservationValue.Known -> inspected.value
             is ObservationValue.Unknown -> return ColdBootstrapResult.Blocked("raw preflight unavailable: ${inspected.reason}")
@@ -200,39 +215,39 @@ internal class CastColdBootstrap(
         }
         if (deadlineExpired(deadline)) return ColdBootstrapResult.Blocked("bootstrap deadline exceeded during preflight")
         val adopt = discoverClusterDisplayId(raw.displays) != null
-        val creation = createTransaction(id, deadline, facts, raw, pendingTarget, adopt, style)
+        val creation = createTransaction(id, deadline, facts, raw, pendingTarget, adopt, style, profileOverride, resolvedProfile)
         if (creation is BootstrapCreation.Blocked) return ColdBootstrapResult.Blocked(creation.reason)
         val created = (creation as BootstrapCreation.Created).envelope
         val epoch = checkNotNull(created.transaction).epoch
         if (!setPhaseIfCurrent(id, epoch, OperationPhase.ACTIVATING)) {
-            return fail(id, "bootstrap fence changed before activation", true)
+            return fail(id, resolvedProfile, "bootstrap fence changed before activation", true)
         }
 
-        if (!adopt) SealDl3BootstrapProfile.forwardKindsFor(style).forEachIndexed { index, kind ->
+        if (!adopt) resolvedProfile.forwardKindsFor(style).forEachIndexed { index, kind ->
             val dispatch = authorizeForward(id, epoch, index, kind)
-                ?: return fail(id, "bootstrap epoch, Stop fence, order, or deadline changed before ${kind.name}", true)
+                ?: return fail(id, resolvedProfile, "bootstrap epoch, Stop fence, order, or deadline changed before ${kind.name}", true)
             when (val result = execute(dispatch, id, kind)) {
                 is MutationResult.Observed -> markEffect(id, index, LedgerEffect.OBSERVED)
                 is MutationResult.Rejected -> {
                     markEffect(id, index, LedgerEffect.REJECTED)
-                    return fail(id, "${kind.name} rejected: ${result.reason}", true)
+                    return fail(id, resolvedProfile, "${kind.name} rejected: ${result.reason}", true)
                 }
-                is MutationResult.UnknownEffect -> return fail(id, "${kind.name} effect unknown: ${result.reason}", false)
+                is MutationResult.UnknownEffect -> return fail(id, resolvedProfile, "${kind.name} effect unknown: ${result.reason}", false)
             }
-            if (!sleepWithin(FORWARD_SETTLES[index], deadline)) {
-                return fail(id, "bootstrap settle exceeded deadline after ${kind.name}", true)
+            if (!sleepWithin(resolvedProfile.forwardSettlesMillis[index], deadline)) {
+                return fail(id, resolvedProfile, "bootstrap settle exceeded deadline after ${kind.name}", true)
             }
         }
         if (!setPhaseIfCurrent(id, epoch, OperationPhase.VERIFYING)) {
-            return fail(id, "bootstrap fence changed before verification", true)
+            return fail(id, resolvedProfile, "bootstrap fence changed before verification", true)
         }
         var previous: ObservedState? = null
         var allEffectsKnown = true
         repeat(verificationAttempts) { attempt ->
             if (!stillCurrent(id, epoch)) {
-                return fail(id, "bootstrap epoch or Stop fence changed during verification", true)
+                return fail(id, resolvedProfile, "bootstrap epoch or Stop fence changed during verification", true)
             }
-            if (deadlineExpired(deadline)) return fail(id, "bootstrap verification deadline exceeded", allEffectsKnown)
+            if (deadlineExpired(deadline)) return fail(id, resolvedProfile, "bootstrap verification deadline exceeded", allEffectsKnown)
             when (val sample = observe(deadline)) {
                 is ObservationValue.Known -> {
                     if (deadlineExpired(deadline)) {
@@ -240,7 +255,7 @@ internal class CastColdBootstrap(
                         previous = null
                     } else {
                         val state = sample.value
-                        if (CastColdBootstrapVerification.accepts(state) && state == previous) return succeed(id, state)
+                        if (CastColdBootstrapVerification.accepts(state) && state == previous) return succeed(id, resolvedProfile, state)
                         previous = state.takeIf(CastColdBootstrapVerification::accepts)
                     }
                 }
@@ -250,10 +265,10 @@ internal class CastColdBootstrap(
                 }
             }
             if (attempt + 1 < verificationAttempts && !sleepWithin(verificationPollMillis, deadline)) {
-                return fail(id, "bootstrap verification deadline exceeded", allEffectsKnown)
+                return fail(id, resolvedProfile, "bootstrap verification deadline exceeded", allEffectsKnown)
             }
         }
-        return fail(id, "bootstrap verification did not converge", allEffectsKnown)
+        return fail(id, resolvedProfile, "bootstrap verification did not converge", allEffectsKnown)
     }
 
     private fun createTransaction(
@@ -264,10 +279,12 @@ internal class CastColdBootstrap(
         pendingTarget: String?,
         adopt: Boolean,
         style: ClusterStyle,
+        profileOverride: VehicleProfileId?,
+        resolvedProfile: VehicleCastProfile,
     ): BootstrapCreation = store.locked {
         val loaded = read() as? StoreRead.Loaded
             ?: return@locked BootstrapCreation.Blocked("durable store unavailable")
-        when (val preflight = CastColdBootstrapPreflight.inspect(loaded.envelope, facts, raw)) {
+        when (val preflight = CastColdBootstrapPreflight.inspect(loaded.envelope, facts, raw, profileOverride)) {
             is ColdBootstrapPreflight.Blocked -> BootstrapCreation.Blocked(preflight.reason)
             is ColdBootstrapPreflight.Ready -> BootstrapCreation.Created(
                 bumpEpoch { envelope -> envelope.copy(
@@ -280,7 +297,7 @@ internal class CastColdBootstrap(
                         id, envelope.durableEpoch, CastOperation.BOOTSTRAP, OperationPhase.PREPARING,
                         null, pendingTarget, null, BOOTSTRAP_PENDING_DISPLAY, preflight.baseline,
                         if (adopt) emptyList()
-                        else (SealDl3BootstrapProfile.forwardKindsFor(style) + SealDl3BootstrapProfile.compensationKinds)
+                        else (resolvedProfile.forwardKindsFor(style) + resolvedProfile.compensationKinds)
                             .map { kind ->
                                 LedgerStep(
                                     "bootstrap-${kind.name.lowercase()}", "fixed Seal DL3 bootstrap sequence",
@@ -308,17 +325,17 @@ internal class CastColdBootstrap(
         MutationResult.UnknownEffect("gateway threw ${failure.javaClass.simpleName}: ${failure.message.orEmpty()}")
     }
 
-    private fun fail(id: UUID, reason: String, effectKnown: Boolean): ColdBootstrapResult {
+    private fun fail(id: UUID, resolvedProfile: VehicleCastProfile, reason: String, effectKnown: Boolean): ColdBootstrapResult {
         setRecovery(id, reason)
         val tx = transaction(id)
         val observedForward = tx?.ledger?.take(3)?.any { it.effect == LedgerEffect.OBSERVED } == true
-        val compensated = tx != null && effectKnown && observedForward && compensate(id)
+        val compensated = tx != null && effectKnown && observedForward && compensate(id, resolvedProfile)
         return ColdBootstrapResult.RecoveryRequired(id, reason, effectKnown, compensated)
     }
 
-    private fun compensate(id: UUID): Boolean {
-        val first = authorizeCompensation(id, 3, consumeBudget = true) ?: return false
-        when (execute(first, id, CommandKind.SEAL_DL3_COMPENSATE_18)) {
+    private fun compensate(id: UUID, resolvedProfile: VehicleCastProfile): Boolean {
+        val first = authorizeCompensation(id, resolvedProfile, 3, consumeBudget = true) ?: return false
+        when (execute(first, id, resolvedProfile.compensationKinds[0])) {
             is MutationResult.Observed -> markEffect(id, 3, LedgerEffect.OBSERVED)
             is MutationResult.Rejected -> {
                 markEffect(id, 3, LedgerEffect.REJECTED)
@@ -326,9 +343,9 @@ internal class CastColdBootstrap(
             }
             is MutationResult.UnknownEffect -> return true
         }
-        if (!sleepWithin(COMPENSATION_SETTLE_MILLIS, first.deadline)) return true
-        val second = authorizeCompensation(id, 4, consumeBudget = false) ?: return true
-        when (execute(second, id, CommandKind.SEAL_DL3_COMPENSATE_0)) {
+        if (!sleepWithin(resolvedProfile.compensationSettleMillis, first.deadline)) return true
+        val second = authorizeCompensation(id, resolvedProfile, 4, consumeBudget = false) ?: return true
+        when (execute(second, id, resolvedProfile.compensationKinds[1])) {
             is MutationResult.Observed -> markEffect(id, 4, LedgerEffect.OBSERVED)
             is MutationResult.Rejected -> markEffect(id, 4, LedgerEffect.REJECTED)
             is MutationResult.UnknownEffect -> Unit
@@ -336,7 +353,7 @@ internal class CastColdBootstrap(
         return true
     }
 
-    private fun succeed(id: UUID, observed: ObservedState): ColdBootstrapResult {
+    private fun succeed(id: UUID, resolvedProfile: VehicleCastProfile, observed: ObservedState): ColdBootstrapResult {
         val tx = transaction(id) ?: return ColdBootstrapResult.Blocked("bootstrap transaction disappeared")
         val stable = StableCastSession(
             StableState.IDLE_VERIFIED, EngineVersion.V2, "runtime-bootstrap", BOOTSTRAP_PROFILE_EXPORT,
@@ -355,7 +372,7 @@ internal class CastColdBootstrap(
             true
         }
         if (!committed) {
-            return if (transaction(id) != null) fail(id, "bootstrap fence changed before commit", true)
+            return if (transaction(id) != null) fail(id, resolvedProfile, "bootstrap fence changed before commit", true)
             else ColdBootstrapResult.Blocked("bootstrap transaction disappeared before commit")
         }
         return ColdBootstrapResult.Succeeded(stable)
@@ -383,6 +400,7 @@ internal class CastColdBootstrap(
 
     private fun authorizeCompensation(
         id: UUID,
+        resolvedProfile: VehicleCastProfile,
         index: Int,
         consumeBudget: Boolean,
     ): BootstrapDispatch? = store.locked {
@@ -395,7 +413,7 @@ internal class CastColdBootstrap(
             tx.ledger.take(3).any { it.effect == LedgerEffect.ISSUED } ||
             (consumeBudget && tx.compensationUsed) || (!consumeBudget && (!tx.compensationUsed || tx.ledger[3].effect != LedgerEffect.OBSERVED))
         ) return@locked null
-        val expectedKind = if (index == 3) CommandKind.SEAL_DL3_COMPENSATE_18 else CommandKind.SEAL_DL3_COMPENSATE_0
+        val expectedKind = if (index == 3) resolvedProfile.compensationKinds[0] else resolvedProfile.compensationKinds[1]
         val step = tx.ledger.getOrNull(index)
             ?.takeIf { it.commandKind == expectedKind && it.effect == LedgerEffect.PLANNED }
             ?: return@locked null
@@ -481,10 +499,5 @@ internal class CastColdBootstrap(
         } catch (_: RuntimeException) {
             false
         }
-    }
-
-    companion object {
-        private val FORWARD_SETTLES = longArrayOf(3_000L, 3_000L, 2_000L)
-        private const val COMPENSATION_SETTLE_MILLIS = 1_000L
     }
 }

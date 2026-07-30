@@ -78,12 +78,15 @@ class RebindReceiver : BroadcastReceiver() {
         }.start()
     }
 
-    /** Presentation-only restore of an explicitly opted-in Bubble; it never dispatches Cast work. */
+    /**
+     * Presentation-only restore of the always-on Bubble; it never dispatches Cast work.
+     *
+     * v0.72: the bubble no longer has an enable/disable toggle (docs/specs/cast-simplified-active-app-toggle.html)
+     * -- it starts on every boot as long as the overlay permission is already granted. If it is not,
+     * `FloatingBubbleService.onStartCommand` itself sends the user to the one system screen that can
+     * grant it, so starting the service unconditionally here is what lets that happen on first boot too.
+     */
     private fun startOptedInBubble(app: Context) {
-        val optedIn = runCatching {
-            com.byd.clusternav.cast.platform.CastAppCatalog(app).bubbleEnabled()
-        }.getOrDefault(false)
-        if (!optedIn || !android.provider.Settings.canDrawOverlays(app)) return
         runCatching {
             app.startForegroundService(
                 Intent(app, com.byd.clusternav.modules.clustercast.FloatingBubbleService::class.java),

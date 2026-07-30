@@ -37,7 +37,9 @@ class CastDiagnosticsContractTest {
         // 2026-07-27: bubble dựng mô hình qua façade; hợp đồng giữ nguyên là nó chỉ render, không mutate.
         assertTrue(bubble.contains("facade.renderModel()"))
         assertFalse(bubble.contains("ACTION_STOP"), "0.71 Bubble must not send a duplicate Activity Stop")
-        assertTrue(bubble.contains("STOP_MIN_DP = 64"))
+        // 2026-07-29: nút Stop riêng bị gỡ — một chạm trên vòng tròn quyết định cast/stop tuỳ trạng thái
+        // (docs/specs/cast-simplified-active-app-toggle.html). Không còn STOP_MIN_DP.
+        assertTrue(bubble.contains("BUBBLE_SIZE_DP = 56"))
         // 2026-07-27: bubble gọi Stop qua CastFacade. Hợp đồng cần giữ là thứ tự latch trước khi phát Stop.
         assertTrue(bubble.contains("facade.requestStop()"))
         assertTrue(bubble.contains("stopInFlight.compareAndSet(false, true)"))
@@ -51,12 +53,16 @@ class CastDiagnosticsContractTest {
     @Test
     fun `Android Cast surfaces share one process owner and never close it independently`() {
         val runtime = source("main/java/com/byd/clusternav/cast/platform/CastAndroidRuntime.kt")
-        val activity = source("main/java/com/byd/clusternav/modules/clustercast/ClusterCastActivity.kt")
+        // 2026-07-29: màn Cast riêng (ClusterCastActivity) bị xoá — Cluster Cast giờ sống trong
+        // MainActivityCastController, được MainActivity giữ, xem docs/specs/cast-simplified-active-app-toggle.html.
+        val controller = source("main/java/com/byd/clusternav/modules/clustercast/MainActivityCastController.kt")
         val bubble = source("main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt")
         val manifest = source("main/AndroidManifest.xml")
         assertTrue(runtime.contains("processRuntime"))
-        assertTrue(manifest.contains("android:launchMode=\"singleTask\""))
-        assertFalse(activity.contains("runtime.gateway.close()"))
+        // 2026-07-29: chỉ còn MainActivity (singleTop) — ClusterCastActivity (singleTask riêng) đã xoá,
+        // không còn hai task/Activity Cast nào có thể trùng nhau để cần singleTask nữa.
+        assertTrue(manifest.contains("android:launchMode=\"singleTop\""))
+        assertFalse(controller.contains("runtime.gateway.close()"))
         assertFalse(bubble.contains("runtime.gateway.close()"))
     }
 

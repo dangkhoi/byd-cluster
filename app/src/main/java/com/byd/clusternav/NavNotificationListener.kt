@@ -28,7 +28,11 @@ class NavNotificationListener : NotificationListenerService() {
         private val ARRIVAL = Regex("""arriv|đã đến|đến nơi|tới nơi|bạn đã tới|đã tới""", RegexOption.IGNORE_CASE)
         val MAPS_PACKAGES = setOf(
             "com.google.android.apps.maps",
-            "app.revanced.android.apps.maps"
+            "app.revanced.android.apps.maps",
+            // NotificationParser đã biết đọc field-đảo của VietMap (đường ở title, cự ly ở text —
+            // xem NotificationParser.kt:9) từ trước, nhưng chưa từng được NGHE vì gói không có trong
+            // tập này. Gói xác nhận qua dump thật (WmParseTest.kt: "vn.vietmap.live/.MainActivity").
+            "vn.vietmap.live",
         )
     }
 

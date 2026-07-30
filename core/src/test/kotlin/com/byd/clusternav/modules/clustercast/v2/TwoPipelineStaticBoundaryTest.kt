@@ -39,18 +39,26 @@ class TwoPipelineStaticBoundaryTest {
                 .filter { it.toFile().readText().contains("com.byd.clusternav.modules.clustercast.v2") }
                 .toList()
         }
+        // 2026-07-29: màn Cast riêng bị xoá (docs/specs/cast-simplified-active-app-toggle.html), nên
+        // "chỗ duy nhất được phép mutate" chuyển từ `ClusterCastActivity.kt` sang
+        // `MainActivityCastController.kt` — panel Cluster Cast của Home. Bốn file UI cũ
+        // (ClusterCastActivity/CastAdjustmentDialog/CastAppManagerDialog/CastAppManagerBinding) đã xoá
+        // hẳn; `CastActivityAutoStart.kt` là quyết định thuần mới tách ra cho R6.
+        val owner = "MainActivityCastController.kt"
         val expected = setOf(
-            "ClusterCastActivity.kt", "CastOperationStatus.kt", "CastActivityRefresh.kt",
-            "CastAdjustmentDialog.kt", "CastAppManagerDialog.kt",
-            "CastAppManagerBinding.kt", "CastAutomationService.kt", "CastRetryPrompt.kt",
+            owner, "CastOperationStatus.kt", "CastActivityRefresh.kt", "CastActivityAutoStart.kt",
+            "CastAutomationService.kt", "CastRetryPrompt.kt",
             "CastFacade.kt",
+            // 2026-07-28: tách khỏi ClusterCastActivity trong 55ae408 (đọc AcceptedGeometry/CastRect để vẽ
+            // hàng app). Chỉ đọc — điều kiện "không được gọi facade.execute" ngay dưới đây canh việc đó.
+            "CastRowActions.kt",
             "FloatingBubbleService.kt",
         )
         assertTrue(consumers.map { it.fileName.toString() }.toSet() == expected, "unexpected V2 consumers: $consumers")
-        val activity = consumers.single { it.fileName.toString() == "ClusterCastActivity.kt" }.toFile().readText()
-        // 2026-07-27: mutation đi qua CastFacade; hợp đồng giữ nguyên là chỉ Activity được phép gọi.
+        val activity = consumers.single { it.fileName.toString() == owner }.toFile().readText()
+        // 2026-07-27: mutation đi qua CastFacade; hợp đồng giữ nguyên là chỉ MỘT bề mặt được phép gọi.
         assertTrue(activity.contains("facade.execute"))
-        consumers.filterNot { it.fileName.toString() == "ClusterCastActivity.kt" }.forEach {
+        consumers.filterNot { it.fileName.toString() == owner }.forEach {
             assertFalse(it.toFile().readText().contains("facade.execute"), it.toString())
         }
         assertFalse(activity.contains("ClusterCast.cast("))

@@ -33,6 +33,37 @@ class CastGeometryTest {
         )
     }
 
+    /**
+     * This is the gate `CastAdjustmentWorkspace.beginApply` calls for the `CastRowActions.applySoon` /
+     * `CastFacade.applyGeometry` path (per-app size-box DPI, `CastAppCatalog.scaleOf(pkg).dpi`) — it runs
+     * BEFORE `CastFacade.applyGeometry` ever calls `planGeometry`/`execute`, so an out-of-range value here
+     * never reaches `CastPlanner`, never becomes a `CastMutationRequest`, and never reaches
+     * `CastGeometryCommandEncoder`/`CastPlacementCommands` to be turned into a "wm density" string at all.
+     * Boundary is 72..640 (`CastGeometry.kt`), one layer wider than the 80..640 `CastAppCatalog` enforces
+     * for the SEPARATE cast-time `clusterDensityDpi` value — see `CastGeometryCommandEncoderTest` for the
+     * encoder-level defense-in-depth check on the same boundary.
+     */
+    @Test fun `density outside 72 to 640 is rejected before any command is planned, boundary values accepted`() {
+        val valid = GeometryDraft(target, CastRect(0, 0, 1920, 720), 160, "seal", 9)
+        assertEquals(
+            DisabledReason.GEOMETRY_LIMITED,
+            (CastGeometry.validate(valid.copy(densityDpi = 71), observed, 9) as GeometryDecision.Rejected).reason,
+        )
+        assertEquals(
+            DisabledReason.GEOMETRY_LIMITED,
+            (CastGeometry.validate(valid.copy(densityDpi = 641), observed, 9) as GeometryDecision.Rejected).reason,
+        )
+        assertEquals(
+            DisabledReason.GEOMETRY_LIMITED,
+            (CastGeometry.validate(valid.copy(densityDpi = -1), observed, 9) as GeometryDecision.Rejected).reason,
+        )
+        assertEquals(72, (CastGeometry.validate(valid.copy(densityDpi = 72), observed, 9) as GeometryDecision.Ready).geometry.densityDpi)
+        assertEquals(640, (CastGeometry.validate(valid.copy(densityDpi = 640), observed, 9) as GeometryDecision.Ready).geometry.densityDpi)
+        // null densityDpi means "leave display density alone" -- distinct from an out-of-range value and
+        // must stay accepted, or every geometry-only (no DPI change) adjustment would start failing closed.
+        assertTrue(CastGeometry.validate(valid.copy(densityDpi = null), observed, 9) is GeometryDecision.Ready)
+    }
+
     @Test fun `geometry plan carries exact target and rejects same package task replacement`() {
         val geometry = AcceptedGeometry(CastRect(0, 0, 1920, 720), 160, "seal")
         val snapshot = PlannerSnapshot(

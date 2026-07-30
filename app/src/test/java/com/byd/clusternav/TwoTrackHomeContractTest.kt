@@ -18,7 +18,11 @@ class TwoTrackHomeContractTest {
         assertFalse(layout.contains("btn_gps"))
         // 2026-07-27: bỏ nút "Mở Navigation" theo yêu cầu chủ dự án — Home đã có đủ công tắc của track
         // Navigation ngay trên thẻ, nên một nút mở màn phụ chỉ thêm một lần bấm.
-        assertTrue(layout.contains("btn_cast_details"))
+        // 2026-07-29: màn "Cài đặt chiếu" riêng (btn_cast_details/ClusterCastActivity) cũng bị xoá cùng lý
+        // do — Cluster Cast giờ sống nguyên trong panel bên phải của Home, không còn màn phụ nào để mở
+        // (docs/specs/cast-simplified-active-app-toggle.html).
+        assertFalse(layout.contains("btn_cast_details"))
+        assertTrue(layout.contains("cast_geometry_container"))
         assertTrue(activity.contains("NavRepository.stop"))
     }
 

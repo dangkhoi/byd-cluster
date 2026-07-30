@@ -109,7 +109,21 @@ object CastRuntimeUi {
         return CastUiRenderer.render(state, now, stopRequestedAt)
     }
 
-    /** Actionable UI classification only; it never claims a durable stable state. */
+    /**
+     * Actionable UI classification only; it never claims a durable stable state.
+     *
+     * "Nothing recorded" used to be gated on a true fresh install (`durableEpoch == 0L`), since
+     * nothing ever nulled `stableSession` after the epoch moved past zero — epoch==0 and
+     * stableSession==null were equivalent facts. That stopped being true 2026-07-29:
+     * `CastCoordinator.reconcileUnobservableIdleSession()` now clears a stale idle claim that this
+     * boot can never re-verify (its cluster display is WindowManager-level and does not survive a
+     * reboot), the first path other than a pristine install that nulls `stableSession` at any epoch.
+     * The `durableEpoch == 0L` check is dropped for that reason: `stableSession == null` (checked
+     * below, unconditionally) is the fact that actually matters, and every other condition here
+     * (schema, effective UI, stopRequested, pendingIntent, pendingUiRollback, transaction,
+     * adjustmentDraft, rollout) already makes "nothing recorded, safe to bootstrap fresh" the correct
+     * reading regardless of how many times the epoch has churned before.
+     */
     fun isColdPristine(
         storeRead: StoreRead,
         observation: ObservationValue<ObservedState>,
@@ -120,7 +134,7 @@ object CastRuntimeUi {
         ) return false
         val rollout = CastRolloutRegistry.resolve(envelope, CastRolloutRegistry.vehicleTestCandidate)
         return envelope.schemaVersion == CAST_ENVELOPE_SCHEMA_VERSION &&
-            envelope.durableEpoch == 0L && envelope.effectiveUiVersion == EngineVersion.V2 &&
+            envelope.effectiveUiVersion == EngineVersion.V2 &&
             !envelope.stopRequested && envelope.pendingIntent == null && !envelope.pendingUiRollback &&
             envelope.stableSession == null && envelope.transaction == null && envelope.adjustmentDraft == null &&
             rollout.effectiveUiVersion == EngineVersion.V2 && rollout.actionOwner == null

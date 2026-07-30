@@ -1,7 +1,6 @@
 package com.byd.clusternav
 
-import android.widget.Toast
-import com.byd.clusternav.modules.clustercast.CastBubbleControl
+import com.byd.clusternav.modules.clustercast.MainActivityCastController
 import com.byd.clusternav.navigation.NavigationOutputFailureReason
 import com.byd.clusternav.navigation.NavigationSourceReason
 import android.app.Activity
@@ -17,14 +16,18 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.Switch
 import android.widget.TextView
-import com.byd.clusternav.modules.clustercast.ClusterCast
-import com.byd.clusternav.modules.clustercast.ClusterCastActivity
+import android.widget.Toast
 import com.byd.clusternav.navigation.NavigationFreshness
 import com.byd.clusternav.navigation.NavigationOutputStatus
 import com.byd.clusternav.navigation.NavigationOutputTarget
 import com.byd.clusternav.navigation.NavigationPermission
 
-/** Two-card Home renderer/dispatcher. It never orchestrates Navigation and Cast together. */
+/**
+ * Home — MÀN HÌNH DUY NHẤT của app (docs/specs/cast-simplified-active-app-toggle.html): trái là
+ * Navigation + HUD (không đổi), phải là toàn bộ Cluster Cast (trước đây là màn riêng
+ * `ClusterCastActivity`, đã xoá). Renderer/dispatcher — nó không tự lập kế hoạch gì cho Cast, mọi
+ * mutation đi qua [MainActivityCastController].
+ */
 class MainActivity : Activity() {
     private lateinit var navEnabled: Switch
     private lateinit var navDot: View
@@ -34,18 +37,20 @@ class MainActivity : Activity() {
     private lateinit var laneEnabled: CheckBox
     private lateinit var hudEnabled: CheckBox
     private lateinit var distanceAssist: CheckBox
-    private lateinit var castDot: View
-    private lateinit var castStatus: TextView
+    private val cast = MainActivityCastController(this)
 
     private val ui = Handler(Looper.getMainLooper())
     private val refresher = object : Runnable {
-        override fun run() { refresh(); ui.postDelayed(this, 1_000) }
+        override fun run() { refresh(); cast.tick(); ui.postDelayed(this, 1_000) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        ClusterCast.loadPrefs(this)
+
+        // CLAUDE.md §9: mỗi bản đã báo cho user phải tự hiện số hiệu — không ai phải đoán xe đang chạy bản nào.
+        val versionName = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull()
+        findViewById<TextView>(R.id.txt_app_title).text = "ClusterNav" + (versionName?.let { " · v$it" } ?: "")
 
         navEnabled = findViewById(R.id.switch_enabled)
         navDot = findViewById(R.id.dot_status)
@@ -55,8 +60,7 @@ class MainActivity : Activity() {
         laneEnabled = findViewById(R.id.cb_lane)
         hudEnabled = findViewById(R.id.cb_hud)
         distanceAssist = findViewById(R.id.cb_distance_assist)
-        castDot = findViewById(R.id.dot_cast)
-        castStatus = findViewById(R.id.txt_cast_status)
+        cast.onCreate()
 
         navEnabled.isChecked = Prefs.enabled(this)
         navEnabled.setOnCheckedChangeListener { _, enabled ->
@@ -109,41 +113,30 @@ class MainActivity : Activity() {
             NavRepository.stop(applicationContext)
             refresh()
         }
-        findViewById<Button>(R.id.btn_cast_details).setOnClickListener {
-            startActivity(Intent(this, ClusterCastActivity::class.java))
-        }
-
-        // Khối Cast trên Home, đúng v0.3x/v0.57: thao tác chính bấm được NGAY, chi tiết mới phải đi sâu.
-        // Home vẫn là renderer/dispatcher — nó không tự lập kế hoạch gì, chỉ chuyển ý định sang màn Cast
-        // (nơi có façade + trạng thái) hoặc bật/tắt nút nổi, một việc thuần tuỳ chọn cục bộ.
-        findViewById<Button>(R.id.btn_cast_toggle).setOnClickListener {
-            startActivity(
-                Intent(this, ClusterCastActivity::class.java)
-                    .putExtra(ClusterCastActivity.EXTRA_CAST_NOW, true),
-            )
-        }
-        findViewById<Button>(R.id.btn_bubble).setOnClickListener {
-            val wanted = !CastBubbleControl.optedIn(this)
-            if (!CastBubbleControl.apply(this, wanted) && wanted) {
-                CastBubbleControl.requestOverlay(this)
-            }
-            refresh()
-        }
 
         NavConnect.ensureConnected(applicationContext)
         runCatching { RebindReceiver.scheduleWatchdog(applicationContext) }
+        // Nút nổi mặc định BẬT (v0.72, không còn công tắc): thiếu quyền overlay thì tự xin ngay lúc mở
+        // app lần đầu, không cần user tự bật gì — startForegroundService là idempotent nếu đã chạy.
+        runCatching { startForegroundService(Intent(this, com.byd.clusternav.modules.clustercast.FloatingBubbleService::class.java)) }
         refresh()
     }
 
     override fun onResume() {
         super.onResume()
         runCatching { RebindReceiver.rebind(applicationContext) }
+        cast.onResume()
         ui.post(refresher)
     }
 
     override fun onPause() {
         ui.removeCallbacks(refresher)
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        cast.onDestroy()
+        super.onDestroy()
     }
 
     private fun refresh() {
@@ -165,15 +158,6 @@ class MainActivity : Activity() {
         hudStatus.text = "HUD: ${navigation.hud.status.label()}"
         findViewById<Button>(R.id.btn_reconnect_nav).visibility =
             if (permission != NavigationPermission.GRANTED) View.VISIBLE else View.GONE
-
-        val casting = ClusterCast.casting
-        castDot.tint(if (casting) R.color.ok_green else R.color.off_gray)
-        castStatus.text = if (casting) {
-            val pkg = ClusterCast.lastCastApp
-            "Đang chiếu: ${pkg.takeIf(String::isNotBlank)?.let { ClusterCast.labelOf(this, it) } ?: "app"}"
-        } else {
-            "Sẵn sàng · mở chi tiết để điều khiển"
-        }
     }
 
     private fun View.tint(color: Int) {

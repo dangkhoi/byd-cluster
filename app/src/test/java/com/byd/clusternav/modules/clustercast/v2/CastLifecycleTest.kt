@@ -94,21 +94,21 @@ class CastLifecycleTest {
     @Test
     fun `V2 app catalog migrates legacy preferences without deleting rollback data`() {
         val catalog = source("main/java/com/byd/clusternav/cast/platform/CastAppCatalog.kt")
-        val activity = source("main/java/com/byd/clusternav/modules/clustercast/ClusterCastActivity.kt")
+        // 2026-07-29: màn Cast riêng (ClusterCastActivity) bị xoá; wiring này giờ sống trong
+        // MainActivityCastController (docs/specs/cast-simplified-active-app-toggle.html).
+        val controller = source("main/java/com/byd/clusternav/modules/clustercast/MainActivityCastController.kt")
         assertTrue(catalog.contains("migrationVersion"))
         assertTrue(catalog.contains("getSharedPreferences(\"clustercast\""))
         assertTrue(catalog.contains("castable"))
         assertTrue(catalog.contains("keepSession"))
         assertFalse(catalog.contains("legacy.edit()"))
-        assertTrue(activity.contains("CastAppCatalog"))
+        assertTrue(controller.contains("CastAppCatalog"))
         assertTrue(catalog.contains("fun setProtected"))
-        assertTrue(activity.contains("CastAppManagerDialog.show"))
-        assertTrue(activity.contains("R.layout.activity_cluster_cast"))
         listOf("retryConnect()", "showPhoneDisconnectGuidance()", "confirmEligibleRecovery()",
             "showPhysicalInstruction()", "openProfileSetup()")
-            .forEach { assertTrue(activity.contains(it), it) }
+            .forEach { assertTrue(controller.contains(it), it) }
         listOf("ClusterCast.loadPrefs", "ClusterCast.listInstalledApps", "ClusterCast.isKeepSession", "ClusterCast.isPhoneProjection")
-            .forEach { assertFalse(activity.contains(it), it) }
+            .forEach { assertFalse(controller.contains(it), it) }
     }
     @Test
     fun `canonical runtime UI exports idle actions and keeps legacy active Stop disabled`() {

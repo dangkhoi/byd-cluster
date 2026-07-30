@@ -56,6 +56,37 @@ class CastAmStackSnapshot(
 ) {
     val stacks: List<CastAmStackRecord> = Collections.unmodifiableList(ArrayList(stacks))
     val tasks: List<CastAmTaskRecord> = Collections.unmodifiableList(ArrayList(tasks))
+
+    /**
+     * The package genuinely on screen right now on [displayId], or `null` when that cannot be told.
+     *
+     * Real `am stack list` dumps (2026-07-29, `docs/diagnostics/carlog-2026-07-23-trace/live/02-am-stack-list.txt`
+     * and this session's own capture) show ONE top-level `Stack` per launched app on the same display —
+     * not one stack with many tasks — and exactly the currently-foregrounded one carries `visible=true`;
+     * every backgrounded app on the same display reads `visible=false`. That field, not stack order, is
+     * the signal: order is not asserted anywhere and must not be relied on (see spec Open Questions).
+     *
+     * `excluded` must always include the caller's own package (so the caller's own screen being open
+     * is never mistaken for "an app to cast") and the current home/launcher package, resolved
+     * generically via `Intent.CATEGORY_HOME` at the call site — never hardcoded here, since launcher
+     * packages differ per ROM/vehicle generation (CLAUDE.md §7).
+     *
+     * When more than one DISTINCT package qualifies, this returns `null` rather than picking one.
+     * Taking the first match would be exactly the stack-order dependence the paragraph above rules
+     * out, and the consequence of guessing wrong is not a wasted tap: it is the wrong app landing on
+     * the driver's instrument cluster while the car is moving. Spec R3 states the rule directly —
+     * "không đoán mò, không chiếu nhầm" — and the surface behaviour for `null` (a short toast, no
+     * dispatch) is already the honest one. Several tasks of the SAME package still resolve, because
+     * that case is not ambiguous about which app to cast.
+     */
+    fun foregroundPackage(displayId: Int, excluded: Set<String>): String? =
+        tasks.asSequence()
+            .filter { it.displayId == displayId && it.visible == true && it.packageName !in excluded }
+            .map { it.packageName }
+            .distinct()
+            .take(2)
+            .toList()
+            .singleOrNull()
 }
 
 object CastAmStackParser {

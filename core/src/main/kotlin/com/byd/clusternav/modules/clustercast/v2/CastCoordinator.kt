@@ -154,9 +154,80 @@ class CastCoordinator(
             return@tryMutationLease false
         }
         verificationSamples.remove(id)
-        store.locked { bumpEpoch { envelope -> envelope.copy(transaction = null, stopRequested = false) } }
+        // Deliberately does NOT clear stopRequested. "IDLE_CLEAN" is CastAmStackParser proof that the
+        // window-manager layer holds nothing on the cluster display — it is NOT proof the OEM
+        // AutoContainer projection was ever told to close. CastPlanner.kt's own comment on the STOP
+        // ladder (measured on the vehicle 2026-07-26) records that the OEM keeps mirroring the last
+        // cluster frame until the close-projection opcodes run. Before this fix, a driver who tapped
+        // Stop while an unrelated transaction was stuck in RECOVERING could have that tap silently
+        // discarded the moment this reconciler ran: it cleared stopRequested as a side effect of
+        // closing the abandoned transaction, with SEAL_DL3_COMPENSATE_18/0 never dispatched, so the
+        // physical cluster could stay frozen on a stale frame while the app believed Stop was done.
+        // Clearing the stuck transaction is still safe to do purely from observation, independent of
+        // whether Stop was requested — bookkeeping cleanup and Stop fulfillment are different facts and
+        // must not be conflated into one assignment. If stopRequested is true, it stays true: the next
+        // Stop attempt now finds transaction == null and runs the real teardown, including the
+        // close-projection opcodes, instead of finding nothing left to do.
+        store.locked { bumpEpoch { envelope -> envelope.copy(transaction = null) } }
         CastOperationLog.record(
             "closed abandoned ${transaction.operation} ($id): cluster observed idle, no compensation owing",
+        )
+        true
+    } ?: false
+
+    /**
+     * Clears a durable idle claim that this boot can never re-verify, so the next refresh is free to
+     * bootstrap fresh instead of dead-ending forever.
+     *
+     * Measured on the vehicle 2026-07-29 after a real ignition power cycle: the cluster's virtual
+     * display is WindowManager-level only and never survives a reboot, but `stableSession` (an
+     * `IDLE_VERIFIED` claim recorded before the reboot) is deliberately preserved across a boot change
+     * by `CastSessionStore`/`CastLifecycleMigration` so an unrelated transaction can still be diagnosed.
+     * Nothing, however, ever re-verifies a *non-transaction* idle claim from the Activity's own refresh
+     * path — only the boot-receiver/watchdog path does, via `CastLifecycleMigration.revalidateStable`.
+     * The result was permanent `MANUAL_REQUIRED` with only read-only Diagnostics, on every single boot
+     * after the first successful cast of the app's life, for every app, not just the one that was
+     * active at reboot time.
+     *
+     * This is deliberately narrower than `revalidateStable`: it only ever fires when nothing was
+     * active (`IDLE_VERIFIED`, so there is no target/session to protect or restore) and the cluster
+     * display cannot be found AT ALL (`Unknown(MISSING_NAMED_CLUSTER_DISPLAY_REASON)`), never for a
+     * `Known`-but-mismatched observation, which may mean something unexpected really is on the
+     * display and must stay conservative. `ACTIVE_VERIFIED`/`ACTIVE_DEGRADED` after a vanished display
+     * already has a correct, narrower mechanism (`CastAndroidLifecycle.vanished`/
+     * `restoreVanishedCluster`) that this function must not duplicate or race with.
+     *
+     * The last gate is the strictest one: the claim is dropped ONLY when dropping it is by itself
+     * enough to reach cold-pristine, asked of [CastRuntimeUi.isColdPristine] against the exact
+     * envelope this write would produce. Added in review 2026-07-29 after two ways the unguarded
+     * version made things worse rather than better. A durable Stop, a pending placement, an open
+     * geometry draft or a pending UI rollback each independently keep `isColdPristine` false, so
+     * clearing under any of them destroyed the only record of what the cluster used to be while
+     * leaving the screen exactly as stuck as before — and with `stopRequested` set it produced a NEW
+     * dead end: `CastRolloutRegistry.resolve` reports no action owner once nothing is recorded, so
+     * `CastFacade.v2OwnsActions` turns false and the pending Stop could never be dispatched to clear
+     * itself. Refusing here is not a regression for those states: they were already blocked, they
+     * keep their evidence, and the next refresh retries this reconciler once the blocker is gone.
+     */
+    fun reconcileUnobservableIdleSession(): Boolean = executor.tryMutationLease {
+        val envelope = (store.locked { read() } as? StoreRead.Loaded)?.envelope
+            ?: return@tryMutationLease false
+        if (envelope.transaction != null) return@tryMutationLease false
+        val stable = envelope.stableSession ?: return@tryMutationLease false
+        if (stable.state != StableState.IDLE_VERIFIED) return@tryMutationLease false
+        val current = observation.read()
+        if (current !is ObservationValue.Unknown || current.reason != MISSING_NAMED_CLUSTER_DISPLAY_REASON) {
+            return@tryMutationLease false
+        }
+        // The projected envelope deliberately keeps the current epoch: isColdPristine stopped reading
+        // durableEpoch on 2026-07-29, for exactly the reason this function exists. Should an epoch
+        // condition ever be reintroduced there, this projection has to bump too or it will lie.
+        if (!CastRuntimeUi.isColdPristine(StoreRead.Loaded(envelope.copy(stableSession = null)), current)) {
+            return@tryMutationLease false
+        }
+        store.locked { bumpEpoch { it.copy(stableSession = null) } }
+        CastOperationLog.record(
+            "cleared unobservable idle stable session: cluster display not found, nothing was active, safe to re-bootstrap",
         )
         true
     } ?: false
@@ -165,6 +236,10 @@ class CastCoordinator(
 
     fun observe(deadlineAtEpochMillis: Long): ObservationValue<ObservedState> =
         observation.read(deadlineAtEpochMillis)
+
+    /** Raw dumpsys/am text this boundary already fetches for every observation, before parsing. */
+    fun inspectRaw(deadlineAtEpochMillis: Long = Long.MAX_VALUE): ObservationValue<RawObservation> =
+        observation.inspectRaw(deadlineAtEpochMillis)
 
     fun bootstrap(
         facts: CastVehicleFacts,
@@ -208,9 +283,32 @@ class CastCoordinator(
             if (pending != null && !pending.matches(automationRequestId)) {
                 return CastManualIntentResult.Blocked("pending placement belongs to another origin")
             }
+            // Review 2026-07-30 (vòng 3, docs/specs/cast-simplified-active-app-toggle.html). Boot
+            // automation never takes the cluster away from a placement that is ALREADY on it.
+            //
+            // Every other precedence rule in this block compares automation against *durable
+            // configuration* identity, and `CastAutomationPolicy.claimAllowed` does the same
+            // (revision/consent/default equality). None of that moves when the driver casts something
+            // by hand, so nothing here refused a claim whose cluster was already occupied — and
+            // `CastManualIntentRunner.executeOrdinary` reads `stable.activeTarget != null` as
+            // `CastIntentKind.SWITCH`, i.e. it would replace what the driver just chose with the
+            // configured default. That is reachable inside ONE boot: `CastAutomationService`
+            // .deferForPriorJournal re-arms itself REVALIDATION_DELAY_MS (45 s) later when a prior
+            // journal was still open at first evaluation, and 45 s is more than enough for a bubble
+            // tap while driving.
+            //
+            // R6 already states the rule for the interactive auto-start ("không cướp phiên", enforced
+            // by `autoStartTarget`); this is the same rule for R7. This read is a cheap early exit —
+            // the binding one runs inside the mutation lease, via the `automation` flag below, because
+            // everything read here can still move before the runner acquires that lease.
+            if (envelope.stableSession?.activeTarget != null) {
+                return CastManualIntentResult.Blocked(LIVE_SESSION_REFUSAL)
+            }
         }
-        return manualIntentRunner()
-            .run(packageName, facts, targets, allowDestructive, preferredDensityDpi, clusterStyle)
+        return manualIntentRunner().run(
+            packageName, facts, targets, allowDestructive, preferredDensityDpi, clusterStyle,
+            automation = origin == CastIntentOrigin.BOOT_AUTO,
+        )
     }
 
     fun resumePendingIntent(targets: CastManualTargetReader): CastManualIntentResult? =
@@ -325,4 +423,10 @@ class CastCoordinator(
         expectedDisplayIdentity, baseline, ledger, retries, deadlineAtEpochMillis, reason,
         expectedPostcondition, compensationUsed, requestedGeometry,
     )
+
+    companion object {
+        /** Cùng một câu cho cả cửa sớm ở đây lẫn cửa ràng buộc trong lease — không viết hai bản chữ. */
+        internal const val LIVE_SESSION_REFUSAL =
+            "cluster already holds an active target; automation never supersedes a live session"
+    }
 }

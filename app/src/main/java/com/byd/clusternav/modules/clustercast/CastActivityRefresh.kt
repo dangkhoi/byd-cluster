@@ -12,6 +12,20 @@ internal data class CastActivityRefreshResult(
     val model: CastRenderModel,
     val visibleStatus: String,
     val selectedEligible: Boolean,
+    /**
+     * Ba sự thật về cụm mà chính lần đọc này quan sát được — trả ra để tầng UI KHÔNG phải tự gọi lại
+     * `facade.observedState()`. Chỉ kiểu nguyên thuỷ: `ObservedState` là kiểu của tầng dưới và không
+     * được lọt qua ranh giới (`CastArchitectureRatchetTest`).
+     *
+     * Lý do có mặt (lỗi thật, 2026-07-29): panel kích thước của Home gọi `facade.observedState()` ngay
+     * trong nhánh `postUi` của refresh, tức trên main thread — mà `CastFacade.observe()` tự ghi rõ "Đây
+     * là I/O: đừng gọi trên main thread", và đó đúng là lớp lỗi façade sinh ra để chặn ("UI có thể vô
+     * tình chạm vào transport ngay trong đường vẽ màn hình và làm treo màn hình"). Với nhịp tick 1s của
+     * Home thì đó là hai vòng dumpsys mỗi giây trên luồng vẽ.
+     */
+    val activeTarget: String?,
+    val clusterSize: Pair<Int, Int>?,
+    val geometryProfileId: String?,
 )
 
 
@@ -43,6 +57,34 @@ internal fun CastRenderModel.activityActions(mutation: CastUiMutationSnapshot): 
         addAll(canonical.intersect(NON_DISPATCHING))
     }
 }
+/**
+ * Chuẩn hoá phép đọc phone-session thô (`dumpsys activity services <ownerPackage>` → parser
+ * `ProjectionSessionEvidenceParser` ở tầng dưới) thành giá trị dùng để quyết định recovery cho một
+ * target `projectionComponent` (CarPlay/Android Auto host, khớp theo tên kiểu `PROJECTION_HINTS` —
+ * generic, không hardcode package cụ thể).
+ *
+ * Phát hiện 2026-07-28 khi lần theo cùng ngày với fix `CastPolicy.classify`: với CHÍNH package host
+ * CarPlay/Android Auto, `dumpsys activity services <host>` không bao giờ chứa field mà parser tìm
+ * (`connectedPhoneSession`/`mPhoneConnected`/…) — field đó mô tả app THỨ BA đang được chiếu qua, không
+ * phải bản thân host. Xác nhận bằng dump thật 2026-07-23
+ * (`docs/diagnostics/carlog-2026-07-23-trace/live/08-svc-carplay.txt`,
+ * `.../09-svc-androidauto.txt`, khoá lại ở `CastPhoneSessionEvidenceGapTest`). Vậy phép đọc `null` ở
+ * đây là CẤU TRÚC (không bao giờ đổi), không phải "chưa đo được lần này".
+ *
+ * Trước fix này, `phoneConnected` giữ nguyên `null`, khiến `CastRuntimeUi.render`'s `when` rơi vào
+ * `else -> null` (không phải PROTECTED_SINK_CONNECTED cũng không phải DISCONNECTED_SINK_ELIGIBLE), và
+ * `CastUiStateProjector.project` với `recoverySubstate=null` + `stableState=RECOVERY_PENDING` +
+ * `stableConverged=false` rơi tới `failClosed` — một ngõ cụt vĩnh viễn, đúng lớp lỗi đã khoá ở
+ * `docs/diagnostics/cast-recovery-deadend-2026-07-28.md`, tái hiện lại cho đúng hai target chủ lực.
+ *
+ * Cùng nguyên tắc `CastPolicy.classify` đã áp dụng cùng ngày (`evidence.connectedPhoneSession !=
+ * false`): khi không đo được, coi như phiên CÒN NỐI (hướng an toàn hơn — chỉ mở đường
+ * `REQUEST_PHONE_DISCONNECT` không phá huỷ gì), KHÔNG BAO GIỜ coi như đã ngắt. Chỉ một phép đọc `false`
+ * XÁC NHẬN mới được đi tiếp vào nhánh tính `recoveryEligible` (không đổi hành vi nhánh đó — nó vẫn đòi
+ * hỏi quan sát lần hai hội tụ y hệt trước khi fix này).
+ */
+internal fun resolveProjectionPhoneConnected(rawPhoneSession: Boolean?): Boolean = rawPhoneSession != false
+
 /** Read-only refresh boundary. Call only from the serialized refresh lane. */
 internal class CastActivityRefreshReader(
     private val runtime: CastAndroidRuntime.Runtime,
@@ -54,23 +96,30 @@ internal class CastActivityRefreshReader(
         // it a chance to reach a terminal state before anything is rendered from it.
         val facade = CastFacade.wrapping(runtime, catalog)
         if (facade.reconcileAbandoned()) facade.recordOperation("cleared an abandoned operation on refresh")
+        if (facade.reconcileUnobservableIdleSession()) {
+            facade.recordOperation("cleared unobservable idle stable session on refresh")
+        }
         // Không cần biết kiểu StoreRead/ObservationValue: façade trả thẳng thứ cần dùng.
         val envelope = facade.envelope()
-        var observation = facade.observe()
-        val observed = facade.observedState()
+        // Một lần quan sát cho một lần vẽ. Trước 2026-07-29 chỗ này gọi `observe()` rồi `observedState()`
+        // — hai vòng quan sát ra xe cho cùng một khoảnh khắc, và mô hình render từ mẫu này trong khi
+        // `ownerPackage` lại đến từ mẫu kia. Với nhịp 1s của Home đó còn là gấp đôi lưu lượng, mãi mãi.
+        var (observation, observed) = facade.observeBoth()
         val ownerPackage = observed?.protectedResidue?.packageName ?: observed?.target?.packageName
         var phoneConnected: Boolean? = null
         var recoveryEligible: Boolean? = null
         if (envelope?.stableSession?.state == StableState.RECOVERY_PENDING && ownerPackage != null &&
             catalog.evidence(ownerPackage).projectionComponent == true
         ) {
-            phoneConnected = facade.phoneSession(ownerPackage)
-            if (phoneConnected == false) {
-                val second = facade.observe()
-                val secondKnown = facade.observedState()
+            val rawPhoneSession = facade.phoneSession(ownerPackage)
+            phoneConnected = resolveProjectionPhoneConnected(rawPhoneSession)
+            if (rawPhoneSession == false) {
+                // Mẫu thứ hai vẫn là một quan sát ĐỘC LẬP — điều kiện "hai mẫu bằng nhau" không đổi.
+                val (second, secondKnown) = facade.observeBoth()
                 recoveryEligible = secondKnown != null && secondKnown == observed &&
                     (secondKnown.protectedResidue?.packageName ?: secondKnown.target?.packageName) == ownerPackage
                 observation = second
+                observed = secondKnown
             }
         }
         val renderedAt = Instant.now()
@@ -98,6 +147,9 @@ internal class CastActivityRefreshReader(
                 renderedAt,
             ),
             selectedEligible,
+            activeTarget = observed?.target?.packageName,
+            clusterSize = observed?.geometry?.bounds?.let { (it.right - it.left) to (it.bottom - it.top) },
+            geometryProfileId = observed?.geometry?.profileId,
         )
     }
 }

@@ -147,6 +147,19 @@ class CastAutomationService : Service() {
             settings.terminalize(requestId, AutomationRequestState.BLOCKED, AutomationReason.RECOVERY_OR_MANUAL)
             return
         }
+        // Something is already on the cluster. Within one boot a verified active target can only have
+        // been placed by a surface the driver drove (the floating bubble or the Home panel) — a session
+        // carried over from before the reboot cannot converge in `CastLifecycleMigration
+        // .revalidateStable` (the cluster's virtual display does not survive a power cycle) and is
+        // demoted to RECOVERY_PENDING, which the gate above already refuses. So the honest terminal is
+        // USER_SUPERSEDED: automation declined because the user got there first, not because anything
+        // failed. `CastCoordinator.runManualIntent` fences the same condition for real; this branch
+        // exists so the outcome is RECORDED as superseded instead of surfacing later as a misleading
+        // BLOCKED/KNOWN_FAILURE. Review 2026-07-30, docs/specs/cast-simplified-active-app-toggle.html.
+        if (envelope.stableSession?.activeTarget != null) {
+            settings.terminalize(requestId, AutomationRequestState.SUPERSEDED, AutomationReason.USER_SUPERSEDED)
+            return
+        }
         if (abandoned) return
         when (val claim = settings.claim(requestId)) {
             is CastAutomationSettings.ClaimResult.Rejected -> {
@@ -241,7 +254,7 @@ class CastAutomationService : Service() {
             )
         }
         val pending = PendingIntent.getActivity(
-            this, 1, Intent(this, ClusterCastActivity::class.java),
+            this, 1, Intent(this, com.byd.clusternav.MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return android.app.Notification.Builder(this, CHANNEL)
