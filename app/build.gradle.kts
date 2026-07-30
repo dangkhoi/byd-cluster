@@ -41,8 +41,8 @@ android {
         applicationId = "com.byd.clusternav"
         minSdk = 29
         targetSdk = 34
-        versionCode = 72
-        versionName = "0.72"
+        versionCode = 80
+        versionName = "0.80"
     }
 
     signingConfigs {
@@ -60,6 +60,11 @@ android {
             isMinifyEnabled = false   // tắt minify: experiment dùng reflection HAL, tránh proguard phá
             // maintainer có keystore.properties -> ký release (chữ ký cố định); người clone -> fallback debug
             signingConfig = if (hasKeystore) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+            // 2026-07-29: bật tạm để chẩn đoán sự cố kẹt transaction trên xe thật — cùng chữ ký nên
+            // `adb install -r` đè lên bản đang chạy KHÔNG xoá dữ liệu (khác gỡ cài rồi cài lại), cho phép
+            // `adb shell run-as` đọc thẳng cast-v2/session.env đang kẹt mà không mất bằng chứng. Tắt lại
+            // (xoá dòng này) sau khi xong chẩn đoán — không phải trạng thái bình thường của bản release.
+            isDebuggable = true
         }
         getByName("debug") {
             isMinifyEnabled = false

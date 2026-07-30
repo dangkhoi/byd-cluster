@@ -73,6 +73,90 @@ class CastManualIntentTest {
         assertFalse(CommandKind.FORCE_STOP_NORMAL in fixture.commands)
     }
 
+    /**
+     * The real on-vehicle CarPlay/Android Auto reading (2026-07-28 CastPolicy fix): `dumpsys` can
+     * never report `connectedPhoneSession` for the host surface's own dump, so it is always `null`,
+     * never `true`. Before the fix this classified `UNKNOWN_PROTECTED` and `eligibilityFor` blocked it
+     * before `executeCast()` ever ran -- tapping "CHIẾU Android Auto LÊN CỤM" only showed a toast. This
+     * drives the exact same harness as the `connectedPhoneSession = true` cold-protected test above, to
+     * prove the full path -- not just `CastPolicy.classify` -- now reaches `ACTIVE_VERIFIED`.
+     */
+    @Test
+    fun `cold Android Auto intent with unmeasurable phone session reaches active verified without force stop`() {
+        val fixture = fixture()
+        val target = "com.example.androidauto"
+        fixture.states += listOf(idle(), idle(), idle(), active(target), active(target))
+        fixture.onMutation = { MutationResult.Observed("known") }
+
+        val result = fixture.coordinator.runManualIntent(target, facts(), CastManualTargetReader {
+            unmeasurableProjectionTarget()
+        })
+
+        assertTrue(result is CastManualIntentResult.Succeeded)
+        assertEquals(
+            SealDl3BootstrapProfile.forwardKinds + ExpectedLadder.protectedTarget,
+            fixture.commands,
+        )
+        assertFalse(CommandKind.FORCE_STOP_NORMAL in fixture.commands)
+        assertEquals(StableState.ACTIVE_VERIFIED, fixture.envelope().stableSession!!.state)
+        assertEquals(target, fixture.envelope().stableSession!!.activeTarget!!.packageName)
+    }
+
+    /**
+     * "For any prior occupant" -- `CastPlanner.plan`'s outgoing-return step is unconditional on a
+     * SWITCH (`outgoing != null && outgoing != intent.targetPackage`), regardless of the outgoing
+     * target's own class. Proves the prior normal occupant is returned via `RETURN_PROTECTED_GENTLY`,
+     * never `FORCE_STOP_NORMAL`, when the *incoming* target is Android Auto classified from the
+     * unmeasurable (`null`) session reading -- the exact shape that was fully blocked before the fix.
+     */
+    @Test
+    fun `switch to Android Auto with unmeasurable phone session resumes it and returns the prior occupant gently`() {
+        val old = "com.example.old"
+        val target = "com.example.androidauto"
+        val fixture = fixture(stable = activeSession(old), epoch = 4L)
+        fixture.states += listOf(active(old), active(target), active(target))
+        fixture.onMutation = { MutationResult.Observed("known") }
+
+        val result = fixture.coordinator.runManualIntent(target, facts(), CastManualTargetReader {
+            unmeasurableProjectionTarget()
+        })
+
+        assertTrue(result is CastManualIntentResult.Succeeded)
+        assertEquals(
+            ExpectedLadder.protectedTarget + CommandKind.RETURN_PROTECTED_GENTLY,
+            fixture.commands,
+        )
+        assertFalse(CommandKind.FORCE_STOP_NORMAL in fixture.commands)
+        assertEquals(target, fixture.envelope().stableSession!!.activeTarget!!.packageName)
+    }
+
+    /**
+     * The other direction, confirmed through the runner rather than `CastPolicy.classify` alone: a
+     * *positively confirmed* absent session (`connectedPhoneSession = false`) is a stronger, different
+     * signal than "unmeasurable" and must keep failing closed as `UNKNOWN_PROTECTED` -- see
+     * `CastAndroidAutoSliceTest.projection evidence without connected truth fails closed` and
+     * `CastPolicyTest`. Here the same evidence is driven through `runManualIntent` end to end: zero
+     * gateway mutation, zero durable-state change, from a cold (pristine) store.
+     */
+    @Test
+    fun `manual intent for Android Auto with a confirmed absent session still fails closed at the runner`() {
+        val fixture = fixture()
+        val target = "com.example.androidauto"
+        fixture.onMutation = { MutationResult.Observed("unexpected") }
+
+        val result = fixture.coordinator.runManualIntent(target, facts(), CastManualTargetReader {
+            confirmedAbsentProjectionTarget()
+        })
+
+        assertTrue(result is CastManualIntentResult.Blocked)
+        assertEquals("Target policy is unknown", (result as CastManualIntentResult.Blocked).reason)
+        assertTrue(fixture.commands.isEmpty())
+        assertEquals(0L, fixture.envelope().durableEpoch)
+        assertNull(fixture.envelope().pendingPackage)
+        assertNull(fixture.envelope().transaction)
+        assertNull(fixture.envelope().stableSession)
+    }
+
     @Test
     fun `existing executor lease spans bootstrap stable boundary and fresh target read`() {
         val fixture = fixture()
@@ -378,6 +462,20 @@ class CastManualIntentTest {
 
     private fun protectedTarget() = CastManualTargetSnapshot(
         TargetEvidence(projectionComponent = true, connectedPhoneSession = true, userProtected = false),
+        installed = true,
+        hasLauncher = true,
+    )
+
+    /** The real on-vehicle CarPlay/Android Auto reading: dumpsys never reports the host's own session. */
+    private fun unmeasurableProjectionTarget() = CastManualTargetSnapshot(
+        TargetEvidence(projectionComponent = true, connectedPhoneSession = null, userProtected = false),
+        installed = true,
+        hasLauncher = true,
+    )
+
+    /** A positively confirmed absent session -- a different, stronger signal that keeps failing closed. */
+    private fun confirmedAbsentProjectionTarget() = CastManualTargetSnapshot(
+        TargetEvidence(projectionComponent = true, connectedPhoneSession = false, userProtected = false),
         installed = true,
         hasLauncher = true,
     )

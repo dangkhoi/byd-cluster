@@ -184,6 +184,29 @@ class CastAppPresentationTest {
         }
     }
 
+    /**
+     * Locks the full pipeline end to end, not just [CastPolicy.classify] in isolation: evidence ->
+     * classify() -> protectionOf() -> actions()/defaultEligible(). Every other test in this file
+     * builds a [CastAppRow] with a hand-picked `protection` value, so none of them ever exercised the
+     * real-world CarPlay/Android Auto reading — `projectionComponent=true`,
+     * `connectedPhoneSession=null`, because `dumpsys` can never report a phone-session field for the
+     * host surface's own dump. Before the 2026-07-28 fix that null reading classified as
+     * UNKNOWN_PROTECTED, which `unknown protected exports no cast default or protection action` above
+     * proves exports no CAST/SET_DEFAULT — i.e. CarPlay/Android Auto could never be cast in any
+     * vehicle state. This test fails if that pipeline is ever silently narrowed again.
+     */
+    @Test
+    fun `carplay or android auto with unmeasurable phone session becomes castable and default eligible`() {
+        val evidence = TargetEvidence(projectionComponent = true, connectedPhoneSession = null, userProtected = false)
+        val protection = CastAppPresentation.protectionOf(CastPolicy.classify(evidence))
+        val carplay = row("Apple CarPlay", "com.example.carplay", protection = protection)
+        val actions = CastAppPresentation.actions(carplay, castExported = true)
+        assertTrue(AppRowAction.CAST in actions)
+        assertTrue(AppRowAction.SET_DEFAULT in actions)
+        assertTrue(carplay.protectionLocked)
+        assertTrue(CastAppPresentation.defaultEligible(carplay))
+    }
+
     @Test
     fun `saved selection beats the durable default and both must stay eligible`() {
         val rows = CastAppPresentation.rows(all, "com.example.maps")

@@ -186,3 +186,81 @@ mà không có tác dụng).
 7. Bump version nếu đã từng báo APK cho user.
 8. Senior review (Opus, rule global §5) + security scan trước commit (§6).
 9. Ghi phát hiện vào `docs/diagnostics/` và cập nhật spec.
+
+---
+
+## 14. Tính năng mới: chứng minh bằng shell thô trên xe thật TRƯỚC, nối dây theo tầng SAU
+
+Viết ngày 2026-07-28, sau phiên refactor V2 suýt lặp lại đúng cái bệnh mà refactor này sinh ra để chữa.
+Hai lần trong CÙNG một phiên, một kết luận được dựng lên từ **đọc code/comment cũ hoặc dữ liệu đã lưu trữ**
+thay vì từ một phép đo thật trên xe đang chạy — và cả hai lần đều sai:
+
+- Đọc comment cũ của V1 về "cần T3/⊞ escalation cho Android Auto", rồi từ đó suy ra V2 có thể đang thiếu
+  cơ chế tương đương cho AA — **chưa hề chạy AA thật trên xe để kiểm**. User sửa thẳng: *"kết luận của AA
+  không đúng, nó là hệ quả 1 bug khác... AA và CP đều lên ở chế độ thường trước đó very well"*. Nếu không
+  bị chặn lại, kết luận sai này đã đủ để định hướng sai một vòng thiết kế/implement.
+- Báo với một sub-agent rằng vài view ID (`txt_lane_status`, `cb_lane`…) thấy trong dump cũ 2026-07-25 là
+  "view ID đã biết của VietMap" — **chưa verify lại**. Sự thật (bị agent khác vạch ra): đó là widget màn
+  debug của chính ClusterNav (`activity_main.xml`), dump script bị lỗi tự chụp nhầm app tiền cảnh của mình.
+
+Cả hai đều là biến thể của cùng một lỗi: coi trí nhớ/tài liệu cũ như bằng chứng hiện tại, thay vì tách rời
+theo mức bằng chứng như §2 đã quy định — dữ liệu cũ tối đa chỉ được ở mức "nghi là", không bao giờ được
+thăng lên "đã chứng minh" mà không có phép đo mới.
+
+**Rule — mọi tính năng/tín hiệu/tích hợp MỚI (không phải sửa lại hành vi đã nối dây sẵn) phải đi đúng 4
+tầng theo thứ tự, tầng sau chỉ được bắt đầu khi tầng trước đã xanh với bằng chứng THẬT, MỚI:**
+
+1. **Shell/adb thô trên xe thật** — chạy lệnh trực tiếp qua `adb`/`dadb` (loopback `172.20.10.8:5555`
+   hoặc qua `ClusterDiag`, xem §11), đọc output thật, lưu lại làm evidence trong `docs/diagnostics/`.
+   Dump/log cũ (vd thư mục `oncar-signals-*` 2026-07-25) chỉ dùng để **định hướng** cần đo gì tiếp theo,
+   KHÔNG được dùng thay cho phép đo mới — dữ liệu cũ có thể đã lỗi thời hoặc bị nhiễm bởi lỗi tooling
+   (như vụ view ID ở trên).
+2. **`car-integration`** — mã hoá đúng cơ chế vừa chứng minh được ở bước 1 (transport/shell-command layer),
+   kèm test khoá đúng chuỗi lệnh/parse thật đã quan sát (xem pattern E2E command-log ở
+   `car-integration/src/test/kotlin/.../transport/`).
+3. **`core`** — nối policy/logic thuần Kotlin lên trên cơ chế đã mã hoá ở bước 2, test off-device.
+4. **`app`/UI** — chỉ hiện ra cho user SAU KHI 1–3 đã xanh.
+
+Không được nhảy cóc: không viết code `core` hay UI cho một khả năng chưa có bằng chứng shell thật ở bước 1.
+Không được dùng kết luận suy luận từ code/comment cũ (kể cả code V1 tại §12) làm căn cứ triển khai — nó chỉ
+được dùng để gợi ý hướng đo, xem thêm §2 (phân biệt cơ chế và quy kết) và §3 (đọc source thật trước khi
+ship). Nếu chưa đo được trên xe thật, trạng thái đúng là **"chưa biết"**, không phải "chắc là".
+
+---
+
+## 15. Có adb + source trong tay thì debug bằng dữ liệu, không dò UI như user thường
+
+Viết ngày 2026-07-29, sau khi user chặn thẳng giữa phiên: *"mò gì vậy, sao phải mở app lòng vòng mà ko tự
+debug được? đang làm việc theo cách rất mất thời gian, trong khi mình làm ra app, connect sẵn vào adb xe, mà
+cứ làm như user mò mò hên xui, chả hiểu được"*.
+
+Bối cảnh: cast bị khoá (AA/CarPlay/VietMap giống hệt nhau), và thay vì lần thẳng qua source để biết chính
+xác field nào khoá, phiên đó đi chụp screenshot → đoán toạ độ nút → tap → chụp lại → lệch cuộn → tap nhầm
+hàng app khác → lặp lại — hơn chục vòng, tốn hàng chục phút, có lúc còn suýt bấm nhầm vào một dialog không
+liên quan (`anddea.youtube.music`). Trong khi đó, app đã build **debuggable cùng chữ ký** (`adb install -r`
+không mất data — xem kỹ thuật ở `docs/diagnostics/next-car-session-plan-2026-07-29.md §8.7`) và toàn bộ
+source (`core`, `app`) đã có sẵn để đọc. Không có lý do gì phải mò như một end-user không biết code chạy
+thế nào.
+
+**Thứ tự ưu tiên bắt buộc khi debug một hành vi lạ trên xe** (dừng ở bước sớm nhất giải quyết được, không
+nhảy thẳng xuống dưới):
+
+1. **Đọc source trước** — grep đúng điều kiện gate (`if`/`when`/`return` quyết định hành vi), lần từ nơi
+   hiển thị triệu chứng (VD `ClusterCastActivity.kt:169`) ngược lên tới field/state gốc. Việc này KHÔNG cần
+   xe, làm được ngay khi chưa connect.
+2. **Đọc state bền trực tiếp** — nếu định dạng đã biết (VD `session.env`, xem `CastSessionStore.kt`), dùng
+   `adb shell run-as <pkg> cat <path>` đọc thẳng, so với field/nhánh vừa đọc ở bước 1. Đây là dữ liệu THẬT,
+   không suy diễn — và nhanh hơn UI hàng chục lần.
+3. **`logcat`/lệnh đo trực tiếp** (`dumpsys`, `am stack list`, `settings get`…) khi state không nằm trong
+   file bền mà chỉ tồn tại lúc runtime (RAM, log). Đây cũng là dữ liệu THẬT.
+4. **UI (screenshot + tap) là phương án CUỐI CÙNG** — chỉ dùng khi cả 3 bước trên không chạm tới được (state
+   chỉ nằm trong field RAM của một Activity, không log, không bền), hoặc khi mục tiêu chính là xác nhận
+   *trải nghiệm người dùng thật* (không phải xác nhận cơ chế). Kể cả khi phải dùng UI: chụp **một** ảnh
+   ngay trước mỗi thao tác (không tái dùng ảnh cũ để đoán toạ độ), xác định phần tử cần bấm rõ ràng trên ảnh
+   đó rồi mới tap — không cuộn-tap-chụp-đoán liên tiếp nhiều vòng hy vọng trúng.
+
+**Vì sao thứ tự này, không phải "cứ thử UI trước cho giống thật"**: mục tiêu của debug là tìm ĐÚNG nguyên
+nhân nhanh nhất, không phải mô phỏng lại đúng thao tác user. Việc "làm như user" chỉ có giá trị ở bước
+verify cuối (xác nhận sau khi đã hiểu/sửa xong), không phải ở bước điều tra. Priority: 1 → 2 → 3 luôn rẻ
+hơn, chính xác hơn, và cho câu trả lời có **file:line** trích dẫn được — đúng tinh thần §2/§3 của tài liệu
+này — thay vì một chuỗi ảnh chụp không ai trace lại được vì sao kết luận.

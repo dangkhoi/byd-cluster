@@ -23,8 +23,13 @@ class CastArchitectureRatchetTest {
     /**
      * Số kiểu của tầng dưới mà UI còn import trực tiếp. Façade chỉ chặn được lời gọi; chừng nào con số
      * này còn lớn thì UI vẫn buộc chặt vào hình dạng bên trong.
+     *
+     * 28 → 14 ngày 2026-07-29: xoá màn Cấu hình riêng (`ClusterCastActivity`), `CastAppManagerDialog`,
+     * `CastAppManagerBinding`, `CastAppListView` và `CastAdjustmentDialog` (mồ côi, không còn ai gọi
+     * sau khi màn Cấu hình bị xoá) khi gộp Cluster Cast vào panel Home — xem
+     * docs/specs/cast-simplified-active-app-toggle.html.
      */
-    private val uiTypeCoupling = 28
+    private val uiTypeCoupling = 14
 
     /**
      * Số kiểu **của tầng dưới** (`:core` / `:car-integration`) mà UI còn import trực tiếp.
@@ -32,8 +37,11 @@ class CastArchitectureRatchetTest {
      * Phép đo đầu tiên của tôi đếm theo package nên gộp cả những lớp vẫn sống trong `:app`
      * (`CastAndroidRuntime`, `CastAppCatalog`, `CastAndroidLifecycle`) — UI dùng chúng là app→app, không
      * phải vượt tầng. Con số này mới là khoảng cách thật tới lời tuyên bố "UI chỉ thấy façade".
+     *
+     * 28 → 14 ngày 2026-07-29: cùng lý do với uiTypeCoupling ở trên — xoá màn Cấu hình riêng và các
+     * dialog/list-view mồ côi khi gộp Cluster Cast vào panel Home.
      */
-    private val crossLayerCoupling = 28
+    private val crossLayerCoupling = 14
 
     /**
      * Số chỗ mở kết nối adb nằm ngoài :car-integration. Kiến trúc nói mọi transport thuộc một chỗ; đây

@@ -54,14 +54,6 @@
             android:theme="@style/ClusterTheme" />
 
 
-        <!-- MAP LÊN CLUSTER (projection qua dadb). exported=false: chống app khác kích projection (chiếm cluster) —
-             nút trong MainActivity mở qua explicit intent; adb shell vẫn 'am start' được activity non-exported. -->
-        <activity
-            android:name=".modules.clustercast.ClusterCastActivity"
-            android:exported="false"
-            android:launchMode="singleTask"
-            android:label="Map lên cluster" />
-
         <!-- Nút nổi (bubble): chạm đưa GMaps lên cluster. Foreground specialUse (không có type nào khớp hơn). -->
         <service
             android:name=".modules.clustercast.FloatingBubbleService"

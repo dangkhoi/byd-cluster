@@ -100,11 +100,11 @@ class CastFieldParityTest {
 
     @Test
     fun `per-app density and style are preferences that reach the runtime call`() {
-        val activity = source("main/java/com/byd/clusternav/modules/clustercast/ClusterCastActivity.kt")
+        val controller = source("main/java/com/byd/clusternav/modules/clustercast/MainActivityCastController.kt")
         val bubble = source("main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt")
         val placement = source("main/java/com/byd/clusternav/cast/transport/CastPlacementCommands.kt")
-        assertTrue(activity.contains("preferredDensityDpi = catalog.clusterDensityDpi(pkg)"))
-        assertTrue(activity.contains("clusterStyle = catalog.clusterStyle(pkg)"))
+        assertTrue(controller.contains("preferredDensityDpi = catalog.clusterDensityDpi(pkg)"))
+        assertTrue(controller.contains("clusterStyle = catalog.clusterStyle(pkg)"))
         assertTrue(bubble.contains("preferredDensityDpi = catalog.clusterDensityDpi(packageName)"))
         assertTrue(bubble.contains("clusterStyle = catalog.clusterStyle(packageName)"))
         assertTrue(placement.contains("wm density \$density -d \$display; "))
@@ -116,22 +116,79 @@ class CastFieldParityTest {
         assertTrue(geometry.contains("wm overscan reset -d \$displayId"))
     }
 
+    /**
+     * v0.72 (docs/specs/cast-simplified-active-app-toggle.html): bong bóng chỉ còn ĐÚNG một vòng tròn,
+     * một chạm quyết định cast/stop tuỳ trạng thái — không menu, không app picker, không cử chỉ ẩn.
+     * Khoá lại hình dáng đó, thay cho test cũ khoá bản có menu lưới (đã bị bỏ theo yêu cầu người dùng).
+     */
     @Test
-    fun `the app manager exposes both cluster shape and cluster text size`() {
-        val dialog = source("main/java/com/byd/clusternav/modules/clustercast/CastAppManagerDialog.kt")
-        assertTrue(dialog.contains("Kiểu cụm: "))
-        assertTrue(dialog.contains("Dùng kiểu thẳng (full khung)"))
-        assertTrue(dialog.contains("Dùng kiểu cong (giữ km/h)"))
-        assertTrue(dialog.contains("Cỡ chữ trên cụm (DPI)"))
-        assertTrue(dialog.contains("DPI mặc định"))
+    fun `the bubble is exactly one circle, no menu, no hidden gesture`() {
+        val bubble = source("main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt")
+        val idleRow = bubble.substring(
+            bubble.indexOf("val root = LinearLayout(this).apply {"),
+            bubble.indexOf("val type = if (Build.VERSION.SDK_INT >= 26)"),
+        )
+        assertTrue(idleRow.contains("addView(circle)"))
+        assertTrue(bubble.contains("BUBBLE_SIZE_DP = 56"))
+        // Vòng tròn đổi hình theo dữ liệu chiếu, không phải theo cờ RAM hay theo chữ trong nhãn.
+        assertTrue(bubble.contains("paintBubble(projection.projecting)"))
+        assertTrue(bubble.contains("if (projecting) \"▣\" else \"▢\""))
+        // Không còn menu/app-picker/cử chỉ ẩn nào.
+        assertFalse(bubble.contains("menuPanel"))
+        assertFalse(bubble.contains("toggleMenu"))
+        assertFalse(bubble.contains("appTile"))
+        assertFalse(bubble.contains("setOnLongClickListener"))
+        // Mờ lúc rảnh theo đúng số đã chạy ngoài xe.
+        assertTrue(bubble.contains("IDLE_ALPHA = 0.35f"))
+        assertTrue(bubble.contains("FADE_DELAY_MS = 2_500L"))
     }
 
+    /** Một chạm khi rảnh dò app đang mở màn chính rồi chiếu thẳng, không cần chọn app nào. */
     @Test
-    fun `the bubble offers one labeled tap for the default app and no hidden gesture`() {
+    fun `one tap when idle detects and casts the foregrounded app, no picker`() {
         val bubble = source("main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt")
-        assertTrue(bubble.contains("primaryButton"))
-        assertTrue(bubble.contains("\"Chiếu \${it.label.removeSuffix(\" · mặc định\")}\""))
+        assertTrue(bubble.contains("facade.foregroundPackage(HOME_DISPLAY_ID, excluded)"))
+        assertTrue(bubble.contains("if (foreground != null) {"))
+        assertTrue(bubble.contains("dispatchTarget(foreground)"))
         assertFalse(bubble.contains("setOnLongClickListener"))
+    }
+
+    /**
+     * Khoá lại bug đêm 2026-07-28: `requestStopOnce()` chỉ gọi `facade.requestStop()` (ghi
+     * `stopRequested=true` và fence transaction đang chạy) rồi dừng lại -- không bao giờ phát lệnh dọn
+     * dẹp thật. Nút Stop trên Activity đã luôn làm đúng hai bước: request/fence, rồi nếu được chấp
+     * nhận và không có transaction nào đang chạy, gọi `planStop`/`executeAndSettle`. Test này khoá việc
+     * nút nổi dùng lại ĐÚNG hai bước đó, không phải một bản viết lại khác đi -- một ý định, mọi bề mặt
+     * chỉ là renderer/dispatcher cho nó. Cả hai bề mặt giờ gọi CÙNG MỘT implementation trong
+     * `CastFacade.continueStopAfterAcknowledgement` (xem `TwoPipelineStaticBoundaryTest` -- chỉ Activity
+     * và `CastFacade` được phép chứa lệnh mutate thô `facade.execute*`; nút nổi không được viết lại
+     * plan/execute của riêng nó).
+     */
+    @Test
+    fun `the bubble Stop tap plans and executes exactly like the Home Stop button`() {
+        val controller = source("main/java/com/byd/clusternav/modules/clustercast/MainActivityCastController.kt")
+        val bubble = source("main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt")
+        val facadeSrc = source("main/java/com/byd/clusternav/modules/clustercast/CastFacade.kt")
+        // Both fence first: request/journal only, no dispatch yet.
+        assertTrue(controller.contains("val accepted = runCatching { facade.requestStop() }.getOrNull()"))
+        assertTrue(bubble.contains("val accepted = runCatching { facade.requestStop() }.getOrNull()"))
+        // Both only continue when the request was accepted AND nothing older is still in flight.
+        assertTrue(controller.contains("if (accepted.transaction != null)"))
+        assertTrue(bubble.contains("if (accepted != null && accepted.transaction == null) {"))
+        // Both call the same-named continuation -- not a divergent reimplementation.
+        assertTrue(controller.contains("continueStopAfterAcknowledgement()"))
+        assertTrue(bubble.contains("runCatching { continueStopAfterAcknowledgement() }"))
+        // Both continuations delegate to the ONE real plan+execute+settle implementation, instead of
+        // each surface copying the same four lines (and the bubble's copy silently never existing).
+        val delegateCall = "facade.continueStopAfterAcknowledgement { pkg -> catalog.evidence(pkg, facade.phoneSession(pkg)) }"
+        assertTrue(controller.contains(delegateCall))
+        assertTrue(bubble.contains(delegateCall))
+        // The shared implementation is the real teardown dispatch: refuse if V2 does not own actions,
+        // plan Stop against fresh evidence, execute and settle.
+        assertTrue(facadeSrc.contains("fun continueStopAfterAcknowledgement(evidenceFor: (String) -> TargetEvidence?): String"))
+        assertTrue(facadeSrc.contains("if (!v2OwnsActions(envelope)) return \"Stop owner is not V2\""))
+        assertTrue(facadeSrc.contains("val plan = planStop(pkg, pkg?.let(evidenceFor))"))
+        assertTrue(facadeSrc.contains("executeAndSettle(plan, pkg)"))
     }
 
     @Test

@@ -415,7 +415,23 @@ class CastExecutor(
     }
 
     companion object {
+        /**
+         * Forward cold-bootstrap ACTIVATION opcodes only — [30,16,35] and the RECT-style variant of 30
+         * (opcode 31, via `styleKinds`). An ordinary CastPlanner-built plan (CAST/SWITCH/STOP/RECOVER/
+         * APPLY_GEOMETRY) must never re-dispatch these outside CastColdBootstrap's own fenced sequence,
+         * since replaying an activation opcode against an already-active cluster is the one genuinely
+         * dangerous double-dispatch this guard exists to prevent.
+         *
+         * Deliberately EXCLUDES `SealDl3BootstrapProfile.compensationKinds` (opcodes 18,0 — the one
+         * field-verified teardown sequence). Every ordinary STOP plan legitimately carries those exact
+         * two steps (see CastPlanner.plan's CastIntentKind.STOP branch), because teardown reuses the same
+         * physical opcodes bootstrap's own rollback does. Before this fix, including compensationKinds
+         * here made `plan.steps.any { it.commandKind in BOOTSTRAP_COMMANDS }` true for every single Stop
+         * plan ever built, so `executeLocked` returned null before creating a transaction and Stop never
+         * dispatched anything, on any vehicle, in any state — found 2026-07-28 during a full E2E coverage
+         * pass, confirmed by tracing CastPlanner's STOP step list against this exact set.
+         */
         private val BOOTSTRAP_COMMANDS =
-            (SealDl3BootstrapProfile.forwardKinds + SealDl3BootstrapProfile.compensationKinds).toSet()
+            (SealDl3BootstrapProfile.forwardKinds.toSet() + SealDl3BootstrapProfile.styleKinds)
     }
 }

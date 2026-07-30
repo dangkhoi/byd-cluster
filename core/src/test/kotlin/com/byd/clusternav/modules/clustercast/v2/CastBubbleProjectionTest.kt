@@ -175,6 +175,30 @@ class CastBubbleProjectionTest {
         assertEquals(emptyList<BubbleMenuItem>(), CastBubbleProjection.project(model(), emptyList(), null).menu)
     }
 
+    /**
+     * Bong bóng v0.57 vẽ ✓ lên app đang chiếu và tô đặc vòng tròn. Nguồn của hai thứ đó phải là dữ liệu,
+     * không phải chuỗi `contentDescription` — tầng view bị cấm dò chữ đã bản địa hoá.
+     */
+    @Test
+    fun `the projection names the active target and says whether anything is on the cluster`() {
+        val idle = CastBubbleProjection.project(model(), rows, null)
+        assertEquals(null, idle.activeTargetPackage)
+        assertFalse(idle.projecting)
+
+        val active = CastBubbleProjection.project(
+            model(allowed = setOf(CastAction.STOP, CastAction.SWITCH)), rows, null,
+            activeTargetPackage = maps.packageName,
+        )
+        assertEquals(maps.packageName, active.activeTargetPackage)
+        assertTrue(active.projecting)
+
+        // Phiên legacy/không xác định: không đọc ra tên gói nhưng Stop vẫn được xuất ra — vòng tròn vẫn
+        // phải báo "đang chiếu", nếu không chủ xe tưởng cụm đã sạch mà thật ra chưa.
+        val nameless = CastBubbleProjection.project(model(allowed = setOf(CastAction.STOP)), rows, null)
+        assertEquals(null, nameless.activeTargetPackage)
+        assertTrue(nameless.projecting)
+    }
+
     @Test
     fun `a stale default still appears as a disabled menu row`() {
         val projection = CastBubbleProjection.project(

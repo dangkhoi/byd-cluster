@@ -183,6 +183,42 @@ class CastPlannerManifestTest {
     }
 
     @Test
+    fun `Stop from ACTIVE_DEGRADED with a protected residue still plans and never force-stops the residue`() {
+        // FUNCTION UNDER TEST: stop-from-degraded. ACTIVE_DEGRADED means an earlier operation left a
+        // protected residue (CarPlay/AA/keep-session app that resisted return) parked on the cluster
+        // display alongside the current active target. Unlike CAST and SWITCH — which both gate on
+        // `stable.state` in CastPlanner.plan() (see the CAST/SWITCH checks a few lines above this one) —
+        // STOP has no such gate, so a durable session stuck at ACTIVE_DEGRADED must not block Stop from
+        // planning. The residue package must never appear as the target of any planned step: STOP's
+        // step-building branch (CastPlanner.kt lines 75-129) only ever addresses `intent.targetPackage`
+        // (the active target here, "com.example.maps") via RETURN_NORMAL_TO_MAIN/RETURN_PROTECTED_GENTLY/
+        // RETURN_UNKNOWN_GENTLY — it never reads `observed.protectedResidue` to build a step, and
+        // FORCE_STOP_NORMAL (the only CommandKind that ever encodes `am force-stop`, see
+        // CastPlacementCommands.kt:163-165) is only ever appended by placementSteps() for CAST/SWITCH,
+        // gated by `!protected && allowDestructive` — the STOP branch never calls placementSteps() at all.
+        val active = CastTarget("com.example.maps", 7, 2)
+        val residue = ProtectedResidue("com.example.carplay", 9, ResidueVisibility.HIDDEN)
+        val geometry = AcceptedGeometry(CastRect(0, 0, 1920, 720), 160, "android-user-0")
+        val state = ObservedState(
+            ObservedCoarseState.ACTIVE_MULTI, "display-2", active,
+            setOf(active.packageName, residue.packageName), residue, geometry,
+        )
+        val stable = StableCastSession(
+            StableState.ACTIVE_DEGRADED, EngineVersion.V2, "test", null, "display-2",
+            CastBaseline(geometry = geometry), active, residue, geometry, 1,
+        )
+        val result = CastPlanner.plan(
+            CastIntent(CastIntentKind.STOP, active.packageName),
+            PlannerSnapshot(ObservationValue.Known(state), stable, TargetClass.NORMAL, true, true, 4),
+        )
+        val ready = result as? PlanResult.Ready
+            ?: throw AssertionError("Stop from ACTIVE_DEGRADED must plan, not block: got $result")
+
+        assertEquals(ExpectedLadder.stopNormal, ready.plan.steps.map { it.commandKind })
+        assertFalse(CommandKind.FORCE_STOP_NORMAL in ready.plan.steps.map { it.commandKind })
+    }
+
+    @Test
     fun `disconnected sink recovery requires explicit two sample consequence proof`() {
         val state = ObservedState(
             ObservedCoarseState.ACTIVE_SINGLE, "display-x",

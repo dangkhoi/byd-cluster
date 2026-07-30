@@ -1,5 +1,6 @@
 package com.byd.clusternav.modules.clustercast
 
+import com.byd.clusternav.modules.clustercast.v2.AdjustmentApplyState
 import com.byd.clusternav.modules.clustercast.v2.AdjustmentDraft
 import com.byd.clusternav.modules.clustercast.v2.AdjustmentResult
 import android.content.Context
@@ -27,6 +28,7 @@ import com.byd.clusternav.modules.clustercast.v2.DisconnectedSinkRecoveryProof
 import com.byd.clusternav.modules.clustercast.v2.EngineVersion
 import com.byd.clusternav.modules.clustercast.v2.CastManualTargetEligibility
 import com.byd.clusternav.modules.clustercast.v2.CastUiRenderer
+import com.byd.clusternav.modules.clustercast.v2.CastVehicleProfileCatalog
 import com.byd.clusternav.modules.clustercast.v2.eligibilityFor
 import com.byd.clusternav.modules.clustercast.v2.BubbleProjection
 import com.byd.clusternav.modules.clustercast.v2.CastAppRow
@@ -36,6 +38,8 @@ import com.byd.clusternav.modules.clustercast.v2.DisabledReason
 import com.byd.clusternav.modules.clustercast.v2.ObservationValue
 import com.byd.clusternav.modules.clustercast.v2.ObservedState
 import com.byd.clusternav.modules.clustercast.v2.StoreRead
+import com.byd.clusternav.modules.clustercast.v2.CastAmStackParser
+import com.byd.clusternav.modules.clustercast.v2.CastDumpParse
 import java.time.Instant
 import java.util.UUID
 
@@ -80,6 +84,33 @@ class CastFacade private constructor(
      * chỗ khác nhau — mỗi chỗ là một dịp để bóc sai.
      */
     fun observedState(): ObservedState? = (observe() as? ObservationValue.Known)?.value
+
+    /**
+     * MỘT lần quan sát, trả cả giá trị thô lẫn bản đã bóc.
+     *
+     * Có mặt vì `CastActivityRefreshReader` cần cả hai cho cùng một khoảnh khắc: giá trị thô để render
+     * (nó mang cả lý do khi không đọc được), bản đã bóc để đọc target/geometry. Trước 2026-07-29 nó gọi
+     * `observe()` rồi `observedState()` — HAI vòng quan sát ra xe cho một lần vẽ, và hai sự thật có thể
+     * lệch nhau. Trả cặp ở đây để tầng trên không phải tự bóc `ObservationValue` (kiểu của tầng dưới
+     * không lọt qua ranh giới — xem `CastArchitectureRatchetTest`).
+     */
+    fun observeBoth(): Pair<ObservationValue<ObservedState>, ObservedState?> {
+        val observation = observe()
+        return observation to (observation as? ObservationValue.Known)?.value
+    }
+
+    /**
+     * Gói đang thật sự hiện trên [displayId] lúc này, hoặc null khi không xác định được.
+     *
+     * Không phát thêm lệnh shell nào — đọc lại đúng `amStacks` thô mà mọi observation đã tự fetch,
+     * rồi lọc theo `visible=true` (xem [CastAmStackSnapshot.foregroundPackage]). Dùng cho nút nổi:
+     * chạm một lần là chiếu đúng app đang mở, không cần chọn từ danh sách.
+     */
+    fun foregroundPackage(displayId: Int, excluded: Set<String>): String? {
+        val raw = (runtime.coordinator.inspectRaw() as? ObservationValue.Known)?.value ?: return null
+        val snapshot = (CastAmStackParser.parse(raw.amStacks) as? CastDumpParse.Known)?.value ?: return null
+        return snapshot.foregroundPackage(displayId, excluded)
+    }
 
     /** Đọc trạng thái bền. */
     fun storeRead(): StoreRead = runtime.store.locked { read() }
@@ -131,11 +162,24 @@ class CastFacade private constructor(
 
     fun automationConfig(): AutomationConfig = runtime.automation.config()
 
+    /**
+     * Có đổi được kiểu cụm (cong/thẳng) trên xe hiện tại không.
+     *
+     * Câu trả lời đến từ [CastVehicleProfileCatalog.resolve], KHÔNG hardcode profile-id nào ở đây: mọi
+     * xe mà `resolve` gán `rectForwardKinds = null` (chưa dispatch được, hoặc dispatch được nhưng
+     * không có chuỗi RECT) đều trả về false. UI dùng cờ này để ẨN nút đổi kiểu thay vì hiện rồi bấm
+     * không có tác dụng gì — đúng tiền lệ V1 `ClusterProfile.supportsStyle` (`ClusterProfile.kt:43`).
+     */
+    fun supportsClusterStyle(): Boolean = CastVehicleProfileCatalog.resolve(runtime.vehicleFacts).supportsStyle
+
     /** Đưa một thao tác chưa kết luận về trạng thái kết thúc nếu quan sát cho phép. */
     fun observeAndComplete(operationId: UUID): Boolean = runtime.coordinator.observeAndComplete(operationId)
 
     /** Đóng một thao tác mồ côi khi xe chứng minh không còn gì phải hoàn tác. */
     fun reconcileAbandoned(): Boolean = runtime.coordinator.reconcileAbandoned()
+
+    /** Xoá một phiên idle không còn xác minh được sau khi boot đổi, để lần chiếu kế tiếp tự bootstrap lại. */
+    fun reconcileUnobservableIdleSession(): Boolean = runtime.coordinator.reconcileUnobservableIdleSession()
 
     /** Yêu cầu dừng. Trả về envelope đã ghi nhận, hoặc null nếu không đọc được trạng thái bền. */
     fun requestStop(): CastSessionEnvelope? = runtime.coordinator.requestStop()
@@ -320,8 +364,21 @@ class CastFacade private constructor(
         val observed = observedState() ?: return GeometryOutcome.Rejected("Không đọc được target hiện tại")
         (runtime.adjustment.edit(geometry) as? AdjustmentResult.Rejected)
             ?.let { return GeometryOutcome.Rejected(it.reason) }
-        (runtime.adjustment.beginApply(observed) as? AdjustmentResult.Rejected)
-            ?.let { return GeometryOutcome.Rejected(it.reason) }
+        // `beginApply` không luôn trả `Rejected` khi từ chối: `CastGeometry.validate` thất bại
+        // (GEOMETRY_LIMITED/PROTECTED_SESSION) hoặc identity đổi giữa chừng (FROZEN) đều trả về
+        // `Ready` bọc một draft KHÔNG chuyển sang APPLYING, kèm `validationError`. Ép kiểu
+        // `as? Rejected` bỏ sót cả hai nhánh này — draft vẫn "Ready" về mặt kiểu — nên phải đọc
+        // đúng trạng thái thật của draft, không chỉ dựa vào kiểu bọc ngoài. Nếu không, plan/execute
+        // bên dưới vẫn phát submitting một lệnh mutating (APPLY_TASK_GEOMETRY) dù nhánh từ chối đã
+        // có kết luận đúng, đúng lỗi round-1 nghi ngờ.
+        val begun = runtime.adjustment.beginApply(observed)
+        if (begun is AdjustmentResult.Rejected) return GeometryOutcome.Rejected(begun.reason)
+        val beganDraft = (begun as AdjustmentResult.Ready).draft
+        if (beganDraft.applyState != AdjustmentApplyState.APPLYING) {
+            return GeometryOutcome.Rejected(
+                beganDraft.validationError ?: "Geometry apply không được chấp nhận",
+            )
+        }
         val pkg = observed.target?.packageName ?: return GeometryOutcome.Rejected("Target không xác định")
         val plan = planGeometry(
             pkg, geometry, observed.target, catalog.evidence(pkg, phoneSession(pkg)),
@@ -415,6 +472,31 @@ class CastFacade private constructor(
             is ExecutionResult.Blocked -> Outcome.Blocked(result.reason)
             else -> Outcome.Blocked("kết cục không xác định")
         }
+
+    /**
+     * Phát Stop thật sau khi `requestStop()` đã ghi nhận và không transaction nào đang chạy chờ hội tụ:
+     * đọc envelope, từ chối nếu V2 không sở hữu hành động, lập kế hoạch Stop với evidence tươi, thực
+     * thi và chờ hội tụ.
+     *
+     * 2026-07-28: trước đây Activity và nút nổi mỗi bên tự viết lại đúng bốn dòng này -- và nút nổi
+     * chưa bao giờ viết lại chúng, nên tắt "Dừng chiếu" ở đó chỉ ghi ý định chứ không phát lệnh dọn dẹp
+     * thật. Gộp về một chỗ duy nhất trong façade để cả hai bề mặt gọi cùng một implementation (một ý
+     * định, mọi bề mặt chỉ là renderer/dispatcher cho nó) thay vì hai bản sao có thể trôi lệch nhau.
+     * [evidenceFor] để UI tự cấp evidence (nó cần `catalog`, façade không giữ catalog cho mọi caller).
+     */
+    fun continueStopAfterAcknowledgement(evidenceFor: (String) -> TargetEvidence?): String {
+        val envelope = envelope()
+        val pkg = envelope?.stableSession?.activeTarget?.packageName
+        if (envelope == null) return "Durable store unavailable"
+        if (!v2OwnsActions(envelope)) return "Stop owner is not V2"
+        val plan = planStop(pkg, pkg?.let(evidenceFor))
+        return when (val outcome = executeAndSettle(plan, pkg)) {
+            is Outcome.Verified -> "Đã trả đồng hồ"
+            is Outcome.NotVerified -> "Stop chưa xác minh"
+            is Outcome.RecoveryRequired -> "Stop cần phục hồi: ${outcome.reason}"
+            is Outcome.Blocked -> "Stop bị chặn: ${outcome.reason}"
+        }
+    }
 
     companion object {
         fun of(context: Context): CastFacade =

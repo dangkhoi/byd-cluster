@@ -56,6 +56,25 @@ internal class CastManualIntentRunner(
 ) {
     init { require(verificationDelayMillis >= 0) }
 
+    /**
+     * [automation] = lượt chạy này là tự-chiếu-lúc-khởi-động (BOOT_AUTO), không phải người bấm.
+     *
+     * Hai luật chỉ áp cho tự động hoá, và cả hai PHẢI nằm ở đây chứ không chỉ ở tầng gọi (review vòng 3,
+     * 2026-07-30, docs/specs/cast-simplified-active-app-toggle.html):
+     *
+     * 1. **Không cướp phiên đang sống.** Cửa sớm ở `CastCoordinator.runManualIntent` đọc envelope TRƯỚC
+     *    khi vào lease, nên mọi thứ nó thấy còn kịp đổi: một cú chạm nút nổi bắt đầu chiếu ngay sau đó
+     *    sẽ giữ lease vài giây, và khi tự động hoá giành được lease thì `activeTarget` đã có — lúc ấy
+     *    `executeOrdinary` lập kế hoạch `SWITCH` và đổi cụm khỏi thứ người lái vừa chọn. Cửa ràng buộc
+     *    phải đọc CÙNG một `current` mà kế hoạch được dựng từ đó, tức bên trong lease. Đây đúng là điều
+     *    CLAUDE.md §5 đòi: "Guard cứng đặt ở tầng thi hành".
+     * 2. **Không xếp hàng.** Tự động hoá có ngân sách MỘT claim cho mỗi lần khởi động; xếp hàng là khái
+     *    niệm của người dùng. `queueLatestTarget` ghi `pendingIntent` gốc **USER** (mặc định của
+     *    `CastModels.withPendingPackage`) — nên một lượt tự động hoá bị xếp hàng sẽ để lại một hàng đợi
+     *    gốc USER bền mà `CastAutomationSettings.terminalize` KHÔNG dọn (nó chỉ dọn hàng đợi khớp
+     *    `requestId`), và `initializeForBoot` giữ nó qua mọi lần khởi động ⇒ tự động hoá tự tay tắt
+     *    chính mình cho mọi lần nổ máy sau. Từ chối thẳng, kết cục hữu hạn, không để lại dấu vết bền.
+     */
     fun run(
         packageName: String,
         facts: CastVehicleFacts,
@@ -63,12 +82,14 @@ internal class CastManualIntentRunner(
         allowDestructive: Boolean = false,
         preferredDensityDpi: Int? = null,
         clusterStyle: ClusterStyle = ClusterStyle.CURVED,
+        automation: Boolean = false,
     ): CastManualIntentResult {
         if (!MANUAL_ANDROID_PACKAGE.matches(packageName)) {
             return CastManualIntentResult.Blocked("Target package name is invalid")
         }
         val before = envelope() ?: return CastManualIntentResult.Blocked("Durable store unavailable")
         if (before.transaction != null) {
+            if (automation) return CastManualIntentResult.Blocked(AUTOMATION_NEVER_QUEUES)
             val target = checkTarget(packageName, before, targets)
             if (target is CastManualTargetEligibility.Blocked) return CastManualIntentResult.Blocked(target.reason)
             return if (queueLatestTarget(packageName)) CastManualIntentResult.Queued(packageName)
@@ -80,6 +101,7 @@ internal class CastManualIntentRunner(
                 return@withMutationLease CastManualIntentResult.Blocked("Stop requested; manual intent is fenced")
             }
             if (current.transaction != null) {
+                if (automation) return@withMutationLease CastManualIntentResult.Blocked(AUTOMATION_NEVER_QUEUES)
                 return@withMutationLease if (queueLatestTarget(packageName)) {
                     CastManualIntentResult.Queued(packageName)
                 } else CastManualIntentResult.Blocked("Operation already active")
@@ -99,7 +121,7 @@ internal class CastManualIntentRunner(
                         bootstrap.operationId,
                         bootstrap.reason,
                     )
-                    is ColdBootstrapResult.Succeeded -> continuePending(targets)
+                    is ColdBootstrapResult.Succeeded -> continuePending(targets, automation)
                 }
             } else {
                 executeOrdinary(
@@ -108,6 +130,7 @@ internal class CastManualIntentRunner(
                     consumePending = false,
                     allowDestructive = allowDestructive,
                     preferredDensityDpi = preferredDensityDpi,
+                    automation = automation,
                 )
             }
         }
@@ -121,10 +144,13 @@ internal class CastManualIntentRunner(
         if (current.stableSession == null) {
             return@withMutationLease CastManualIntentResult.Blocked("Pending target has no verified stable session")
         }
-        continuePending(targets)
+        continuePending(targets, automation = false)
     }
 
-    private fun continuePending(targets: CastManualTargetReader): CastManualIntentResult {
+    private fun continuePending(
+        targets: CastManualTargetReader,
+        automation: Boolean,
+    ): CastManualIntentResult {
         repeat(MAX_PENDING_REPLANS) {
             val current = envelope() ?: return blockedStore()
             if (current.stopRequested) return CastManualIntentResult.Blocked("Stop requested; pending target is fenced")
@@ -140,7 +166,9 @@ internal class CastManualIntentRunner(
                     }
                 }
                 is CastManualTargetEligibility.Ready -> {
-                    val result = executeOrdinary(packageName, target.targetClass, consumePending = true)
+                    val result = executeOrdinary(
+                        packageName, target.targetClass, consumePending = true, automation = automation,
+                    )
                     if (!pendingChangedAfterBlocked(packageName, result)) return result
                 }
             }
@@ -154,11 +182,18 @@ internal class CastManualIntentRunner(
         consumePending: Boolean,
         allowDestructive: Boolean = false,
         preferredDensityDpi: Int? = null,
+        automation: Boolean = false,
     ): CastManualIntentResult {
         val current = envelope() ?: return blockedStore()
         val stable = current.stableSession ?: return CastManualIntentResult.Blocked("Verified stable session is required")
         if (current.stopRequested || current.transaction != null) {
             return CastManualIntentResult.Blocked("Operation is fenced or already active")
+        }
+        // Cửa ràng buộc của luật 1 (xem KDoc của [run]): đọc trên CHÍNH `current` mà kế hoạch dưới đây
+        // dựng từ đó, và đang giữ mutation lease — nên không còn khe nào để một cú chạm chen vào giữa
+        // "thấy cụm rảnh" và "phát lệnh SWITCH".
+        if (automation && stable.activeTarget != null) {
+            return CastManualIntentResult.Blocked(CastCoordinator.LIVE_SESSION_REFUSAL)
         }
         val kind = if (stable.activeTarget == null) CastIntentKind.CAST else CastIntentKind.SWITCH
         CastOperationLog.record(
@@ -288,5 +323,7 @@ internal class CastManualIntentRunner(
     companion object {
         private const val MAX_PENDING_REPLANS = 4
         private val ACTIVE_STATES = setOf(StableState.ACTIVE_VERIFIED, StableState.ACTIVE_DEGRADED)
+        internal const val AUTOMATION_NEVER_QUEUES =
+            "Operation already active; boot automation never queues a durable placement"
     }
 }

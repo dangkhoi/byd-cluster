@@ -32,7 +32,24 @@ data class BubbleProjection(
     val primary: BubbleMenuItem?,
     val focusOrder: List<BubbleFocusTarget>,
     val durableStatusPriority: Boolean,
-)
+    /**
+     * Gói đang nằm trên cụm, hoặc `null` khi cụm đang là đồng hồ.
+     *
+     * Bong bóng v0.57 vẽ ✓ lên app đang chiếu và tô đặc vòng tròn. Muốn vẽ được thứ đó mà KHÔNG dò chuỗi
+     * `contentDescription` ("Đang chiếu com.x") — thứ đổi theo ngôn ngữ và bị cấm ở tầng view — thì phiên
+     * đang chiếu phải là một trường dữ liệu. Đây là trường đó.
+     */
+    val activeTargetPackage: String? = null,
+) {
+    /**
+     * Có gì đó đang trên cụm để mà dừng.
+     *
+     * Suy ra từ hợp đồng Stop chứ không từ [activeTargetPackage] một mình: khi phiên là legacy/không xác
+     * định thì không có tên gói, nhưng Stop vẫn được xuất ra — lúc đó vòng tròn vẫn phải báo "đang chiếu".
+     */
+    val projecting: Boolean
+        get() = activeTargetPackage != null || stop != BubbleStopControl.HIDDEN
+}
 
 object CastBubbleProjection {
 
@@ -82,6 +99,7 @@ object CastBubbleProjection {
                 add(BubbleFocusTarget.SETTINGS)
             },
             durableStatusPriority = model.durableStatusPriority,
+            activeTargetPackage = activeTargetPackage,
         )
     }
 
