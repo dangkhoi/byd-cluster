@@ -266,7 +266,14 @@ class CastFieldParityTest {
         assertTrue(placement.contains("?: NO_OP"))
         assertTrue(placement.contains("return@let NO_OP"))
         // Every tolerant path reports success; the count is asserted so a regression to null shows up.
-        assertEquals(17, Regex("return@let NO_OP|\\?: NO_OP|-> NO_OP").findAll(placement).count())
+        // 17 → 19 on 2026-07-31 (review of docs/specs/cast-recovery-honesty-and-multi-occupant.html):
+        // the two RETURN_* rungs joined the tolerant set. They are the FIRST step of every Stop plan,
+        // and §R2 made Stop reachable from a durable state with no active target at all, so failing
+        // closed there wedged the journal in RECOVERING before any teardown ran — locked end-to-end by
+        // `:car-integration`'s CastStopWithoutActiveTargetTest.
+        assertEquals(19, Regex("return@let NO_OP|\\?: NO_OP|-> NO_OP").findAll(placement).count())
+        assertTrue(placement.contains("CommandKind.RETURN_NORMAL_TO_MAIN -> when (pkg) {\n            null -> NO_OP"))
+        assertTrue(placement.contains("CommandKind.RETURN_PROTECTED_GENTLY -> when (pkg) {\n            null -> NO_OP"))
         // A fenced or cancelled dispatch must not be rescued by the in-process fallback.
         assertTrue(placement.contains("if (cancelled()) return null"))
         assertTrue(placement.contains("measuredCluster()?.id?.takeUnless { cancelled() }"))

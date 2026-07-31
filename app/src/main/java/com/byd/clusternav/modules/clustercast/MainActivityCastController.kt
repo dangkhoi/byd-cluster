@@ -82,6 +82,8 @@ internal class MainActivityCastController(private val activity: Activity) {
     private lateinit var geometryContainer: FrameLayout
     private lateinit var autoStartCheckbox: CheckBox
     private lateinit var autoStartSpinner: Spinner
+    private lateinit var vietmapBubbleExperimentCheckbox: CheckBox
+    private lateinit var vietmapBubbleTriggerButton: Button
     private lateinit var recoveryToggle: TextView
     private lateinit var recoveryActions: View
     private lateinit var stopButton: Button
@@ -139,6 +141,19 @@ internal class MainActivityCastController(private val activity: Activity) {
             onAppsLoaded = { geometryPanelRendered = false },
         )
         autoStart.bind(autoStartCheckbox, autoStartSpinner)
+        vietmapBubbleExperimentCheckbox = activity.findViewById(R.id.cb_vietmap_bubble_experiment)
+        VietmapBubbleExperiment.bind(vietmapBubbleExperimentCheckbox, activity)
+        vietmapBubbleTriggerButton = activity.findViewById<Button>(R.id.btn_vietmap_bubble_trigger).apply {
+            setOnClickListener { runVietmapBubbleTrigger() }
+        }
+        // Thăm dò độc lập (xem KDoc của VietmapBubbleExperiment) — chỉ chạy khi ô tick trên bật, và
+        // không đụng tới work/autoStart ở dưới: một câu hỏi CHƯA BIẾT không được phép trộn vào đường
+        // tự-chiếu (R6) đã chạy ổn định.
+        VietmapBubbleExperiment.runOnAppStart(
+            activity,
+            castTarget = { pkg -> executeCast(pkg) },
+            log = { message -> facade.recordOperation(message) },
+        )
         work.misc {
             runCatching {
                 facade.initialize(bootId())
@@ -268,6 +283,13 @@ internal class MainActivityCastController(private val activity: Activity) {
         // nếu không nó nằm lại trong store bền và chặn tự-chiếu-khi-khởi-động mãi mãi — xem
         // [drainPendingTarget].
         after = { drainPendingTarget() },
+    )
+
+    /** Nút thủ công — gọi ĐÚNG chuỗi thao tác của [VietmapBubbleExperiment.runOnAppStart], không phải bản khác đi. */
+    private fun runVietmapBubbleTrigger() = VietmapBubbleExperiment.trigger(
+        activity,
+        castTarget = { pkg -> executeCast(pkg) },
+        log = { message -> facade.recordOperation(message) },
     )
 
     private fun executeStop() {

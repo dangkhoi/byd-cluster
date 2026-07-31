@@ -17,6 +17,25 @@ enum class CarFeature {
      * tính năng này phần lớn là KHÁM PHÁ, không phải thao tác.
      */
     SPEED_SIGN,
+
+    /**
+     * Kính lái (HUD thật) — công tắc `SET_HUD_SWITCH_SET`, không phải làn cụm.
+     *
+     * RE 2026-07-29 (carsettings-apk = com.byd.vehiclesettings đã decompile) chứng minh được TOÀN BỘ
+     * chuỗi gọi từ UI xuống tới ranh giới stub: HudSwitch UI -> HudSwitchModel -> HalSetter.set(class,id,val)
+     * -> BYDAutoSettingDevice.getInstance(ctx).set(int[]{id}, EventValue) — CÙNG hình dạng lệnh gọi mà
+     * BydHal.kt đã dùng cho INSTRUMENT/SETTING, và CÙNG class BYDAutoSettingDevice. Feature-id thật
+     * (0x4C10E023 SET_HUD_SWITCH_SET, 0x38B00015 SET_HUD_CONFIG, 0x38B0001C ...FEEDBACK) đọc được từ
+     * firmware thật (`firmware/fw-2602-diff/jadx-l3-new`), không phải từ file stub (mọi field trong
+     * `BYDAutoFeatureIds.java` decompile đều = 0).
+     *
+     * Xe test CÓ kính lái vật lý — chủ xe xác nhận trực tiếp 2026-07-29 (không phải suy đoán, không cần
+     * đo lại việc có/không). Vẫn CHƯA đo được: SET_HUD_CONFIG trả 1 (W-mode) hay 2 (AR-mode), và
+     * ClusterNav's process có được HAL cấp quyền set() hay không (permission gate nằm trong chính stub,
+     * không thấy được qua decompile). Bước hud-probe dưới đây vẫn nên chạy trước mọi setraw ghi — không
+     * phải để hỏi "có hay không" nữa, mà để biết W-mode/AR-mode và xác nhận quyền set() có thật.
+     */
+    HUD_SWITCH,
 }
 
 /**
@@ -347,7 +366,7 @@ object CarExecCatalog {
         CarStep(
             id = "set-style",
             feature = CarFeature.CLUSTER_CAST,
-            purpose = "Đổi kiểu cụm (cong giữ km/h ↔ phẳng)",
+            purpose = "Đổi kiểu cụm (cong giữ km/h ↔ phẳng) — HOẶC kích thước vật lý cụm, xem fieldNote xung đột",
             precondition = "đời máy hỗ trợ đổi kiểu (styleOps khác null)",
             candidates = listOf(
                 StepCandidate(
@@ -357,16 +376,34 @@ object CarExecCatalog {
                     evidence = "cụm hiện kiểu cong và vẫn thấy km/h",
                     verdictSource = VerdictSource.HUMAN,
                     risk = CandidateRisk.MAY_DISRUPT_DRIVER,
-                    fieldNote = "Owner chấp nhận kiểu cong sau Stop; opcode 30 nằm trong castSeq DL3",
+                    fieldNote = "Owner chấp nhận kiểu cong sau Stop; opcode 30 nằm trong castSeq DL3. XUNG ĐỘT chưa giải quyết " +
+                        "(RE 2026-07-29, dashcast-src/data/prefs/ClusterPrefs.java + ui/settings/SettingsActivity.java + " +
+                        "CHANGELOG.md:12): DashCast tự field-test và label 29/30/31 là KÍCH THƯỚC VẬT LÝ cụm theo TỪNG ĐỜI XE " +
+                        "(29=8.8\" Atto3/Dolphin, 30=12.3\" Seal EU mặc định, 31=10.25\" Seal U DMI) — KHÔNG PHẢI cong/phẳng. " +
+                        "Có thể cả hai đều đúng (một field vừa quyết kích thước vừa đổi hình dạng do khung khác nhau), hoặc " +
+                        "quan sát cũ 'owner xác nhận cong' đã bị đọc nhầm. CHƯA đối chiếu lại trên chính xe test — xem thêm " +
+                        "candidate style.probe-screen-size-29.",
                 ),
                 StepCandidate(
                     id = "style.flat-31",
-                    purpose = "Kiểu phẳng, khung rộng hơn",
+                    purpose = "Kiểu phẳng, khung rộng hơn (hoặc: kích thước 10.25\" theo DashCast — xem xung đột ở style.curved-30)",
                     commands = listOf("service call {svc} 2 i32 1000 i32 31 s16 \"\""),
                     evidence = "cụm đổi sang kiểu phẳng",
                     verdictSource = VerdictSource.HUMAN,
                     risk = CandidateRisk.MAY_DISRUPT_DRIVER,
-                    fieldNote = "styleOps DL3 = 30 to 31",
+                    fieldNote = "styleOps DL3 = 30 to 31. Xem fieldNote của style.curved-30 về xung đột cong/phẳng vs kích thước.",
+                ),
+                StepCandidate(
+                    id = "style.probe-screen-size-29",
+                    purpose = "Thử opcode 29 (chưa từng gửi trên xe này) để chốt xung đột cong/phẳng vs kích thước",
+                    commands = listOf("service call {svc} 2 i32 1000 i32 29 s16 \"\""),
+                    evidence = "NHÌN kỹ: nếu hình dạng cong/phẳng đổi -> ủng hộ giả thuyết cũ (style). Nếu độ phân giải/kích thước " +
+                        "vẽ đổi mà hình dạng giữ nguyên -> ủng hộ giả thuyết DashCast (screen size). Chụp ảnh cả hai lần so sánh.",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.MAY_DISRUPT_DRIVER,
+                    fieldNote = "RE 2026-07-29: opcode 29 = 8.8\" theo DashCast (Atto 3/Dolphin) — trên Seal DL3 (12.3\" mặc định " +
+                        "theo cùng bảng) có thể không có hiệu ứng nhìn thấy được nếu đúng là size-per-model, vì DL3 vốn không " +
+                        "phải máy 8.8\". Vẫn đáng thử để loại trừ.",
                 ),
             ),
         ),
@@ -409,6 +446,151 @@ object CarExecCatalog {
                     verdictSource = VerdictSource.MEASURED,
                     risk = CandidateRisk.READ_ONLY,
                     fieldNote = "CHƯA kiểm trên xe qua runner — cần xác nhận cờ --noredact có được phép",
+                ),
+            ),
+        ),
+        // ── Cổng render nav zin (semon) ──────────────────────────────────────────────────────────────
+        //
+        // KHÁM PHÁ CŨ, CHƯA CHẠY XONG: phiên 2026-06-22 (docs/plans/cluster-nav-render-gate.html +
+        // docs/diagnostics/verify-on-car.sh, TRƯỚC refactor V2 này rất lâu) đã LIVE-CONFIRM trên chính
+        // Seal DL3 test rằng broadcast AUTONAVI_STANDARD_BROADCAST_SEND (TYPE=1, IS_BYD_MAP=false) khiến
+        // AmapService thật sự GHI dữ liệu vào cụm (mIsGAODENaving=true, CAN + AutoContainerManager.sendInfo2)
+        // — nhưng RENDER bị chặn bởi "semon", một kernel security monitor bật qua property
+        // sys.init.navi_protect (tắt = mở cổng, theo chính init.rc rút từ system.img thật của xe này).
+        // 7 cách mở cổng (M1-M8) đã viết sẵn trong verify-on-car.sh nhưng lần chạy 2026-06-22 để lại thư
+        // mục verify-runs/20260622-221938 RỖNG — script không hoàn tất được lần đó (không rõ lý do, có thể
+        // mất kết nối). Trạng thái đúng: "chưa biết cổng có mở được không", KHÔNG PHẢI "đã thử và thất bại".
+        //
+        // ĐÃ ĐO 2026-07-29 trên chính xe test (Seal DL3, navi_protect=1 KHÔNG đổi, whitelist=0 và
+        // change_navi_auth=1 đã sẵn có từ trước — KHÔNG do phiên này set): gate.broadcast-full-render (bên
+        // dưới) làm CỤM hiện icon + khoảng cách + tên đường THẬT, KHÔNG cần setprop bất kỳ property nào.
+        // gate.setprop-navi-protect (M1) và gate.navopen-open (M8) CHƯA từng được thử trong phiên này vì
+        // không cần thiết nữa cho phần cụm — vẫn giữ lại trong catalog cho trường hợp property đã bị đổi về
+        // mặc định ở phiên khác, hoặc cho phần HUD (vẫn chưa hiện gì dù cụm đã render — xem hud-probe).
+        CarStep(
+            id = "nav-render-gate",
+            feature = CarFeature.NAVIGATION,
+            purpose = "Mở cổng render nav zin của cụm (semon/navi_protect) — TRƯỚC KHI đổ công sức vào bất kỳ đường nav nào khác",
+            precondition = "cụm đang hiện đồng hồ hoặc app khác; chưa biết navi_protect/whitelist đang bật hay tắt",
+            candidates = listOf(
+                StepCandidate(
+                    id = "gate.probe",
+                    purpose = "Đọc 4 property quyết định cổng, trước khi đổi gì",
+                    commands = listOf(
+                        "getprop ro.build.system.fission_single_os",
+                        "getprop sys.init.navi_protect",
+                        "getprop sys.init.whitelist",
+                        "getprop sys.change_navi_auth",
+                    ),
+                    evidence = "đọc được 4 giá trị hiện tại làm mốc so sánh trước/sau",
+                    verdictSource = VerdictSource.MEASURED,
+                    risk = CandidateRisk.READ_ONLY,
+                    fieldNote = "Mốc 2026-06-22 trên chính xe này: fission_single_os=0, 1for2=true (nghĩa là CẢ hai đường " +
+                        "FlatBuffer/AutoContainerManager.sendInfo2 VÀ HAL/CAN đều chạy song song cho mỗi update).",
+                ),
+                StepCandidate(
+                    id = "gate.baseline-broadcast-only",
+                    purpose = "Bơm 1 frame KHÔNG mở cổng trước — dựng lại đúng baseline 'data vào cụm nhưng không hiện' để so sánh với các bước mở cổng bên dưới",
+                    commands = listOf(
+                        "am broadcast -a AUTONAVI_STANDARD_BROADCAST_SEND --ei KEY_TYPE 10001 --ei TYPE 1 --ei EXTRA_STATE 1 --ei EXTRA_IS_FOREGROUND 0 --ez IS_BYD_MAP false --ez IS_BYD_BAIDU_MAP false --ei NEW_ICON 2 --ei SEG_REMAIN_DIS 250 --es NEXT_ROAD_NAME 'Nguyen Hue' --ei ROUTE_REMAIN_DIS 5000 --ei ROUTE_REMAIN_TIME 480",
+                    ),
+                    evidence = "logcat AmapService log mIsGAODENaving=true (grep 'amap|navi|cluster|1for2|fission|guide|instrument'); NHÌN cụm — mong đợi KHÔNG đổi gì nếu cổng vẫn đóng",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "SAI, LIVE-CONFIRMED 2026-07-29 trên chính xe test: giả thuyết 'không đổi gì' KHÔNG đúng — " +
+                        "cụm HIỆN icon + tên đường ngay từ candidate này (chỉ riêng khoảng cách kẹt ở -1, xem " +
+                        "gate.broadcast-full-render để có số thật). Cơ chế TYPE=1+IS_BYD_MAP=false đã chứng minh qua source " +
+                        "2026-07-25 và giờ tự tay đo lại khớp — nhưng tiền đề 'cổng đóng nên không hiện' của phiên 2026-06-22 " +
+                        "không còn đúng ở trạng thái property hiện tại của xe này (xem gate.probe).",
+                ),
+                StepCandidate(
+                    id = "gate.broadcast-full-render",
+                    purpose = "Y hệt baseline nhưng thêm 4 field chuỗi _AUTO — bản ĐÃ CHỨNG MINH render đủ icon+khoảng cách+tên đường trên cụm, không cần setprop gì",
+                    commands = listOf(
+                        "am broadcast -a AUTONAVI_STANDARD_BROADCAST_SEND --ei KEY_TYPE 10001 --ei TYPE 1 --ei EXTRA_STATE 1 --ei EXTRA_IS_FOREGROUND 0 --ez IS_BYD_MAP false --ez IS_BYD_BAIDU_MAP false --ei NEW_ICON 3 --ei SEG_REMAIN_DIS 444 --es NEXT_ROAD_NAME 'Ba Test Le Loi' --ei ROUTE_REMAIN_DIS 6000 --ei ROUTE_REMAIN_TIME 300 --es SEG_REMAIN_DIS_AUTO '444 m' --es ROUTE_REMAIN_DIS_AUTO '6.0 km' --es ROUTE_REMAIN_TIME_AUTO '5 min' --es ROUTE_REMAIN_TIME_STRING '5 min'",
+                    ),
+                    evidence = "CỤM hiện đúng icon rẽ + '444 m' (không phải -1) + 'Ba Test Le Loi' cùng lúc",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "LIVE-CONFIRMED 2026-07-29 trên chính xe test (navi_protect=1 suốt, không setprop gì): thiếu " +
+                        "SEG_REMAIN_DIS_AUTO/ROUTE_REMAIN_DIS_AUTO/ROUTE_REMAIN_TIME_AUTO/ROUTE_REMAIN_TIME_STRING thì khoảng " +
+                        "cách kẹt ở -1 dù icon+tên đường vẫn lên đúng (xem gate.baseline-broadcast-only) — thêm 4 field chuỗi " +
+                        "này là đủ, không cần bất kỳ M1/M2/M3/M8 nào. HUD kính lái vẫn KHÔNG hiện gì từ đường này (xem hud-probe " +
+                        "hud.nav-content-toggle-on) — cụm và HUD rõ ràng là hai đường render riêng.",
+                ),
+                StepCandidate(
+                    id = "gate.setprop-navi-protect",
+                    purpose = "M1 — tắt semon trực tiếp qua navi_protect, rồi bơm lại frame để xem cổng có mở không",
+                    commands = listOf(
+                        "setprop sys.init.navi_protect 0",
+                        "am broadcast -a AUTONAVI_STANDARD_BROADCAST_SEND --ei KEY_TYPE 10001 --ei TYPE 1 --ei EXTRA_STATE 1 --ei EXTRA_IS_FOREGROUND 0 --ez IS_BYD_MAP false --ez IS_BYD_BAIDU_MAP false --ei NEW_ICON 2 --ei SEG_REMAIN_DIS 250 --es NEXT_ROAD_NAME 'Nguyen Hue' --ei ROUTE_REMAIN_DIS 5000 --ei ROUTE_REMAIN_TIME 480",
+                    ),
+                    evidence = "NHÌN cụm: làn nav (mũi tên + tên đường + khoảng cách) hiện RA, và đồng hồ/ADAS/D-R-P vẫn còn đủ cùng lúc",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "Rẻ nhất trong 3 cách setprop. Ẩn số: shell uid 2000 có được SELinux cho phép setprop key này " +
+                        "không — tự lộ ngay khi đọc lại bằng gate.probe. Không đảo thứ tự: đo cổng trước, injec sau.",
+                ),
+                StepCandidate(
+                    id = "gate.setprop-whitelist",
+                    purpose = "M2 — tắt enforcement theo whitelist (ngả khác cùng tắt semon)",
+                    commands = listOf(
+                        "setprop sys.init.whitelist 0",
+                        "am broadcast -a AUTONAVI_STANDARD_BROADCAST_SEND --ei KEY_TYPE 10001 --ei TYPE 1 --ei EXTRA_STATE 1 --ei EXTRA_IS_FOREGROUND 0 --ez IS_BYD_MAP false --ez IS_BYD_BAIDU_MAP false --ei NEW_ICON 2 --ei SEG_REMAIN_DIS 250 --es NEXT_ROAD_NAME 'Nguyen Hue' --ei ROUTE_REMAIN_DIS 5000 --ei ROUTE_REMAIN_TIME 480",
+                    ),
+                    evidence = "như gate.setprop-navi-protect",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "Chỉ thử nếu M1 trượt hoặc để xác nhận cả hai property đều điều khiển cùng một semon switch.",
+                ),
+                StepCandidate(
+                    id = "gate.setprop-change-auth",
+                    purpose = "M3 — cấp cờ 'đổi nav được phép' cấp BYD (có thể là cờ đúng thay vì tắt cả monitor)",
+                    commands = listOf(
+                        "setprop sys.change_navi_auth 1",
+                        "am broadcast -a AUTONAVI_STANDARD_BROADCAST_SEND --ei KEY_TYPE 10001 --ei TYPE 1 --ei EXTRA_STATE 1 --ei EXTRA_IS_FOREGROUND 0 --ez IS_BYD_MAP false --ez IS_BYD_BAIDU_MAP false --ei NEW_ICON 2 --ei SEG_REMAIN_DIS 250 --es NEXT_ROAD_NAME 'Nguyen Hue' --ei ROUTE_REMAIN_DIS 5000 --ei ROUTE_REMAIN_TIME 480",
+                    ),
+                    evidence = "như gate.setprop-navi-protect",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "Không có tài liệu công khai nào về key này — tên thật rút từ chính init.rc của xe. Giá trị mặc định là 0.",
+                ),
+                StepCandidate(
+                    id = "gate.navopen-probe",
+                    purpose = "M8 bước 1 — probe thuần bằng reflection (navopen-v2.jar), KHÔNG ghi gì, chỉ xem HAL có cấp device không",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen probe",
+                    ),
+                    evidence = "output liệt kê InstrumentDevice/SettingDevice khác null, và các feature-id INSTRUMENT_SEND_NAVI_STATUS_SET v.v. có giá trị thật (khác 'không có field')",
+                    verdictSource = VerdictSource.MEASURED,
+                    risk = CandidateRisk.READ_ONLY,
+                    fieldNote = "TIỀN ĐỀ: đã `adb push apks/navopen-v2.jar /data/local/tmp/navopen.jar` trước (v2 = bản 2026-07-29, " +
+                        "thêm getraw/adas so với navopen.jar gốc, xem NavOpen/src/com/byd/navopen/NavOpen.java). " +
+                        "app_process chạy từ adb shell đã sẵn uid 2000 (như proxy OpenBYD dùng), không cần root, không cần daemon.",
+                ),
+                StepCandidate(
+                    id = "gate.navopen-open",
+                    purpose = "M8 bước 2 — replica chính xác cách AmapService tự mở cổng qua HAL (SET_NAVI_SCREEN_STATUS=3) rồi bơm 1 frame",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen full 'Nguyen Hue'",
+                    ),
+                    evidence = "NHÌN cụm: làn nav hiện RA (đường mạnh nhất nếu M1-M3 bị SELinux chặn, vì đây không phải setprop mà là đúng lệnh HAL map zin tự gọi)",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.MAY_DISRUPT_DRIVER,
+                    fieldNote = "RE 2026-07-29: đây LÀ cơ chế map hệ thống dùng thật (AmapService gọi đúng setNaviScreenStatus(SET_NAVI_SCREEN_STATUS_SET,3)) " +
+                        "— không phải suy đoán. Đóng lại bằng gate.navopen-close ngay sau khi quan sát xong.",
+                ),
+                StepCandidate(
+                    id = "gate.navopen-close",
+                    purpose = "M8 bước 3 — đóng lại nav đã mở ở gate.navopen-open, trả cụm về trạng thái trước đó",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen close",
+                    ),
+                    evidence = "cụm hết hiện làn nav vừa bơm (không đảm bảo trả nguyên trạng cờ navi_protect/whitelist nếu đã setprop ở candidate khác — tự setprop lại giá trị đọc được ở gate.probe)",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "Chỉ đóng phần INSTRUMENT_SEND_NAVI_STATUS/GUIDE_INFO — KHÔNG trả navi_protect/whitelist về giá trị cũ; " +
+                        "nếu đã chạy gate.setprop-* thì phải tự setprop lại giá trị đã ghi ở gate.probe.",
                 ),
             ),
         ),
@@ -661,6 +843,79 @@ object CarExecCatalog {
                     risk = CandidateRisk.READ_ONLY,
                     fieldNote = "DL3 có AutoContainer/AutoContainerNative/FissionGeneraySvc/FissionHostSvc",
                 ),
+                StepCandidate(
+                    id = "probe.autocontainer-whitelist",
+                    purpose = "Đọc whitelist client được phép gọi thẳng AutoContainer (bỏ qua Manager)",
+                    commands = listOf("service list | grep -i autocontainer", "cat /system/etc/container_comm_cfg.json"),
+                    evidence = "thấy service AutoContainer sống + nội dung whitelist (RE: chỉ com.xdja.clusterdemo được liệt kê)",
+                    verdictSource = VerdictSource.MEASURED,
+                    risk = CandidateRisk.READ_ONLY,
+                    fieldNote = "RE 2026-07-29 (dashcast-src/ClusterManager.java + firmware jadx-l3-new/AutoContainerManager.java): " +
+                        "getSystemService(\"AutoContainer\") qua Java API bị chặn theo whitelist gói đọc từ file này; " +
+                        "DashCast né bằng gọi Binder trực tiếp (bypass Manager). Chưa xác nhận ClusterNav (uid app thường, " +
+                        "không phải uid 2000 của adb shell) có nằm trong danh sách này không.",
+                ),
+                StepCandidate(
+                    id = "probe.magicwindow-service",
+                    purpose = "Dò service 'magicwindow' (IMagicWindowManager) — nghi ngờ là API windowing đa-cụm trên DL5",
+                    commands = listOf("service check magicwindow", "dumpsys magicwindow"),
+                    evidence = "service check trả về khác 'not found'; dumpsys in ra nội dung (dù không hiểu được) xác nhận service sống",
+                    verdictSource = VerdictSource.MEASURED,
+                    risk = CandidateRisk.READ_ONLY,
+                    fieldNote = "RE 2026-07-29 (dashcast-src/CHANGELOG.md, dò DL5 build 183/184): service có thật, ServiceManager " +
+                        "slot id=140 lúc dò, nhưng DashCast tự thừa nhận CHƯA BAO GIỜ gọi xa hơn bước sống-hay-chết này — " +
+                        "sản phẩm DL5 sau đó quay về `am start --display N --windowingMode 5`. Đây là READ_ONLY, chỉ để biết " +
+                        "service còn tồn tại trên DL3 hay không, KHÔNG suy ra nó làm gì.",
+                ),
+                StepCandidate(
+                    id = "probe.trafficmonitor-service",
+                    purpose = "Xác nhận com.byd.trafficmonitor (dịch vụ mute/allow TSR theo từng app) có cài và đang chạy",
+                    commands = listOf(
+                        "pm list packages | grep -i trafficmonitor",
+                        "dumpsys activity services com.byd.trafficmonitor",
+                        "service list | grep -i traffic",
+                    ),
+                    evidence = "thấy package com.byd.trafficmonitor + service đang chạy (pid, uid=system)",
+                    verdictSource = VerdictSource.MEASURED,
+                    risk = CandidateRisk.READ_ONLY,
+                    fieldNote = "RE 2026-07-29 (carsettings-apk TSRCellular.java + IAppTrafficInterface.java) + đối chiếu dump thật " +
+                        "docs/diagnostics/runs/20260621-141543: package NÀY đã xác nhận SỐNG trên xe thật (log tag " +
+                        "TrafficMonitorService, ReceiverList uid=1000). AIDL: action " +
+                        "com.byd.trafficmonitor.aidl.apptrafficremote, interface IAppTrafficInterface{getTrafficState(pkg), " +
+                        "setRestrictByUser(pkg,restrict)} — cho phép BẬT/TẮT một app cụ thể làm nguồn TSR theo package name. " +
+                        "Package cứng trong code RE ra (com.telenav.app.isa) KHÔNG có trên xe test — ai là provider thật trên " +
+                        "xe này còn chưa biết; chỉ bind Service được (app-bound, không qua ServiceManager) nên không gọi được " +
+                        "bằng `service call` thô — cần code app_process/app mới gọi bindService thật.",
+                ),
+                StepCandidate(
+                    id = "probe.naviserviceapi-service",
+                    purpose = "Dò xem AIDL com.byd.naviserviceapi.INaviService (BYD định nghĩa cho app nav bên thứ 3) có ai host không",
+                    commands = listOf(
+                        "dumpsys activity services | grep -i naviservice",
+                        "pm list packages | grep -i tmap",
+                        "dumpsys package com.tmap.auto.byd | grep -A5 -i service",
+                    ),
+                    evidence = "thấy NaviService của com.tmap.auto.byd (nếu TMap có cài) hoặc bất kỳ package nào khác host cùng interface",
+                    verdictSource = VerdictSource.MEASURED,
+                    risk = CandidateRisk.READ_ONLY,
+                    fieldNote = "RE 2026-07-29 (jadx-tmap com/tmap/auto/byd/NaviService.java + com/byd/naviserviceapi/*): TMap TỰ " +
+                        "làm server (onBind trả Stub), tức BYD side bind VÀO TMap, không phải ngược lại — ClusterNav không thể " +
+                        "dùng contract này để đẩy dữ liệu hộ VietMap trừ khi tự host y hệt interface này VÀ có gì đó phía BYD " +
+                        "chịu bind tới (chưa biết có hardcode package/class hay không). Chỉ dùng candidate này để XÁC NHẬN sự " +
+                        "tồn tại, không phải để khai thác ngay.",
+                ),
+                StepCandidate(
+                    id = "probe.vehiclesettings-installed",
+                    purpose = "Xác nhận com.byd.vehiclesettings (chủ công tắc HUD thật) có cài trên xe test",
+                    commands = listOf(
+                        "pm list packages | grep -i vehiclesettings",
+                        "dumpsys package com.byd.vehiclesettings | grep -E 'versionName|versionCode'",
+                    ),
+                    evidence = "thấy package + versionName/versionCode",
+                    verdictSource = VerdictSource.MEASURED,
+                    risk = CandidateRisk.READ_ONLY,
+                    fieldNote = "Tiền đề bắt buộc trước khi thử bất kỳ candidate nào của CarFeature.HUD_SWITCH (step hud-probe).",
+                ),
             ),
         ),
         // ── Biển báo giới hạn tốc độ ─────────────────────────────────────────────────────────────────
@@ -873,6 +1128,32 @@ object CarExecCatalog {
             precondition = "đã biết đường và đích; XE ĐỖ ở lần thử đầu",
             candidates = listOf(
                 StepCandidate(
+                    id = "sign-inject.sla-state-probe",
+                    purpose = "ĐỌC (không ghi) trạng thái nhận diện biển báo hiện tại qua BYDAutoADASDevice — bước bắt buộc TRƯỚC mọi ghi",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen getraw adas 31600025",
+                    ),
+                    evidence = "trả về một trong 0(tắt)/1(fusion)/2(vision)/3(nv-only)/4(defect), không phải lỗi/exception",
+                    verdictSource = VerdictSource.MEASURED,
+                    risk = CandidateRisk.READ_ONLY,
+                    fieldNote = "RE 2026-07-29 (carsettings-apk TrafficSign.java + jadx-tmap BYDAutoADASDevice.java): feature-id " +
+                        "ADAS_SLA_STATE=0x31600025=828375077, đối chiếu chéo giữa BYDAutoFeatureIds thật (firmware) và call site " +
+                        "TrafficSign.java khớp nhau. Đây là CÔNG TẮC BẬT/TẮT CẢ TÍNH NĂNG TSR (5 giá trị enum), KHÔNG PHẢI nơi " +
+                        "ghi một con số km/h tuỳ ý — đừng kỳ vọng set giá trị này = hiện được số giới hạn tốc độ tuỳ chọn.",
+                ),
+                StepCandidate(
+                    id = "sign-inject.sla-state-toggle",
+                    purpose = "Bật/tắt toàn bộ tính năng TSR qua ADAS_SLA_STATE — xem có ảnh hưởng gì tới cụm/HUD không",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen setraw adas 31600025 1",
+                    ),
+                    evidence = "NHÌN cụm/HUD: biểu tượng TSR (nếu có) bật/tắt theo; đọc lại bằng sign-inject.sla-state-probe để xác nhận giá trị đã ghi",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.MAY_DISRUPT_DRIVER,
+                    fieldNote = "Toggle một tính năng an toàn thật (dù chỉ on/off) trong lúc xe đang chạy — chỉ thử khi đỗ ở lần đầu, " +
+                        "và trả lại giá trị đọc được từ sign-inject.sla-state-probe ngay sau khi quan sát xong.",
+                ),
+                StepCandidate(
                     id = "sign-inject.broadcast",
                     purpose = "Gửi broadcast đúng action đã tìm ra",
                     commands = listOf("am broadcast -a {key} --ei value {value}"),
@@ -927,9 +1208,15 @@ object CarExecCatalog {
 
         // ── Chính sách phát lại chuỗi mở chiếu ───────────────────────────────────────────────────────
         //
-        // Câu hỏi chặn đường app: khi nào được phát 30,16,35? V2 hiện chỉ phát ở lần chạy đầu tiên sau khi
-        // cài (điều kiện "durable envelope pristine epoch 0"), nên sau khi Dừng hoặc tắt máy thì lần chiếu
-        // sau chỉ đặt task và cụm nằm im ở đồng hồ.
+        // Câu hỏi chặn đường app: khi nào được phát 30,16,35?
+        //
+        // CẬP NHẬT 2026-07-29: điều kiện "durable envelope pristine epoch 0" đã bị bỏ khỏi
+        // CastColdBootstrapPreflight.inspect — epoch 0 trước giờ chỉ TRÙNG với "chưa ghi gì", không phải
+        // sự thật cần kiểm. Nay V2 phát chuỗi này mỗi khi (a) envelope không còn ghi gì
+        // (stableSession/transaction/stopRequested/pendingIntent/adjustmentDraft/pendingUiRollback đều
+        // rỗng) VÀ (b) dumpsys display KHÔNG tìm thấy display cụm nào. Nếu display cụm đã có mà đang
+        // trống thì adopt (không phát lại); nếu nó đang có task thì preflight chặn hẳn. Nghĩa là ca nguy
+        // hiểm mà V1 cảnh báo (phát lại lúc cụm ĐANG có app) vẫn không thể xảy ra qua đường app.
         //
         // V1 dùng luật khác: cụm chưa có app thì phát, cụm đang có app thì hot-swap, KHÔNG phát lại. V1 ghi
         // tại chỗ rằng phát lại lúc cụm đang có app gây WM NPE và treo head unit, có kiểm 2026-07-23.
@@ -1005,6 +1292,178 @@ object CarExecCatalog {
             ),
         ),
 
+        // ── Kính lái thật (HUD) ──────────────────────────────────────────────────────────────────────
+        //
+        // RE 2026-07-29: chuỗi gọi thật từ com.byd.vehiclesettings đã lần ra tới tận ranh giới stub —
+        // xem KDoc của CarFeature.HUD_SWITCH. TẤT CẢ candidate dưới đây là lệnh app_process/navopen-v2.jar
+        // (reflection thuần, không cần sửa gì trong ClusterNav) — KHÔNG PHẢI `service call` thô, vì
+        // BYDAutoSettingDevice.getInstance() là singleton trong-tiến-trình, không phải Binder service tên
+        // riêng gọi được qua ServiceManager.
+        CarStep(
+            id = "hud-probe",
+            feature = CarFeature.HUD_SWITCH,
+            purpose = "Đọc xem xe test có kính lái vật lý không, rồi mới thử bật/tắt/đổi nội dung",
+            precondition = "đã xác nhận com.byd.vehiclesettings có cài (probe.vehiclesettings-installed); đã push navopen-v2.jar",
+            candidates = listOf(
+                StepCandidate(
+                    id = "hud.config-read",
+                    purpose = "ĐỌC (không ghi) SET_HUD_CONFIG — 0/không có field=không có HUD, 1=W-mode (kính lái thường), 2=AR-mode",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen getraw setting 38B00015",
+                    ),
+                    evidence = "trả về 0, 1 hoặc 2 mà không lỗi — 0 nghĩa là BƯỚC DỪNG LẠI Ở ĐÂY, xe không có HUD để thử tiếp",
+                    verdictSource = VerdictSource.MEASURED,
+                    risk = CandidateRisk.READ_ONLY,
+                    fieldNote = "RE 2026-07-29 (carsettings-apk HudFuncVisibleUtils.java + firmware Setting.java): feature-id " +
+                        "SET_HUD_CONFIG=0x38B00015, đọc-only theo đúng thiết kế của com.byd.vehiclesettings — app đó cũng chỉ " +
+                        "đọc field này để QUYẾT ĐỊNH có hiện màn cài đặt HUD hay không, không bao giờ ghi vào nó.",
+                ),
+                StepCandidate(
+                    id = "hud.switch-feedback-read",
+                    purpose = "ĐỌC trạng thái công tắc HUD hiện tại (1=đang bật/2=đang tắt) trước khi đổi",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen getraw setting 38B0001C",
+                    ),
+                    evidence = "trả về 1 hoặc 2",
+                    verdictSource = VerdictSource.MEASURED,
+                    risk = CandidateRisk.READ_ONLY,
+                    fieldNote = "feature-id SET_HUD_SWITCH_STATUS_FEEDBACK=0x38B0001C (RE 2026-07-29, cùng nguồn với hud.config-read). " +
+                        "Đọc trước để biết giá trị trả về sau khi ghi hud.switch-on/off có đúng là đã đổi hay không.",
+                ),
+                StepCandidate(
+                    id = "hud.switch-on",
+                    purpose = "Bật công tắc HUD (nếu hud.config-read xác nhận có kính lái)",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen setraw setting 4C10E023 1",
+                    ),
+                    evidence = "NHÌN kính lái vật lý: có hiện gì không; đọc lại bằng hud.switch-feedback-read xem có đổi thành 1 không",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "RE 2026-07-29 (HudSwitchModel.java: true->mcuState=1). Chuỗi gọi: UI toggle -> HudSwitchModel -> " +
+                        "HalSetter.set(BYDAutoSettingDevice.class, SET_HUD_SWITCH_SET, 1) -> BYDAutoSettingDevice.getInstance(ctx)" +
+                        ".set(int[]{0x4C10E023}, EventValue{intValue=1}) — CÙNG hình dạng lệnh BydHal.kt đã dùng cho INSTRUMENT, " +
+                        "khác class (SETTING). CHƯA xác nhận quyền set() có được cấp cho tiến trình gọi (app_process qua adb " +
+                        "shell = uid 2000; ClusterNav app thật chạy uid khác, có thể bị chặn khác nhau).",
+                ),
+                StepCandidate(
+                    id = "hud.switch-off",
+                    purpose = "Tắt lại công tắc HUD — dùng để hoàn tác hud.switch-on hoặc tự nó là một phép thử độc lập",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen setraw setting 4C10E023 2",
+                    ),
+                    evidence = "kính lái tắt hẳn (nếu đang bật); đọc lại bằng hud.switch-feedback-read xem có đổi thành 2 không",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "mcuState=2 (RE 2026-07-29, HudSwitchModel.java: false->mcuState=2 — LƯU Ý không phải 0).",
+                ),
+                StepCandidate(
+                    id = "hud.nav-content-toggle-on",
+                    purpose = "Bật cờ hiển thị NỘI DUNG dẫn đường trên HUD (khác với công tắc HUD tổng)",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen setraw setting 4C10E03A 1",
+                    ),
+                    evidence = "sau khi bật cờ này VÀ HUD đã bật (hud.switch-on) VÀ đang có nav thật (NavOpen full/open), xem HUD có hiện hướng rẽ không",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "RE 2026-07-29 (HudOptionDisplayModel.java): SET_DYNAMIC_NAVI_FUNCTION_STATUS_SET=0x4C10E03A. " +
+                        "CẢNH BÁO chưa kiểm chứng: đây chỉ là cờ 'CÓ hiện nav trên HUD hay không', KHÔNG có bằng chứng nó đổi " +
+                        "NGUỒN dữ liệu — rất có thể chỉ gate cho app nav OEM riêng, không liên quan gì tới ghi INSTRUMENT_GUIDE_INFO_SIMPLE_SET " +
+                        "mà BydHal.kt/navopen.jau đang dùng. Đừng mặc định 'bật cờ này thì làn cụm tự nhảy sang HUD'.",
+                ),
+                StepCandidate(
+                    id = "hud.adas-content-toggle-on",
+                    purpose = "Bật cờ hiển thị cảnh báo ADAS trên HUD",
+                    commands = listOf(
+                        "CLASSPATH=/data/local/tmp/navopen.jar app_process /system/bin com.byd.navopen.NavOpen setraw setting 4C10E030 1",
+                    ),
+                    evidence = "NHÌN HUD sau khi bật — icon ADAS (nếu có cảnh báo đang active) có hiện không",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "RE 2026-07-29 (HudOptionDisplayModel.java): SET_SAFE_DRIVING_ASSIST_STATUS_SET=0x4C10E030. " +
+                        "Nhóm icon ADAS chung (FCW/LDW...), không riêng cho biển báo tốc độ.",
+                ),
+            ),
+        ),
+
+        // ── Toggle phụ trên cụm (opcode AutoContainer chưa có candidate) ────────────────────────────
+        //
+        // RE 2026-07-29 (dashcast-src/ui/diag/DiagActivity.java, đối chiếu app com.byd.clusterdebug của
+        // chính BYD, xác nhận đa đời máy DL3/Di4/DL5/DL6): các opcode 2/3/12/13 khác opcode chiếu/teardown
+        // đã biết (16/18/30/31/35). 47/48 là build cũ hơn, CHƯA xác nhận còn tồn tại trên ROM hiện tại.
+        CarStep(
+            id = "cluster-overlay-toggles",
+            feature = CarFeature.CLUSTER_CAST,
+            purpose = "Bật/tắt lớp phủ ADAS và đèn cảnh báo trên cụm — độc lập với đường chiếu app",
+            precondition = "cụm đang hiện đồng hồ (không cần đang chiếu app nào)",
+            candidates = listOf(
+                StepCandidate(
+                    id = "overlay.adas-window-show",
+                    purpose = "Hiện cửa sổ ADAS 2D/3D của Qt cluster",
+                    commands = listOf("service call {svc} 2 i32 1000 i32 12 s16 \"\""),
+                    evidence = "cụm hiện thêm lớp phủ ADAS (radar/làn đường...)",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "RE 2026-07-29 từ com.byd.clusterdebug (app chẩn đoán CHÍNH CHỦ của BYD), xác nhận qua nhiều đời máy.",
+                ),
+                StepCandidate(
+                    id = "overlay.adas-window-hide",
+                    purpose = "Ẩn lại cửa sổ ADAS vừa hiện",
+                    commands = listOf("service call {svc} 2 i32 1000 i32 13 s16 \"\""),
+                    evidence = "lớp phủ ADAS biến mất",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "Cặp đôi trực tiếp với overlay.adas-window-show.",
+                ),
+                StepCandidate(
+                    id = "overlay.warning-lamps-on",
+                    purpose = "Bật SÁNG toàn bộ đèn cảnh báo trên cụm cùng lúc",
+                    commands = listOf("service call {svc} 2 i32 1000 i32 2 s16 \"\""),
+                    evidence = "mọi đèn cảnh báo (ắc quy, phanh tay, ABS...) sáng đồng loạt",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.MAY_DISRUPT_DRIVER,
+                    fieldNote = "RE 2026-07-29, field-tested trên DL5 (owner tài liệu gốc): opcode 2 rồi đợi 3s rồi opcode 3. " +
+                        "Chỉ thử khi ĐỖ — đèn cảnh báo giả có thể khiến người khác trong xe hoảng. LIVE-CONFIRMED 2026-07-29 " +
+                        "trên Seal DL3: opcode 2 sáng thật vài chục cảnh báo cùng lúc trên cụm — nhưng xem SỰ CỐ THẬT ở " +
+                        "overlay.warning-lamps-off, opcode 3 KHÔNG đảm bảo dọn sạch được những gì opcode 2 bật lên.",
+                ),
+                StepCandidate(
+                    id = "overlay.warning-lamps-off",
+                    purpose = "Tắt lại toàn bộ đèn cảnh báo vừa bật",
+                    commands = listOf("service call {svc} 2 i32 1000 i32 3 s16 \"\""),
+                    evidence = "mọi đèn cảnh báo tắt, cụm về trạng thái bình thường",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "SỰ CỐ THẬT 2026-07-29 trên Seal DL3: gửi opcode 3 HAI LẦN + opcode 0 (video refresh, " +
+                        "teardown.0-only) MỘT LẦN — vẫn còn sót icon ADAS + biển đường cấm trên cụm, và km/h giới hạn " +
+                        "nhảy sai thành 60 (HUD vẫn đúng 30, hai màn lệch nhau). CHỈ tắt máy xe rồi khởi động lại (power " +
+                        "cycle thật) mới dọn sạch hoàn toàn. KẾT LUẬN: opcode 3 KHÔNG đảm bảo là nghịch đảo sạch của " +
+                        "opcode 2 như tên gọi — đừng coi cặp on/off này là hoàn tác được thuần bằng phần mềm. Trước khi " +
+                        "thử lại overlay.warning-lamps-on, PHẢI sẵn sàng tắt/mở máy xe làm phương án dọn cuối cùng, và " +
+                        "không nên đoán thêm opcode khác khi 3/0 đã không ăn — đúng bài học CLAUDE.md §5 (đường trả về " +
+                        "phải có sẵn TRƯỚC khi đổi trạng thái, không phải đi tìm sau khi đã kẹt).",
+                ),
+                StepCandidate(
+                    id = "overlay.adas-debug-legacy-on",
+                    purpose = "Thử 'chế độ debug ADAS bí mật' từ build DashCast v0.3.2-alpha cũ — chưa rõ còn hoạt động trên ROM hiện tại không",
+                    commands = listOf("service call {svc} 2 i32 1000 i32 47 s16 \"\""),
+                    evidence = "quan sát khác biệt so với overlay.adas-window-show (nếu có, mới đáng ghi nhận là cơ chế riêng)",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.MAY_DISRUPT_DRIVER,
+                    fieldNote = "RE 2026-07-29: chỉ thấy trong CHANGELOG.md lịch sử của DashCast (versionCode 68), KHÔNG còn " +
+                        "trong source hiện tại của dashcast-src — có thể đã bị bỏ vì trùng/kém hơn opcode 12/13 mới hơn. Thử để " +
+                        "loại trừ, không kỳ vọng khác biệt.",
+                ),
+                StepCandidate(
+                    id = "overlay.adas-debug-legacy-off",
+                    purpose = "Tắt lại nếu overlay.adas-debug-legacy-on có hiệu ứng nhìn thấy được",
+                    commands = listOf("service call {svc} 2 i32 1000 i32 48 s16 \"\""),
+                    evidence = "trở lại như trước overlay.adas-debug-legacy-on",
+                    verdictSource = VerdictSource.HUMAN,
+                    risk = CandidateRisk.REVERSIBLE,
+                    fieldNote = "Chạy ngay sau overlay.adas-debug-legacy-on bất kể có thấy hiệu ứng hay không.",
+                ),
+            ),
+        ),
     )
 
     fun step(id: String): CarStep? = steps.firstOrNull { it.id == id }

@@ -9,9 +9,19 @@ import org.junit.jupiter.api.Test
  * Locks a finding from tracing `CastAction.RETRY_CONNECT` for `RecoverySubstate.TRANSPORT_PREMUTATION_IDLE`
  * (docs/diagnostics/cast-recovery-deadend-2026-07-28.md): `CastUiStateProjector.recoveryRows` maps this
  * substate to `NextSafeAction.RETRY_CONNECT_BOUNDED` -- but `CastRuntimeUi.render`, the only production
- * site that builds `CastProjectionInput.recoverySubstate`, can NEVER assign this value (nor 9 of its 15
- * siblings). Its `recovery` local is `transactionRecovery ?: when { ... }`, a closed expression whose only
- * possible non-null outputs are the ones asserted below.
+ * site that builds `CastProjectionInput.recoverySubstate`, can NEVER assign this value (nor 8 of its 15
+ * siblings, updated 2026-07-31). Its `recovery` local is `transactionRecovery ?: when { ... }`, a closed
+ * expression whose only possible non-null outputs are the ones asserted below.
+ *
+ * `OBSERVATION_DIVERGED_STOP_AVAILABLE`/`OBSERVATION_DIVERGED_WAITING` joined `PRODUCTION_REACHABLE`
+ * 2026-07-31 (docs/specs/cast-recovery-honesty-and-multi-occupant.html §R2): both existed in
+ * `recoveryRows` since before, unreachable for the same reason `TRANSPORT_PREMUTATION_IDLE` still is —
+ * nothing ever produced them. Measured on DiLink3 the same day: a durable claim (`stable.state` in
+ * `IDLE_VERIFIED`/`ACTIVE_VERIFIED`/`ACTIVE_DEGRADED`) can stop matching live observation for reasons no
+ * ClusterNav transaction caused (another app lands on the cluster, or two apps both read visible=true) —
+ * `CastRuntimeUi.render` now assigns these substates for exactly that shape instead of falling through to
+ * `CastUiStateProjector.failClosed` (`CONTRACT_UNMAPPED`, a false "chưa nhận diện được" when the mismatch
+ * was in fact identified).
  *
  * If this test ever needs to change, it means someone deliberately wired one of the previously-unreachable
  * substates -- update `PRODUCTION_REACHABLE` and re-verify the new path actually changes durable state
@@ -71,6 +81,8 @@ class CastRetryConnectDeadEndTest {
             "UNSUPPORTED_PROFILE_ACTIVE_UNKNOWN",
             "PROTECTED_SINK_CONNECTED",
             "DISCONNECTED_SINK_ELIGIBLE",
+            "OBSERVATION_DIVERGED_STOP_AVAILABLE",
+            "OBSERVATION_DIVERGED_WAITING",
         )
     }
 }

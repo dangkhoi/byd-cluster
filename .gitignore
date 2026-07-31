@@ -8,7 +8,7 @@ build/
 *.aab
 *.ap_
 *.dex
-local.properties
+local.properties*
 .cxx/
 app/.jqwik-database
 

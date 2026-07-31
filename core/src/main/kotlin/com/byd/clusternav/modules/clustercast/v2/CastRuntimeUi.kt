@@ -2,6 +2,12 @@ package com.byd.clusternav.modules.clustercast.v2
 
 import java.time.Instant
 
+/** The [StableState]s whose convergence [CastRuntimeUi.render] actually checks against observation —
+ *  mirrors the `when (stable.state)` branches below exactly, so a state added there without a case here
+ *  is simply never convergeable, matching the existing `else -> false`. */
+private val CONVERGEABLE_STATES =
+    setOf(StableState.IDLE_VERIFIED, StableState.ACTIVE_VERIFIED, StableState.ACTIVE_DEGRADED)
+
 /** Pure Android-facing projection adapter; UI surfaces never interpret durable fields independently. */
 object CastRuntimeUi {
     fun render(
@@ -27,11 +33,42 @@ object CastRuntimeUi {
         }
         val profileUnsupported = observation is ObservationValue.Unsupported &&
             observation.reason.contains("profile", ignoreCase = true)
+        val stableConverged = stable != null && tx == null && observed != null && when (stable.state) {
+            StableState.IDLE_VERIFIED -> observed.coarseState == ObservedCoarseState.IDLE_CLEAN &&
+                observed.displayIdentity == stable.expectedDisplayIdentity &&
+                observed.geometry == stable.baseline.geometry &&
+                observed.animationPerKey == stable.baseline.animationPerKey &&
+                observed.pipMode == stable.baseline.pipMode && observed.profile == stable.baseline.profile
+            StableState.ACTIVE_VERIFIED -> observed.coarseState == ObservedCoarseState.ACTIVE_SINGLE &&
+                observed.displayIdentity == stable.expectedDisplayIdentity &&
+                observed.target == stable.activeTarget && observed.protectedResidue == null &&
+                observed.geometry == stable.acceptedGeometry
+            StableState.ACTIVE_DEGRADED -> observed.coarseState == ObservedCoarseState.ACTIVE_MULTI &&
+                observed.displayIdentity == stable.expectedDisplayIdentity &&
+                observed.target == stable.activeTarget &&
+                observed.protectedResidue == stable.protectedResidue &&
+                observed.geometry == stable.acceptedGeometry
+            else -> false
+        }
+        // Measured on DiLink3 2026-07-31 (docs/specs/cast-recovery-honesty-and-multi-occupant.html §R2):
+        // a durable claim (IDLE_VERIFIED that reads clean, or a verified active target) can stop matching
+        // live observation for reasons ClusterNav's own transaction never caused — another app lands on
+        // the cluster outside any tracked cast, or two apps both read visible=true at once. RECOVERY_PENDING
+        // already has a real Stop-available path for exactly this shape (`OBSERVATION_DIVERGED_STOP_AVAILABLE`
+        // in `recoveryRows` below) — it was defined but never reachable, because every branch that could
+        // assign it required `stable.state` to ALREADY equal RECOVERY_PENDING. Nothing demotes it there on
+        // its own; without this, the mismatch fell all the way to `CastUiStateProjector.failClosed()`
+        // (`CONTRACT_UNMAPPED`, "chưa nhận diện được trạng thái cụm") — a false statement, since the app
+        // demonstrably DID identify the mismatch, it just had no named branch to say so honestly.
+        val observationDiverged = !stableConverged && tx == null && observed != null &&
+            stable?.state in CONVERGEABLE_STATES
         val recovery = transactionRecovery ?: when {
             profileUnsupported && stable?.state == StableState.IDLE_VERIFIED ->
                 RecoverySubstate.UNSUPPORTED_PROFILE_IDLE
             profileUnsupported && stable?.state != null ->
                 RecoverySubstate.UNSUPPORTED_PROFILE_ACTIVE_UNKNOWN
+            observationDiverged && envelope?.stopRequested == true -> RecoverySubstate.OBSERVATION_DIVERGED_WAITING
+            observationDiverged -> RecoverySubstate.OBSERVATION_DIVERGED_STOP_AVAILABLE
             stable?.state != StableState.RECOVERY_PENDING -> null
             phoneSessionConnected == true -> RecoverySubstate.PROTECTED_SINK_CONNECTED
             phoneSessionConnected == false && destructiveRecoveryEligible == true ->
@@ -64,23 +101,7 @@ object CastRuntimeUi {
                 transaction = transaction,
                 destructiveRecoveryEligible = if (recovery == null) destructiveRecoveryEligible else null,
                 stableState = stable?.state,
-                stableConverged = stable != null && tx == null && observed != null && when (stable.state) {
-                    StableState.IDLE_VERIFIED -> observed.coarseState == ObservedCoarseState.IDLE_CLEAN &&
-                        observed.displayIdentity == stable.expectedDisplayIdentity &&
-                        observed.geometry == stable.baseline.geometry &&
-                        observed.animationPerKey == stable.baseline.animationPerKey &&
-                        observed.pipMode == stable.baseline.pipMode && observed.profile == stable.baseline.profile
-                    StableState.ACTIVE_VERIFIED -> observed.coarseState == ObservedCoarseState.ACTIVE_SINGLE &&
-                        observed.displayIdentity == stable.expectedDisplayIdentity &&
-                        observed.target == stable.activeTarget && observed.protectedResidue == null &&
-                        observed.geometry == stable.acceptedGeometry
-                    StableState.ACTIVE_DEGRADED -> observed.coarseState == ObservedCoarseState.ACTIVE_MULTI &&
-                        observed.displayIdentity == stable.expectedDisplayIdentity &&
-                        observed.target == stable.activeTarget &&
-                        observed.protectedResidue == stable.protectedResidue &&
-                        observed.geometry == stable.acceptedGeometry
-                    else -> false
-                },
+                stableConverged = stableConverged,
                 interactionContext = InteractionContext(
                     InteractionContextValue.UNKNOWN,
                     "android-runtime",

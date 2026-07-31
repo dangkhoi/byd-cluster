@@ -45,11 +45,17 @@ object DumpObservedStateParser : ObservedStateParser {
             else -> ObservedCoarseState.ACTIVE_MULTI
         }
         val records = displayTasks.map { Triple(it.packageName, it.taskId, it.visible) }
+        // Measured on DiLink3 2026-07-31 (docs/specs/cast-recovery-honesty-and-multi-occupant.html §R2):
+        // two distinct packages (app.revanced.android.apps.maps, vn.vietmap.live) both read visible=true
+        // on the same display. `coarse` above already names this correctly as ACTIVE_MULTI — returning
+        // `Unknown` right after THROWS AWAY that already-known fact. `target == null` here is not "we
+        // could not tell": it is the honest answer "more than one app claims the screen, and nothing in
+        // this dump says which one truly owns it" — that is real, nameable data for the render layer to
+        // act on (see CastUiStateProjector), not a parse failure.
         val targetRecord = when (records.size) {
             0 -> null
             1 -> records.single()
             else -> records.filter { it.third == true }.singleOrNull()
-                ?: return ObservationValue.Unknown("multi-occupant target visibility unavailable")
         }
         val target = targetRecord?.let { CastTarget(it.first, it.second, display) }
         val residueRecords = records.filter { it != targetRecord }.filter { record ->

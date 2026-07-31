@@ -32,7 +32,10 @@ object ManeuverSignature {
     private const val WORDS = (BITS + 63) / 64  // = 4 long
     private const val MAX_HAMMING = 18          // ngưỡng khớp của app gốc (wm0.d)
 
-    // DEBUG (hiện trên MainActivity): tên maneuver khớp gần nhất + mã suy ra.
+    // DEBUG: tên maneuver khớp gần nhất + mã suy ra của lần chấm GẦN NHẤT BẤT KỲ LUỒNG NÀO.
+    // ⚠ KHÔNG dùng để ghi dữ liệu chẩn đoán — đọc [classifyDetailed] để lấy tên đúng của CHÍNH khung mình
+    //   vừa chấm (grep 2026-07-30: hiện KHÔNG màn hình nào đọc 2 field này, dù comment cũ nói "hiện trên
+    //   MainActivity" — giữ lại vì rẻ, nhưng đừng tin nó thuộc về khung nào).
     @Volatile var lastName: String = "-"; private set
     @Volatile var lastAmap: Int = -1; private set
 
@@ -45,16 +48,37 @@ object ManeuverSignature {
         }
     }
 
+    /**
+     * Kết quả MỘT lần khớp, trả TƯỜNG MINH cùng nhau.
+     *
+     * Vì sao cần, thay vì đọc [lastName]/[lastAmap] sau khi gọi [classify]: hai field đó là state CHUNG của
+     * object, và từ 2026-07-30 có HAI call site chấm cùng một tấm ảnh từ HAI luồng khác nhau
+     * (`AmapFrameBuilder` chạy trên worker `navigation-cluster-lane-delivery`, `NavArrowLog` chạy thêm trên
+     * luồng main của nhịp tim). Đọc field sau lời gọi có thể lấy TÊN của khung ảnh KHÁC — và [classify] còn
+     * return sớm mà KHÔNG ghi field khi ảnh null/quá nhỏ, nên tên đọc được có thể là tên CŨ còn sót.
+     * Một dòng dữ liệu chẩn đoán mang tên sai còn tệ hơn không có dòng nào.
+     */
+    data class Match(val name: String, val amap: Int?)
+
+    /** Không có ảnh để chấm (null / nhỏ hơn 8×8) — KHÁC "(không khớp)" (có ảnh, chấm rồi, trượt registry). */
+    const val NO_INPUT = "(không ảnh)"
+
     /** -> mã AMAP NEW_ICON từ ảnh mũi tên, hoặc null nếu mờ/không khớp. */
-    fun classify(bmp: PixelFrame?): Int? {
-        if (bmp == null || bmp.width < 8 || bmp.height < 8) return null
-        val s = signature(bmp) ?: run { set("(mờ)", -1); return null }
+    fun classify(bmp: PixelFrame?): Int? = classifyDetailed(bmp).amap
+
+    /** Như [classify] nhưng kèm TÊN registry đã khớp — hành vi/side-effect y hệt, chỉ trả thêm tên. */
+    fun classifyDetailed(bmp: PixelFrame?): Match {
+        if (bmp == null || bmp.width < 8 || bmp.height < 8) return Match(NO_INPUT, null)
+        val s = signature(bmp) ?: run { set("(mờ)", -1); return Match("(mờ)", null) }
         val name = match(s.bits) ?: matchNCC(s.fill)   // #3: Hamming trượt → NCC fallback (suy giảm dần)
-            ?: run { set("(không khớp)", -1); note("no match (Hamming>$MAX_HAMMING, NCC<$NCC_MIN)"); return null }
+            ?: run {
+                set("(không khớp)", -1); note("no match (Hamming>$MAX_HAMMING, NCC<$NCC_MIN)")
+                return Match("(không khớp)", null)
+            }
         val amap = nameToAmap(name)
         set(name, amap)
         note("sig '$name' -> amap=$amap")
-        return amap
+        return Match(name, amap)
     }
 
     private fun set(n: String, a: Int) { lastName = n; lastAmap = a }
