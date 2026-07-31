@@ -14,11 +14,13 @@ class CastBubbleProjectionTest {
         allowed: Set<CastAction> = emptySet(),
         disabledReasons: Map<CastAction, DisabledReason> = emptyMap(),
         durableStatusPriority: Boolean = false,
+        sessionConfirmed: Boolean = false,
     ) = CastRenderModel(
         title, status, true, false, durableStatusPriority,
         CastAction.entries.map { action ->
             CastRenderAction(action, action in allowed, if (action in allowed) null else disabledReasons[action])
         },
+        sessionConfirmed,
     )
 
     private fun row(
@@ -192,11 +194,88 @@ class CastBubbleProjectionTest {
         assertEquals(maps.packageName, active.activeTargetPackage)
         assertTrue(active.projecting)
 
-        // Phiên legacy/không xác định: không đọc ra tên gói nhưng Stop vẫn được xuất ra — vòng tròn vẫn
-        // phải báo "đang chiếu", nếu không chủ xe tưởng cụm đã sạch mà thật ra chưa.
-        val nameless = CastBubbleProjection.project(model(allowed = setOf(CastAction.STOP)), rows, null)
+        // Phiên legacy đã XÁC MINH là thật: không đọc ra tên gói nhưng Stop vẫn được xuất ra — vòng tròn
+        // vẫn phải báo "đang chiếu", nếu không chủ xe tưởng cụm đã sạch mà thật ra chưa.
+        val nameless = CastBubbleProjection.project(
+            model(allowed = setOf(CastAction.STOP), sessionConfirmed = true), rows, null,
+        )
         assertEquals(null, nameless.activeTargetPackage)
         assertTrue(nameless.projecting)
+    }
+
+    /**
+     * Khoá lỗi đo trên DiLink3 2026-07-31 (docs/specs/cast-recovery-honesty-and-multi-occupant.html §R3):
+     * CarPlay kẹt RECOVERING (`am task resize` bị từ chối) vẫn xuất Stop từ recovery row của nó — nhưng
+     * KHÔNG có phiên nào từng được xác minh. Trước bản vá, `projecting` chỉ nhìn `stop != HIDDEN` nên vẫn
+     * tô đặc vòng tròn, y hệt case "nameless" ở trên dù bản chất khác hẳn — một cái là phiên thật, một cái
+     * là lối thoát của lỗi. `sessionConfirmed=false` (mặc định, KHÔNG xác minh) phải tách được hai ca này.
+     */
+    @Test
+    fun `stop offered from an unconfirmed recovery state does not paint the bubble as projecting`() {
+        val recovering = CastBubbleProjection.project(
+            model(allowed = setOf(CastAction.STOP), sessionConfirmed = false), rows, null,
+        )
+        assertEquals(null, recovering.activeTargetPackage)
+        assertFalse(recovering.projecting, "Stop chỉ là lối thoát của lỗi, không phải phiên đã xác minh")
+    }
+
+    /**
+     * Đôi với test ngay trên, và là nửa quan trọng hơn của nó (review 2026-07-31).
+     *
+     * `projecting` giờ đòi phiên đã xác minh — đúng cho việc TÔ MÀU. Nhưng `FloatingBubbleService` dùng
+     * đúng một tín hiệu để quyết định CHẠM = Dừng hay CHẠM = Chiếu. Nếu cú chạm cũng đi theo `projecting`
+     * thì ở đúng trạng thái kẹt (RECOVERING/RECOVERY_PENDING xuất Stop, chưa xác minh gì) nút nổi mất
+     * luôn đường Stop — trong khi Stop chính là `nextSafeAction` của những hàng recovery đó, và nút nổi
+     * thường là bề mặt duy nhất còn nhìn thấy khi CarPlay/AA chiếm màn chính. Tệ hơn: khi không có
+     * transaction nào đang chạy (ca `OBSERVATION_DIVERGED_STOP_AVAILABLE` mới của §R2), cú chạm rơi
+     * xuống nhánh chiếu và phát một lượt cast MỚI lên cụm đang có app lạ. CLAUDE.md §3 cấm đúng vòng
+     * tròn này. Hai câu hỏi khác nhau ⇒ hai trường khác nhau.
+     */
+    @Test
+    fun `a tap still means Stop whenever Stop is exported, even with nothing confirmed`() {
+        val recovering = CastBubbleProjection.project(
+            model(allowed = setOf(CastAction.STOP), sessionConfirmed = false), rows, null,
+        )
+        assertFalse(recovering.projecting, "không tô đặc: chưa có gì được xác minh")
+        assertTrue(recovering.stopOnTap, "nhưng chạm PHẢI vẫn là Dừng — đó là lối thoát duy nhất")
+
+        // Đã bấm Dừng và đang chờ: vẫn là Dừng, không được rơi xuống nhánh phát một lượt chiếu mới.
+        val acknowledged = CastBubbleProjection.project(
+            model(allowed = setOf(CastAction.STOP), sessionConfirmed = false), rows, null,
+            localStopRequested = true,
+        )
+        assertEquals(BubbleStopControl.ACKNOWLEDGED, acknowledged.stop)
+        assertTrue(acknowledged.stopOnTap)
+
+        // Cụm thật sự rảnh: không có Stop, không có target ⇒ chạm là Chiếu, y như trước.
+        val idle = CastBubbleProjection.project(model(), rows, null)
+        assertFalse(idle.stopOnTap)
+
+        // Phiên đã xác minh có tên gói: cả hai câu trả lời đều đúng.
+        val active = CastBubbleProjection.project(
+            model(allowed = setOf(CastAction.STOP), sessionConfirmed = true), rows, null,
+            activeTargetPackage = maps.packageName,
+        )
+        assertTrue(active.projecting)
+        assertTrue(active.stopOnTap)
+    }
+
+    /**
+     * Kiểm chéo của review 2026-07-31: một cú Dừng THẬT đang bay có `coarseState = STOP_REQUESTED`, tức
+     * `sessionConfirmed = false` — vòng tròn có bị rỗng ngay giữa lúc chờ không (rồi cú chạm kế tiếp
+     * thành một lượt chiếu mới đè lên cụm đang dừng)? KHÔNG: phiên bền chưa bị xoá cho tới khi Stop hội
+     * tụ, nên `activeTargetPackage` vẫn còn — và nó là VẾ ĐẦU của `projecting`, không đi qua
+     * `sessionConfirmed`. Khoá lại để lần sau ai sửa `projecting` còn thấy ca này.
+     */
+    @Test
+    fun `a real stop in flight keeps the bubble solid for the whole wait`() {
+        val stopping = CastBubbleProjection.project(
+            model(title = "Đang xử lý", sessionConfirmed = false), rows, null,
+            localStopRequested = true, activeTargetPackage = maps.packageName,
+        )
+        assertEquals(BubbleStopControl.ACKNOWLEDGED, stopping.stop)
+        assertTrue(stopping.projecting, "đang chờ Stop hội tụ mà vòng tròn rỗng là mời một cú chiếu nhầm")
+        assertTrue(stopping.stopOnTap)
     }
 
     @Test

@@ -40,14 +40,41 @@ data class BubbleProjection(
      * đang chiếu phải là một trường dữ liệu. Đây là trường đó.
      */
     val activeTargetPackage: String? = null,
+    /** Xem [CastRenderModel.sessionConfirmed] — có phiên đã XÁC MINH, không phải chỉ vì Stop đang khả dụng. */
+    val sessionConfirmed: Boolean = false,
 ) {
     /**
      * Có gì đó đang trên cụm để mà dừng.
      *
      * Suy ra từ hợp đồng Stop chứ không từ [activeTargetPackage] một mình: khi phiên là legacy/không xác
      * định thì không có tên gói, nhưng Stop vẫn được xuất ra — lúc đó vòng tròn vẫn phải báo "đang chiếu".
+     *
+     * NHƯNG Stop cũng được xuất ra cho một nhánh phục hồi lỗi (RECOVERING/RECOVERY_PENDING) chưa từng xác
+     * minh có phiên thật — đo trên DiLink3 2026-07-31 (docs/specs/cast-recovery-honesty-and-multi-occupant.html
+     * §R3): CarPlay kẹt RECOVERING (am task resize bị từ chối) vẫn xuất Stop, bong bóng vẫn tô đặc như đã
+     * chiếu xong. `sessionConfirmed` tách đúng hai ý nghĩa: Stop có nghĩa "đang chiếu thật" CHỈ khi kèm
+     * theo xác nhận — nếu không, nó chỉ là lối thoát an toàn của một trạng thái lỗi.
      */
     val projecting: Boolean
+        get() = activeTargetPackage != null || (stop != BubbleStopControl.HIDDEN && sessionConfirmed)
+
+    /**
+     * Một chạm phải làm gì: Dừng (true) hay Chiếu (false).
+     *
+     * TÁCH KHỎI [projecting] có chủ đích. `projecting` trả lời "có nên tô đặc không" và từ 2026-07-31 nó
+     * đòi thêm [sessionConfirmed] (§R3). Nhưng cú chạm KHÔNG được hỏi câu đó: nó phải hỏi HỢP ĐỒNG —
+     * "Dừng có đang được xuất ra không". Hai câu này khác nhau đúng ở ca quan trọng nhất: một nhánh phục
+     * hồi (RECOVERING/RECOVERY_PENDING) xuất Stop mà chưa xác minh gì. Nếu cú chạm đi theo `projecting`,
+     * đúng lúc cụm kẹt là lúc nút nổi KHÔNG còn phát được Stop nữa — hoặc nó im lặng ("đang có thao tác
+     * khác chạy"), hoặc tệ hơn, nó phát một lượt chiếu MỚI đè lên một cụm đang có app lạ. Mà Stop chính
+     * là đường thoát duy nhất của các trạng thái đó (`nextSafeAction = REQUEST_STOP`), và nút nổi thường
+     * là bề mặt duy nhất nhìn thấy được khi CarPlay/AA đang chiếm màn chính. Đó đúng là kiểu vòng tròn
+     * CLAUDE.md §3 cấm: khoá đường phục hồi bằng dữ liệu mà chỉ chính đường đó mới làm mới được.
+     *
+     * Công thức này = `projecting` NGUYÊN BẢN trước §R3, nên hành vi chạm không đổi một li so với bản
+     * đã chạy tốt ngoài hiện trường (CLAUDE.md §6).
+     */
+    val stopOnTap: Boolean
         get() = activeTargetPackage != null || stop != BubbleStopControl.HIDDEN
 }
 
@@ -100,6 +127,7 @@ object CastBubbleProjection {
             },
             durableStatusPriority = model.durableStatusPriority,
             activeTargetPackage = activeTargetPackage,
+            sessionConfirmed = model.sessionConfirmed,
         )
     }
 

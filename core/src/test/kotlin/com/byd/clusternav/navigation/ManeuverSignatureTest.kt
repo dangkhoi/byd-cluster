@@ -45,6 +45,32 @@ class ManeuverSignatureTest {
         }
     }
 
+    /** [ManeuverSignature.classify] chỉ là [ManeuverSignature.classifyDetailed] bỏ tên — không được rẽ nhánh
+     *  khác nhau, nếu không dòng vết chẩn đoán sẽ mô tả một quyết định khác với quyết định thật gửi ra cụm. */
+    @Test
+    fun `classifyDetailed va classify luon dong y ve ma icon`() {
+        listOf(
+            null,
+            frame(4, 4) { _, _ -> true },                             // quá nhỏ
+            frame(16, 16) { _, _ -> false },                          // trống trơn -> quá mờ
+            frame(20, 20) { x, y -> x in 5..15 && y in 5..15 },
+            frame(24, 24) { x, y -> (x + y) % 3 == 0 },
+        ).forEach { f ->
+            assertEquals(ManeuverSignature.classify(f), ManeuverSignature.classifyDetailed(f).amap)
+        }
+    }
+
+    /** KHOÁ lỗi dữ liệu: trước 2026-07-30 call site chẩn đoán đọc [ManeuverSignature.lastName] SAU khi gọi
+     *  classify — mà classify return sớm KHÔNG ghi field khi ảnh null/nhỏ, nên tên đọc được là tên CŨ còn
+     *  sót của khung trước (và có thể là của luồng khác). Tên phải đi CÙNG mã trong một giá trị trả về. */
+    @Test
+    fun `khong co anh thi ten la NO_INPUT chu khong phai ten con sot cua khung truoc`() {
+        ManeuverSignature.classify(frame(20, 20) { x, y -> x in 5..15 && y in 5..15 })  // để lại lastName
+        val m = ManeuverSignature.classifyDetailed(null)
+        assertNull(m.amap)
+        assertEquals(ManeuverSignature.NO_INPUT, m.name)
+    }
+
     @Test
     fun `logger duoc goi khi co gan`() {
         val lines = mutableListOf<String>()

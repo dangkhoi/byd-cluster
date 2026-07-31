@@ -386,6 +386,40 @@ object CarExecScenarios {
             ),
         ),
 
+        // ── RE 2026-07-29: ba mảng mới, chưa nằm trong bảng 32 ca gốc ────────────────────────────────
+        CarScenario(
+            id = "nav.render-gate-discovery",
+            feature = CarFeature.NAVIGATION,
+            purpose = "Mở cổng render nav zin (semon/navi_protect) — ưu tiên số 1, rẻ và đã chuẩn bị sẵn từ phiên 2026-06-22",
+            coveredCases = emptyList(),
+            actions = listOf(
+                m("nav-render-gate", "đọc 4 property quyết định cổng", "biết mốc navi_protect/whitelist/change_navi_auth/fission_single_os trước khi đổi gì"),
+                h("nav-render-gate", "bơm frame KHÔNG mở cổng trước", "dựng lại đúng baseline 2026-06-22: data vào cụm (logcat) nhưng KHÔNG hiện", mapOf(CarExecCatalog.PLACEHOLDER_KEY to "baseline")),
+                h("nav-render-gate", "thử M1 setprop navi_protect=0 rồi bơm lại", "hoặc làn nav HIỆN RA lần đầu tiên, hoặc vẫn như baseline — cả hai đều là kết quả cần biết", mapOf(CarExecCatalog.PLACEHOLDER_KEY to "m1")),
+                h("nav-render-gate", "nếu M1 trượt: thử M8 navopen-open (đúng cách map zin tự mở)", "làn nav hiện ra bằng đúng lệnh HAL thật, không phụ thuộc SELinux cho setprop hay không", mapOf(CarExecCatalog.PLACEHOLDER_KEY to "m8")),
+            ),
+        ),
+        CarScenario(
+            id = "hud.discover-switch",
+            feature = CarFeature.HUD_SWITCH,
+            purpose = "Xác nhận xe test có kính lái vật lý, rồi thử bật/tắt qua đúng chuỗi gọi RE ra được",
+            coveredCases = emptyList(),
+            actions = listOf(
+                m("probe-profile", "xác nhận com.byd.vehiclesettings có cài", "package + versionName đọc được"),
+                m("hud-probe", "đọc SET_HUD_CONFIG trước khi thử gì khác", "biết xe có HUD hay không (0=không có=dừng ở đây)"),
+                h("hud-probe", "nếu có HUD: bật rồi tắt công tắc", "kính lái vật lý phản ứng đúng theo từng lệnh, feedback đọc lại khớp"),
+            ),
+        ),
+        CarScenario(
+            id = "cast.overlay-toggles-probe",
+            feature = CarFeature.CLUSTER_CAST,
+            purpose = "Xác nhận các opcode phụ (ADAS window, đèn cảnh báo) tách biệt với opcode chiếu/teardown đã biết",
+            coveredCases = emptyList(),
+            actions = listOf(
+                h("cluster-overlay-toggles", "hiện rồi ẩn cửa sổ ADAS", "lớp phủ ADAS xuất hiện/biến mất, KHÔNG ảnh hưởng tới app đang chiếu (nếu có)"),
+                h("cluster-overlay-toggles", "bật rồi tắt toàn bộ đèn cảnh báo", "đèn sáng đồng loạt rồi tắt lại đúng như trước, không dính lại"),
+            ),
+        ),
     )
 
     fun scenario(id: String): CarScenario? = all.firstOrNull { it.id == id }

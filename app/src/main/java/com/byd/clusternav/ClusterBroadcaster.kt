@@ -106,6 +106,19 @@ object ClusterBroadcaster {
                 TurnDistanceInterpolator.closingRate(), SpeedProvider.mps(), s.road, lastCleanRoad + "|" + s.maneuverText)
         }
         send(ctx, frame)
+        // VẾT icon rẽ (lỗi đo 2026-07-30: "rẽ trái mà cụm hiện thẳng mãi", không lần ra lớp nào sai):
+        // ghi lại verdict TỪNG lớp fallback, không chỉ icon cuối cùng đã thắng. CHỈ ĐỌC — frame đã gửi xong,
+        // ĐẶT SAU send() để việc chấm lại ảnh + ghi file không bao giờ làm trễ frame lên cụm.
+        // liveArrow: từ 0.72 đường lên cụm dựng lại NavState qua NavigationFrameContent (không có trường
+        // bitmap) nên s.arrow LUÔN null ở đây; mượn ảnh mới nhất ở NavRepository để lớp 2/4 còn nói được gì,
+        // và NavArrowLog ghi arrow_src=live để KHÔNG ai đọc nhầm là chuỗi thật đã thấy ảnh đó.
+        runCatching {
+            NavArrowLog.record(
+                ctx, s.maneuverText, lastCleanRoad, s.road, s.distance,
+                s.maneuverIcon, frame.getIntExtra("NEW_ICON", -1),
+                frameArrow = s.arrow, liveArrow = NavRepository.state.arrow,
+            )
+        }.onFailure { Log.w(TAG, "vết icon rẽ lỗi", it) }
         Log.i(TAG, "emit lane icon=${frame.getIntExtra("NEW_ICON", -1)} seg=${frame.getIntExtra("SEG_REMAIN_DIS", -1)} " +
             "raw='${s.distance}' road='${frame.getStringExtra("NEXT_ROAD_NAME")}' byd=$byd")
     }

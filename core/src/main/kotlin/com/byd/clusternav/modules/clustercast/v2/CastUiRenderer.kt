@@ -13,6 +13,17 @@ class CastRenderModel(
     val stopAcknowledgementTimedOut: Boolean,
     val durableStatusPriority: Boolean,
     actions: List<CastRenderAction>,
+    /**
+     * A session actually verified active (or the known-real legacy read-only case) — as opposed to
+     * merely "Stop happens to be offered because some recovery row's next safe action is REQUEST_STOP".
+     *
+     * Measured on DiLink3 2026-07-31 (docs/specs/cast-recovery-honesty-and-multi-occupant.html §R3): a
+     * CAST that stalled in RECOVERING (CarPlay, `am task resize` rejected) still offered Stop from its
+     * recovery row, and the bubble painted solid — "đang chiếu" — for a session that never verified.
+     * Default `false` so every pre-existing call site (tests included) keeps its old, conservative
+     * reading unless it explicitly says otherwise.
+     */
+    val sessionConfirmed: Boolean = false,
 ) {
     val actions: List<CastRenderAction> = Collections.unmodifiableList(ArrayList(actions))
 }
@@ -58,6 +69,11 @@ object CastUiRenderer {
             val allowed = action in state.allowedActions
             CastRenderAction(action, allowed, if (allowed) null else state.disabledReasons[action])
         }
+        val sessionConfirmed = state.coarseState in setOf(
+            CoarseState.ACTIVE_VERIFIED,
+            CoarseState.ACTIVE_DEGRADED,
+            CoarseState.LEGACY_ACTIVE_READ_ONLY,
+        )
         return CastRenderModel(
             title,
             status,
@@ -65,6 +81,7 @@ object CastUiRenderer {
             acknowledgementTimedOut,
             durableStatusPriority,
             actions,
+            sessionConfirmed,
         )
     }
 

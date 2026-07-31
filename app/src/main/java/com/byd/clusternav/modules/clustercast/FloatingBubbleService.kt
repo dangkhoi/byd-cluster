@@ -380,7 +380,11 @@ class FloatingBubbleService : Service() {
                 val fresh = runCatching { project(token) }
                     .onFailure { android.util.Log.e(TAG, "tap projection failed", it) }
                     .getOrNull()
-                if (fresh?.projecting ?: (lastProjection?.projecting == true)) {
+                // Hỏi [BubbleProjection.stopOnTap], KHÔNG hỏi `projecting`: `projecting` là tín hiệu TÔ
+                // MÀU và từ 2026-07-31 nó đòi thêm phiên đã xác minh (§R3), nên đúng lúc cụm kẹt ở một
+                // nhánh phục hồi — lúc Stop là hành động an toàn kế tiếp DUY NHẤT — nó thành false và cú
+                // chạm sẽ làm ngược lại: hoặc câm, hoặc phát một lượt chiếu mới lên cụm đang kẹt.
+                if (fresh?.stopOnTap ?: (lastProjection?.stopOnTap == true)) {
                     handler.post { if (!destroyed) requestStopOnce() }
                     return@background
                 }

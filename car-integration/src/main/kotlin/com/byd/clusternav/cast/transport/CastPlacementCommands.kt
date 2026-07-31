@@ -71,7 +71,17 @@ object CastPlacementCommands {
                     // V1's proven fallback: task resize needs freeform alive. When it is not, the
                     // artistic overscan frame keeps the cast usable instead of tearing down a cast
                     // that did land, and Stop resets overscan with the rest of the display state.
-                    append("am task resize ${landed.taskId} 0 0 ${size.first} ${size.second}")
+                    //
+                    // Measured on DiLink3 2026-07-31 (CarPlay, PROJECTION_SINK style, docs/specs/
+                    // cast-recovery-honesty-and-multi-occupant.html): a rejected `am task resize`
+                    // writes a full Java stack trace to stderr even though the overall command still
+                    // exits 0 once the fallback runs. `||` already decided this is success — that
+                    // decision belongs here, at the one place this fallback is authored, not as a
+                    // string the effect classifier has to recognize (a TaskRecord{...} dump changes
+                    // every call, so no exact/prefix match survives it, and a loose match risks
+                    // hiding a real resize failure elsewhere). Silence the rejected branch's own
+                    // stderr; the fallback's stderr, if IT fails too, still surfaces unchanged.
+                    append("(am task resize ${landed.taskId} 0 0 ${size.first} ${size.second} 2>/dev/null)")
                     append(" || wm overscan $OVERSCAN_FALLBACK -d $display")
                 }
             }
@@ -147,11 +157,28 @@ object CastPlacementCommands {
         // A task launched in freeform stays a floating window after it returns to the centre screen;
         // V1 proved `am start --windowingMode 1` is the only shell verb that restores fullscreen.
         // A protected sink is returned gently, without touching its windowing mode.
-        CommandKind.RETURN_NORMAL_TO_MAIN ->
-            pkg?.let { resolveComponent(adb, it, cancelled) }
+        //
+        // No package at all is NOT a failed mutation — it is nothing to return, exactly like the
+        // sibling kinds below (`FORCE_STOP_NORMAL`, `PRE_OPEN_ON_MAIN`, `RESTORE_PIP`) already read it.
+        // This is the whole Stop ladder's first rung, and Stop is now reachable from a durable state
+        // that never had an active target: `OBSERVATION_DIVERGED_STOP_AVAILABLE` offers it while
+        // `stableSession.state == IDLE_VERIFIED` (docs/specs/cast-recovery-honesty-and-multi-occupant.html
+        // §R2), so `CastFacade.continueStopAfterAcknowledgement` plans with `targetPackage = null`.
+        // Failing closed here returned `null` → gateway `Rejected` → `CastExecutor.markRecovery`, i.e.
+        // the offered escape wedged the journal in RECOVERING at its FIRST step and never dispatched
+        // the rungs that need no package at all (restore animation/app-op, reset a clean display,
+        // close the OEM projection so the driver's gauges come back). Locked by
+        // `CastStopWithoutActiveTargetTest`. A package that IS known but whose launcher cannot be
+        // resolved still fails closed, unchanged — that one really is an unresolved mutation.
+        CommandKind.RETURN_NORMAL_TO_MAIN -> when (pkg) {
+            null -> NO_OP
+            else -> resolveComponent(adb, pkg, cancelled)
                 ?.let { "am start --display 0 --windowingMode $FULLSCREEN_MODE -n '$it'" }
-        CommandKind.RETURN_PROTECTED_GENTLY ->
-            pkg?.let { resolveComponent(adb, it, cancelled) }?.let { "am start --display 0 -n '$it'" }
+        }
+        CommandKind.RETURN_PROTECTED_GENTLY -> when (pkg) {
+            null -> NO_OP
+            else -> resolveComponent(adb, pkg, cancelled)?.let { "am start --display 0 -n '$it'" }
+        }
 
         // A never-started app has no task to relocate, so open it on the centre screen first.
         CommandKind.PRE_OPEN_ON_MAIN -> when {

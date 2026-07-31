@@ -21,11 +21,51 @@ private const val MAX_DISPLAY_DIMENSION = 32_768
 private const val MAX_DISPLAY_DENSITY_DPI = 10_000
 const val MISSING_NAMED_CLUSTER_DISPLAY_REASON = "expected exactly one named cluster display"
 
-fun classifyMutationShellResult(exitCode: Int, stdout: String, stderr: String): MutationResult =
-    if (exitCode == 0 && stderr.isBlank()) MutationResult.Observed(stdout.take(200))
-    else MutationResult.UnknownEffect(
-        stderr.takeIf(String::isNotBlank)?.take(200) ?: "shell exit $exitCode after dispatch",
-    )
+/**
+ * Cảnh báo `am start` ghi ra stderr khi task đích ĐÃ tồn tại và lệnh chỉ mang nó lên trước / gửi lại
+ * đúng intent cho instance đang chạy — cả hai đều là ca BÌNH THƯỜNG của cast (app cần chiếu, hoặc
+ * REASSERT_ON_CLUSTER xác nhận lại, thường đã có task sẵn), không phải lỗi.
+ *
+ * Danh sách này CHỈ được thêm bằng bằng chứng đo thật, từng dòng một — không đoán trước cả họ cảnh báo
+ * "Warning: Activity not started, ...":
+ *   - "its current task has been brought to the front" — đo trên DiLink3 2026-07-30, cast VietMap
+ *     (docs/diagnostics/cast-stop-recovering-stuck-2026-07-30.md).
+ *   - "intent has been delivered to currently running top-most instance." — đo trên DiLink3 2026-07-31,
+ *     REASSERT_ON_CLUSTER gửi lại intent cho Google Maps khi task đã nằm sẵn trên cụm (ledger thật:
+ *     bước `reassert-composite` ISSUED, `am stack list` xác nhận task ĐÃ visible=true trên display-1
+ *     đúng lúc "unknown effect" này xảy ra) — đúng câu hỏi mở mà review 2026-07-30 nêu ("chưa biết"),
+ *     giờ đã có bằng chứng.
+ *
+ * Trước khi có whitelist này, MỌI stderr không rỗng — kể cả các cảnh báo lành trên — đều bị coi là
+ * UnknownEffect, đẩy một transaction vốn ĐÃ thành công (cửa sổ đã lên cụm thật) sang RECOVERING; nếu
+ * epoch bền trôi qua trước khi recovery kịp chạy thì transaction đó kẹt vĩnh viễn, mọi cú bấm Dừng sau
+ * đó chỉ thấy lại "Đang xử lý" vì transaction cũ chưa từng đóng.
+ *
+ * So khớp bằng CHÍNH XÁC (trim rồi so bằng tập hợp), không phải `contains` lỏng lẻo: mỗi phần tử đã có
+ * bằng chứng lành từ dump thật, không phải đoán trước mọi cảnh báo mà `am` có thể in ra.
+ */
+private val BENIGN_LAUNCH_WARNINGS = setOf(
+    "Warning: Activity not started, its current task has been brought to the front",
+    "Warning: Activity not started, intent has been delivered to currently running top-most instance.",
+)
+
+fun classifyMutationShellResult(exitCode: Int, stdout: String, stderr: String): MutationResult {
+    val trimmed = stderr.trim()
+    val benign = trimmed in BENIGN_LAUNCH_WARNINGS
+    if (exitCode != 0 || !(stderr.isBlank() || benign)) {
+        return MutationResult.UnknownEffect(
+            stderr.takeIf(String::isNotBlank)?.take(200) ?: "shell exit $exitCode after dispatch",
+        )
+    }
+    // Cảnh báo lành vẫn phải NHÌN THẤY được, chỉ là không còn bị coi là lỗi: nó là dấu duy nhất phân
+    // biệt "task cũ được mang lên trước/gửi lại intent" với "khởi tạo mới". Chính các chuỗi này là đầu
+    // mối duy nhất tìm ra bug 2026-07-30/31; nuốt sạch nó khỏi evidence là tự bịt mắt cho lần điều tra
+    // sau (evidence chỉ đi vào CastOperationLog qua CastExecutor.resultLabel, không nằm trong ledger bền).
+    val evidence = if (benign) {
+        listOf(stdout.trim(), trimmed).filter(String::isNotBlank).joinToString(" | ")
+    } else stdout
+    return MutationResult.Observed(evidence.take(200))
+}
 
 data class NamedClusterDisplay(
     val id: Int,

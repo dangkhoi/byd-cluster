@@ -203,7 +203,11 @@ class MainActivityCastControllerWiringTest {
             tap.indexOf("project(token)") < tap.indexOf("requestStopOnce()"),
             "phải đọc TRƯỚC rồi mới rẽ nhánh Dừng",
         )
-        assertTrue(tap.contains("fresh?.projecting ?: (lastProjection?.projecting == true)"))
+        assertTrue(tap.contains("fresh?.stopOnTap ?: (lastProjection?.stopOnTap == true)"))
+        // …và nó phải hỏi HỢP ĐỒNG Stop, không hỏi tín hiệu tô màu: `projecting` đòi thêm phiên đã xác
+        // minh (§R3 2026-07-31), nên dùng nó ở đây là tự khoá đường Stop đúng lúc cụm kẹt ở một nhánh
+        // phục hồi — xem KDoc của `BubbleProjection.stopOnTap` và `CastBubbleProjectionTest`.
+        assertTrue(!tap.contains("fresh?.projecting"), "cú chạm không được quyết định bằng tín hiệu tô màu")
         // Chốt cục bộ phải tự hết hạn, không được khoá đường phục hồi (CLAUDE.md §3).
         assertTrue(bubble.contains("private fun stopAckPending(): Boolean"))
         assertTrue(bubble.contains("if (dispatchInFlight.get() || stopAckPending()) { toast(\"Đang xử lý…\"); return }"))
