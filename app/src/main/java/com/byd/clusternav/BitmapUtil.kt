@@ -1,5 +1,6 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.navigation.NavFormat
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable

@@ -4,8 +4,10 @@ import android.content.Context
 
 /** Lưu lựa chọn người dùng (bật/tắt đẩy cụm + chế độ chọn nguồn). Đọc trực tiếp trong listener. */
 object Prefs {
-    const val AUTO = 0
-    const val PREFER_GMAPS = 2
+    // Giá trị thật nằm ở :core (NavSourceMode) để bộ quyết định không phải phụ thuộc Android chỉ vì hai
+    // con số. Giữ alias ở đây nên caller cũ không đổi và dữ liệu đã lưu vẫn đọc đúng.
+    const val AUTO = com.byd.clusternav.navigation.NavSourceMode.AUTO
+    const val PREFER_GMAPS = com.byd.clusternav.navigation.NavSourceMode.PREFER_GMAPS
 
     private const val FILE = "clusternav_prefs"
     private const val K_ENABLED = "enabled"
@@ -26,6 +28,10 @@ object Prefs {
 
     // ★ 2026-07-13: MẶC ĐỊNH TẮT. RE DashCast/OpenBYD: HỌ KHÔNG nội suy — gửi cự ly RAW từ noti, để FIRMWARE cụm tự
     // animate đếm-lùi. Nội suy app-side (baseline−traveled theo tốc độ mỗi 400ms) ĐÁNH NHAU với firmware → "số nhảy
+
+    // Cluster-lane output is independently switchable while the shared Navigation session/HUD remain active.
+    fun lane(ctx: Context): Boolean = sp(ctx).getBoolean("lane", true)
+    fun setLane(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("lane", v).apply()
     // tán loạn". Tắt = gửi raw → mượt như họ. Giữ toggle cho ai muốn thử lại.
     fun interpolate(ctx: Context): Boolean = sp(ctx).getBoolean("interpolate", false)
     fun setInterpolate(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("interpolate", v).apply()
@@ -39,11 +45,6 @@ object Prefs {
     // Chỉ chạy khi GMaps đang HIỆN trên màn; bị app khác (YouTube) che -> tự câm, nội suy gánh tiếp.
     fun accBooster(ctx: Context): Boolean = sp(ctx).getBoolean("acc_booster", true)
     fun setAccBooster(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("acc_booster", v).apply()
-
-    // Tự bật GPS hiệu chỉnh (dead-reckoning hầm) khi mở app / khởi động máy. Mặc định BẬT. User tắt nút → lưu false
-    // để phiên sau không tự bật lại.
-    fun gpsAuto(ctx: Context): Boolean = sp(ctx).getBoolean("gps_auto", true)
-    fun setGpsAuto(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("gps_auto", v).apply()
 
     // Tự hiện NÚT NỔI (bong bóng chiếu) khi mở app / khởi động máy. Mặc định BẬT (user: "luôn hiện bubble").
     // Cần quyền overlay 1 lần; chưa cấp thì service tự báo. User tắt → lưu false.
