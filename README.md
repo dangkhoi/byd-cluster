@@ -16,14 +16,15 @@ The tracks may share one APK as packaging, but they must not share runtime contr
 
 ## Downloads and installation
 
-Public installation guidance is intentionally withdrawn during the re-baseline:
+**Current version: 0.99** — [`apk/ClusterNav-0.99-release.apk`](apk/ClusterNav-0.99-release.apk)
 
-- Existing APKs under `apk/` are immutable **historical/unsupported evidence artifacts**.
-- Their filenames do not prove source provenance, enabled flags, vehicle compatibility or on-car validation.
-- Do not install or relabel them as a current release.
-- A future release link may be published only with exact source identity, unique APK SHA-256/signature/version/flags, off-car evidence and exact-build on-car PASS.
+Features:
+- **Cluster Cast** — projection-first: open app → cluster ready instantly; tap floating button to cast foreground app to cluster; tap again to return.
+- **CarPlay / Android Auto** — always full-screen, no resize.
+- **Regular apps** — full or split, adjustable size.
+- **Navigation + HUD** — one navigation source with independent cluster-lane and HUD outputs.
 
-See [`docs/HISTORICAL-ARTIFACTS.md`](docs/HISTORICAL-ARTIFACTS.md) for the quarantine inventory.
+> ⚠️ This is a hobby experiment. No driving-safety, compatibility, reversibility, or production-readiness claim. Install at your own risk. Not affiliated with BYD.
 
 ## Documentation
 
@@ -38,7 +39,7 @@ Older files under `docs/review/`, `docs/diagnostics/`, `docs/reference/`, and pr
 
 ## Developer build context
 
-The Android project historically uses JDK 17 and Android SDK platform/build-tools 34. A local build is not release evidence and must not overwrite any existing APK. Under the current execution plan, the project owner requires separate build authorization naming a unique output path and exact-source identity before an agent builds an APK.
+The Android project uses JDK 17 and Android SDK platform/build-tools 34. The Cast subsystem uses a simplified projection-first architecture: 4-state model (IDLE → PROJECTING → CASTING → RETURNING), single floating button for cast/return, no complex state machines or recovery pipelines. Build with `./gradlew :app:assembleRelease`.
 
 ## Safety and evidence boundaries
 
