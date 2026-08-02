@@ -99,7 +99,7 @@ class MainActivity : Activity() {
             Prefs.setInterpolate(this, enabled)
             Prefs.setAccBooster(this, enabled)
             if (enabled && !accessibilityBoosterGranted()) {
-                Toast.makeText(this, "Cần bật ClusterNav trong Trợ năng để đọc cự ly từ màn Maps", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, Lang.t("Cần bật ClusterNav trong Trợ năng để đọc cự ly từ màn Maps", "ClusterNav needs to be enabled in Accessibility to read distance from Maps"), Toast.LENGTH_LONG).show()
                 runCatching {
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
@@ -145,8 +145,8 @@ class MainActivity : Activity() {
         val navigation = NavRepository.snapshot(applicationContext)
         val source = navigation.source
         val sourceText = when (val freshness = source.freshness) {
-            is NavigationFreshness.Fresh -> source.identity?.displayName ?: source.identity?.packageName ?: "Đang dẫn đường"
-            is NavigationFreshness.Stale -> "Nguồn đã cũ · ${freshness.reason.readable()}"
+            is NavigationFreshness.Fresh -> source.identity?.displayName ?: source.identity?.packageName ?: Lang.t("Đang dẫn đường", "Navigating")
+            is NavigationFreshness.Stale -> Lang.t("Nguồn đã cũ", "Source stale") + " · ${freshness.reason.readable()}"
             is NavigationFreshness.Unknown -> when (permission) {
                 NavigationPermission.MISSING -> getString(R.string.status_need_perm)
                 else -> freshness.reason.readable()
@@ -154,7 +154,7 @@ class MainActivity : Activity() {
         }
         navStatus.text = sourceText
         navDot.tint(if (source.freshness is NavigationFreshness.Fresh) R.color.ok_green else if (permission == NavigationPermission.MISSING) R.color.err_red else R.color.warn_amber)
-        laneStatus.text = "Cụm: ${navigation.clusterLane.status.label()}"
+        laneStatus.text = "${Lang.t("Cụm", "Cluster")}: ${navigation.clusterLane.status.label()}"
         hudStatus.text = "HUD: ${navigation.hud.status.label()}"
         findViewById<Button>(R.id.btn_reconnect_nav).visibility =
             if (permission != NavigationPermission.GRANTED) View.VISIBLE else View.GONE
@@ -165,16 +165,16 @@ class MainActivity : Activity() {
     }
 
     private fun NavigationOutputStatus.label(): String = when (this) {
-        NavigationOutputStatus.OFF -> "tắt"
-        NavigationOutputStatus.STARTING -> "đang khởi động"
-        NavigationOutputStatus.EMITTING -> "đang gửi"
+        NavigationOutputStatus.OFF -> Lang.t("tắt", "off")
+        NavigationOutputStatus.STARTING -> Lang.t("đang khởi động", "starting")
+        NavigationOutputStatus.EMITTING -> Lang.t("đang gửi", "emitting")
         // Trạng thái này KHÔNG BAO GIỜ xảy ra khi chạy thật: `markDisplayVerified` chỉ được gọi từ test,
         // không có producer nào trong `:app`. Giữ nhánh cho `when` vét cạn, nhưng nói đúng cơ sở — theo Q1
         // (đóng ngày 2026-07-27) không có tín hiệu nào của Android xác nhận cụm đang hiện gì, nên chữ
         // "đã xác minh" ở đây sẽ là tuyên bố không ai đặt được.
-        NavigationOutputStatus.DISPLAY_VERIFIED -> "cụm báo đã nhận"
-        NavigationOutputStatus.STALE -> "đã cũ"
-        is NavigationOutputStatus.FAULT -> "lỗi: ${reason.readable()}"
+        NavigationOutputStatus.DISPLAY_VERIFIED -> Lang.t("cụm báo đã nhận", "cluster acknowledged")
+        NavigationOutputStatus.STALE -> Lang.t("đã cũ", "stale")
+        is NavigationOutputStatus.FAULT -> Lang.t("lỗi: ${reason.readable()}", "error: ${reason.readable()}")
     }
 
     /**
@@ -185,24 +185,24 @@ class MainActivity : Activity() {
      * người dùng. `when` vét cạn nên thêm giá trị mới là trình dịch bắt ngay, không lặng lẽ rơi về tên thô.
      */
     private fun NavigationSourceReason.readable(): String = when (this) {
-        NavigationSourceReason.PERMISSION_UNKNOWN -> "Chưa rõ quyền notification"
-        NavigationSourceReason.PERMISSION_MISSING -> "Cần cấp quyền notification"
-        NavigationSourceReason.NO_ACTIVE_SESSION -> "Chưa có phiên dẫn đường"
-        NavigationSourceReason.WAITING_FOR_FRAME -> "Đang chờ dữ liệu đầu tiên"
-        NavigationSourceReason.PROCESS_REHYDRATED_UNVERIFIED -> "App vừa khởi động lại, chưa xác nhận nguồn"
-        NavigationSourceReason.FRAME_EXPIRED -> "Dữ liệu quá hạn"
-        NavigationSourceReason.SOURCE_DISCONNECTED -> "Mất kết nối với app dẫn đường"
-        NavigationSourceReason.SOURCE_CHANGED -> "Nguồn dẫn đường vừa đổi"
+        NavigationSourceReason.PERMISSION_UNKNOWN -> Lang.t("Chưa rõ quyền notification", "Notification permission unknown")
+        NavigationSourceReason.PERMISSION_MISSING -> Lang.t("Cần cấp quyền notification", "Notification permission required")
+        NavigationSourceReason.NO_ACTIVE_SESSION -> Lang.t("Chưa có phiên dẫn đường", "No active navigation session")
+        NavigationSourceReason.WAITING_FOR_FRAME -> Lang.t("Đang chờ dữ liệu đầu tiên", "Waiting for first data frame")
+        NavigationSourceReason.PROCESS_REHYDRATED_UNVERIFIED -> Lang.t("App vừa khởi động lại, chưa xác nhận nguồn", "App just restarted, source unverified")
+        NavigationSourceReason.FRAME_EXPIRED -> Lang.t("Dữ liệu quá hạn", "Data expired")
+        NavigationSourceReason.SOURCE_DISCONNECTED -> Lang.t("Mất kết nối với app dẫn đường", "Navigation app disconnected")
+        NavigationSourceReason.SOURCE_CHANGED -> Lang.t("Nguồn dẫn đường vừa đổi", "Navigation source changed")
     }
 
     /** Lý do đầu ra lỗi, viết cho người đọc — cùng lý do như trên. */
     private fun NavigationOutputFailureReason.readable(): String = when (this) {
-        NavigationOutputFailureReason.DELIVERY_THROWN -> "gửi thất bại"
-        NavigationOutputFailureReason.DEADLINE_EXCEEDED -> "quá thời gian chờ"
-        NavigationOutputFailureReason.QUEUE_SATURATED -> "hàng chờ đã đầy"
-        NavigationOutputFailureReason.EXECUTOR_REJECTED -> "luồng gửi đã dừng"
-        NavigationOutputFailureReason.DISPLAY_ACK_REJECTED -> "cụm từ chối xác nhận"
-        NavigationOutputFailureReason.INTERNAL_CONTRACT_ERROR -> "sai hợp đồng nội bộ"
+        NavigationOutputFailureReason.DELIVERY_THROWN -> Lang.t("gửi thất bại", "delivery failed")
+        NavigationOutputFailureReason.DEADLINE_EXCEEDED -> Lang.t("quá thời gian chờ", "deadline exceeded")
+        NavigationOutputFailureReason.QUEUE_SATURATED -> Lang.t("hàng chờ đã đầy", "queue saturated")
+        NavigationOutputFailureReason.EXECUTOR_REJECTED -> Lang.t("luồng gửi đã dừng", "executor rejected")
+        NavigationOutputFailureReason.DISPLAY_ACK_REJECTED -> Lang.t("cụm từ chối xác nhận", "cluster acknowledgement rejected")
+        NavigationOutputFailureReason.INTERNAL_CONTRACT_ERROR -> Lang.t("sai hợp đồng nội bộ", "internal contract error")
     }
 
     /** Service trợ năng đã được hệ thống bật chưa — công tắc chỉ ghi tuỳ chọn, quyền thì do người dùng cấp. */

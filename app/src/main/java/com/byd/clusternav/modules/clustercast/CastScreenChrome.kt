@@ -3,6 +3,7 @@ package com.byd.clusternav.modules.clustercast
 import android.app.Activity
 import android.view.View
 import android.widget.TextView
+import com.byd.clusternav.Lang
 import com.byd.clusternav.R
 
 /**
@@ -18,8 +19,8 @@ import com.byd.clusternav.R
  */
 object CastScreenChrome {
 
-    private const val CLOSED = "Khắc phục sự cố"
-    private const val OPEN = "Khắc phục sự cố — đang mở"
+    private val CLOSED get() = Lang.t("Khắc phục sự cố", "Troubleshooting")
+    private val OPEN get() = Lang.t("Khắc phục sự cố — đang mở", "Troubleshooting — open")
 
     fun bind(activity: Activity) {
         val toggle = activity.findViewById<TextView>(R.id.cast_recovery_toggle) ?: return
@@ -32,6 +33,6 @@ object CastScreenChrome {
         group.visibility = if (open) View.VISIBLE else View.GONE
         toggle.text = if (open) OPEN else CLOSED
         toggle.contentDescription =
-            if (open) "Đóng nhóm hành động khắc phục sự cố" else "Mở nhóm hành động khắc phục sự cố"
+            if (open) Lang.t("Đóng nhóm hành động khắc phục sự cố", "Close troubleshooting actions") else Lang.t("Mở nhóm hành động khắc phục sự cố", "Open troubleshooting actions")
     }
 }

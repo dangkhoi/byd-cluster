@@ -10,6 +10,7 @@ import android.widget.FrameLayout
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import com.byd.clusternav.Lang
 import com.byd.clusternav.R
 import com.byd.clusternav.cast.platform.CastAndroidLifecycle
 import com.byd.clusternav.cast.platform.CastAndroidRuntime
@@ -315,7 +316,7 @@ internal class MainActivityCastController(private val activity: Activity) {
     // --- Cast/Stop ---
 
     private fun executeCast(pkg: String) = runOperation(
-        "Đang xác minh target và chuẩn bị Cluster Cast…",
+        Lang.t("Đang xác minh target và chuẩn bị Cluster Cast…", "Verifying target and preparing Cluster Cast…"),
         block = { facade.runManualIntent(pkg, preferredDensityDpi = catalog.clusterDensityDpi(pkg), clusterStyle = catalog.clusterStyle(pkg)).statusMessage() },
         // Một ý định bị xếp hàng (transaction cũ còn chạy) phải được rút ngay sau khi lượt này xong,
         // nếu không nó nằm lại trong store bền và chặn tự-chiếu-khi-khởi-động mãi mãi — xem
@@ -332,7 +333,7 @@ internal class MainActivityCastController(private val activity: Activity) {
 
     private fun executeStop() {
         operationStatus.clearAll(); statusTimers.cancelStatusExpiry()
-        status.text = "Đã nhận yêu cầu dừng · đang fence transport…"
+        status.text = Lang.t("Đã nhận yêu cầu dừng · đang fence transport…", "Stop request received · fencing transport…")
         val requestedAt = Instant.now(); val requestSequence = ++stopSequence
         stopRequestedAt = requestedAt
         statusTimers.scheduleStopAckRefresh(requestedAt, facade.stopAcknowledgementGraceMillis()) { stopRequestedAt == it }
@@ -343,16 +344,16 @@ internal class MainActivityCastController(private val activity: Activity) {
                 postUi {
                     if (requestSequence != stopSequence) return@postUi
                     if (stopRequestedAt == requestedAt) stopRequestedAt = null
-                    statusTimers.cancelStopAckRefresh(); toast("Không thể lưu yêu cầu Stop")
+                    statusTimers.cancelStopAckRefresh(); toast(Lang.t("Không thể lưu yêu cầu Stop", "Cannot save Stop request"))
                 }
                 return@stop
             }
             postUi {
                 if (requestSequence != stopSequence) return@postUi
                 if (stopRequestedAt == requestedAt) stopRequestedAt = null
-                statusTimers.cancelStopAckRefresh(); toast("Đã ghi yêu cầu Stop"); refresh()
+                statusTimers.cancelStopAckRefresh(); toast(Lang.t("Đã ghi yêu cầu Stop", "Stop request saved")); refresh()
             }
-            val message = if (accepted.transaction != null) "Đã ghi Stop · đang chờ hiệu ứng lệnh cũ hội tụ"
+            val message = if (accepted.transaction != null) Lang.t("Đã ghi Stop · đang chờ hiệu ứng lệnh cũ hội tụ", "Stop saved · waiting for previous command to converge")
                 else continueStopAfterAcknowledgement()
             postUi { if (requestSequence == stopSequence) toast(message); refresh() }
         }
@@ -366,17 +367,17 @@ internal class MainActivityCastController(private val activity: Activity) {
     private fun continueStopAfterAcknowledgement(): String =
         facade.continueStopAfterAcknowledgement { pkg -> catalog.evidence(pkg, facade.phoneSession(pkg)) }
 
-    private fun applyGeometry(geometry: AcceptedGeometry) = runOperation("Đang áp geometry…", {
+    private fun applyGeometry(geometry: AcceptedGeometry) = runOperation(Lang.t("Đang áp geometry…", "Applying geometry…"), {
         when (val outcome = facade.applyGeometry(
             geometry,
             installed = { pkg -> runCatching { activity.packageManager.getPackageInfo(pkg, 0) }.isSuccess },
             hasLauncher = { pkg -> activity.packageManager.getLaunchIntentForPackage(pkg) != null },
         )) {
-            CastFacade.GeometryOutcome.Applied -> "Đã áp và đọc lại được geometry"
-            is CastFacade.GeometryOutcome.NotVerified -> "Geometry chưa xác minh: ${outcome.reason}"
+            CastFacade.GeometryOutcome.Applied -> Lang.t("Đã áp và đọc lại được geometry", "Geometry applied and verified")
+            is CastFacade.GeometryOutcome.NotVerified -> Lang.t("Geometry chưa xác minh: ${outcome.reason}", "Geometry not verified: ${outcome.reason}")
             is CastFacade.GeometryOutcome.Rejected -> outcome.reason
-            is CastFacade.GeometryOutcome.Blocked -> "Geometry bị chặn: ${outcome.reason}"
-            is CastFacade.GeometryOutcome.RecoveryRequired -> "Geometry cần phục hồi: ${outcome.reason}"
+            is CastFacade.GeometryOutcome.Blocked -> Lang.t("Geometry bị chặn: ${outcome.reason}", "Geometry blocked: ${outcome.reason}")
+            is CastFacade.GeometryOutcome.RecoveryRequired -> Lang.t("Geometry cần phục hồi: ${outcome.reason}", "Geometry requires recovery: ${outcome.reason}")
         }
     })
 
@@ -384,38 +385,38 @@ internal class MainActivityCastController(private val activity: Activity) {
         work.misc {
             val envelope = facade.envelope()
             val pkg = envelope?.pendingPackage ?: envelope?.stableSession?.activeTarget?.packageName
-            postUi { if (pkg == null) toast("Chưa có app nào để thử kết nối lại") else executeCast(pkg) }
+            postUi { if (pkg == null) toast(Lang.t("Chưa có app nào để thử kết nối lại", "No app to retry connection")) else executeCast(pkg) }
         }
     }
 
     private fun confirmEligibleRecovery() {
         android.app.AlertDialog.Builder(activity)
-            .setTitle("Phục hồi một lần?")
-            .setMessage("Chỉ tiếp tục sau khi điện thoại đã ngắt. Thao tác có thể force-stop đúng tiến trình projection bị kẹt và không được lặp lại trong transaction này.")
-            .setNegativeButton("Hủy", null)
-            .setPositiveButton("Xác nhận phục hồi") { _, _ -> executeEligibleRecovery() }
+            .setTitle(Lang.t("Phục hồi một lần?", "Recover once?"))
+            .setMessage(Lang.t("Chỉ tiếp tục sau khi điện thoại đã ngắt. Thao tác có thể force-stop đúng tiến trình projection bị kẹt và không được lặp lại trong transaction này.", "Only proceed after the phone is disconnected. This may force-stop the stuck projection process and cannot be repeated in this transaction."))
+            .setNegativeButton(Lang.t("Hủy", "Cancel"), null)
+            .setPositiveButton(Lang.t("Xác nhận phục hồi", "Confirm recovery")) { _, _ -> executeEligibleRecovery() }
             .show()
     }
 
-    private fun executeEligibleRecovery() = runOperation("Đang xác minh điều kiện phục hồi…", {
-        val first = facade.observedState() ?: return@runOperation "Không đọc được mẫu WM/AM thứ nhất"
+    private fun executeEligibleRecovery() = runOperation(Lang.t("Đang xác minh điều kiện phục hồi…", "Verifying recovery conditions…"), {
+        val first = facade.observedState() ?: return@runOperation Lang.t("Không đọc được mẫu WM/AM thứ nhất", "Cannot read first WM/AM sample")
         Thread.sleep(250)
-        val second = facade.observedState() ?: return@runOperation "Không đọc được mẫu WM/AM thứ hai"
-        if (first != second) return@runOperation "Hai mẫu chưa ổn định; không phát lệnh phục hồi"
+        val second = facade.observedState() ?: return@runOperation Lang.t("Không đọc được mẫu WM/AM thứ hai", "Cannot read second WM/AM sample")
+        if (first != second) return@runOperation Lang.t("Hai mẫu chưa ổn định; không phát lệnh phục hồi", "Samples not stable; recovery command not issued")
         val pkg = second.protectedResidue?.packageName ?: second.target?.packageName
-            ?: return@runOperation "Không xác định được owner projection"
+            ?: return@runOperation Lang.t("Không xác định được owner projection", "Cannot determine projection owner")
         val disconnected = facade.phoneSession(pkg)
-        if (disconnected != false) return@runOperation "Chưa chứng minh phiên điện thoại đã ngắt"
+        if (disconnected != false) return@runOperation Lang.t("Chưa chứng minh phiên điện thoại đã ngắt", "Phone session disconnect not proven")
         val proof = DisconnectedSinkRecoveryProof(
             pkg, first, second, phoneDisconnected = true,
             projectionComponent = true, consequenceConfirmed = true,
         )
         val plan = facade.planRecover(pkg, proof, catalog.evidence(pkg, disconnected))
         when (val outcome = facade.executeAndSettle(plan, pkg)) {
-            is CastFacade.Outcome.Verified -> "Đã phục hồi và xác minh"
-            is CastFacade.Outcome.NotVerified -> "Phục hồi chưa hội tụ; transaction được giữ để xử lý an toàn"
-            is CastFacade.Outcome.RecoveryRequired -> "Cần phục hồi an toàn: ${outcome.reason}"
-            is CastFacade.Outcome.Blocked -> "Phục hồi bị chặn: ${outcome.reason}"
+            is CastFacade.Outcome.Verified -> Lang.t("Đã phục hồi và xác minh", "Recovery complete and verified")
+            is CastFacade.Outcome.NotVerified -> Lang.t("Phục hồi chưa hội tụ; transaction được giữ để xử lý an toàn", "Recovery not converged; transaction held for safe handling")
+            is CastFacade.Outcome.RecoveryRequired -> Lang.t("Cần phục hồi an toàn: ${outcome.reason}", "Safe recovery required: ${outcome.reason}")
+            is CastFacade.Outcome.Blocked -> Lang.t("Phục hồi bị chặn: ${outcome.reason}", "Recovery blocked: ${outcome.reason}")
         }
     })
 
@@ -425,7 +426,7 @@ internal class MainActivityCastController(private val activity: Activity) {
         statusTimers.cancelStatusExpiry()
         refresh()
         work.operation {
-            val message = runCatching(block).getOrElse { "Lỗi: ${it.message}" }
+            val message = runCatching(block).getOrElse { Lang.t("Lỗi: ${it.message}", "Error: ${it.message}") }
             work.finishMutation(mutationRevision)
             if (!operationStatus.complete(token, message, Instant.now())) return@operation
             postUi {

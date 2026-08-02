@@ -2,6 +2,7 @@ package com.byd.clusternav.modules.clustercast
 
 import android.app.Activity
 import android.widget.Button
+import com.byd.clusternav.Lang
 
 /**
  * Nút cứu hộ "Trả cụm về đồng hồ" — hộp thoại xác nhận + lượt chạy nền + nói đúng ba kết cục.
@@ -53,13 +54,15 @@ internal class CastClearClusterAction(
      */
     private fun confirm() {
         android.app.AlertDialog.Builder(activity)
-            .setTitle("Trả cụm về đồng hồ?")
-            .setMessage(
+            .setTitle(Lang.t("Trả cụm về đồng hồ?", "Return cluster to clock?"))
+            .setMessage(Lang.t(
                 "Đưa mọi app đang chiếm cụm về màn chính, rồi đóng đường chiếu để cụm hiện lại đồng hồ gốc.\n\n" +
                     "Dùng khi cụm bị kẹt và nút Dừng không ăn. Phiên chiếu hiện tại sẽ mất; chiếu lại được ngay sau đó.",
-            )
-            .setNegativeButton("Hủy", null)
-            .setPositiveButton("Trả cụm") { _, _ -> execute() }
+                "Move all apps occupying the cluster back to the main screen, then close the projection so the cluster shows the original clock.\n\n" +
+                    "Use when the cluster is stuck and the Stop button doesn't work. The current cast session will be lost; you can cast again immediately.",
+            ))
+            .setNegativeButton(Lang.t("Hủy", "Cancel"), null)
+            .setPositiveButton(Lang.t("Trả cụm", "Return cluster")) { _, _ -> execute() }
             .show()
     }
 
@@ -74,17 +77,17 @@ internal class CastClearClusterAction(
     private fun execute() {
         button?.isEnabled = false
         resetStatus()
-        showStatus("Đang trả cụm về đồng hồ…")
+        showStatus(Lang.t("Đang trả cụm về đồng hồ…", "Returning cluster to clock…"))
         background {
             val outcome = runCatching { facade.clearCluster() }.getOrElse { failure ->
-                CastFacade.ClusterClearOutcome.Blocked("Lỗi khi trả cụm: ${failure.message.orEmpty()}")
+                CastFacade.ClusterClearOutcome.Blocked(Lang.t("Lỗi khi trả cụm: ${failure.message.orEmpty()}", "Error returning cluster: ${failure.message.orEmpty()}"))
             }
             val message = when (outcome) {
                 is CastFacade.ClusterClearOutcome.Cleared ->
-                    if (outcome.returned.isEmpty()) "Đã đóng đường chiếu; cụm đã về đồng hồ"
-                    else "Đã trả ${outcome.returned.size} app về màn chính; cụm đã về đồng hồ"
-                is CastFacade.ClusterClearOutcome.Incomplete -> "CHƯA xong: ${outcome.reason}"
-                is CastFacade.ClusterClearOutcome.Blocked -> "Không trả được: ${outcome.reason}"
+                    if (outcome.returned.isEmpty()) Lang.t("Đã đóng đường chiếu; cụm đã về đồng hồ", "Projection closed; cluster returned to clock")
+                    else Lang.t("Đã trả ${outcome.returned.size} app về màn chính; cụm đã về đồng hồ", "Returned ${outcome.returned.size} app(s) to main screen; cluster returned to clock")
+                is CastFacade.ClusterClearOutcome.Incomplete -> Lang.t("CHƯA xong: ${outcome.reason}", "INCOMPLETE: ${outcome.reason}")
+                is CastFacade.ClusterClearOutcome.Blocked -> Lang.t("Không trả được: ${outcome.reason}", "Cannot return: ${outcome.reason}")
             }
             facade.recordOperation("clear-cluster: $message")
             postUi {
