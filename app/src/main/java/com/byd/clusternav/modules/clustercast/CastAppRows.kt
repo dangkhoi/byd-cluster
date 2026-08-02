@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.byd.clusternav.Lang
 import com.byd.clusternav.modules.clustercast.AppScale
 
 /**
@@ -64,11 +65,11 @@ object CastAppRows {
         val packageName = target?.first
         fun refreshText() {
             if (packageName == null) {
-                title.text = "Chưa có app nào đang chiếu"
-                summary.text = "Mở nút nổi để chiếu một app, khung sẽ hiện ở đây"
+                title.text = Lang.t("Chưa có app nào đang chiếu", "No app currently casting")
+                summary.text = Lang.t("Mở nút nổi để chiếu một app, khung sẽ hiện ở đây", "Use the floating button to cast an app, controls will appear here")
                 return
             }
-            title.text = "Cấu hình kích thước cho ${target.second}"
+            title.text = Lang.t("Cấu hình kích thước cho ${target.second}", "Size configuration for ${target.second}")
             summary.text = summarise(actions, packageName)
         }
         refreshText()
@@ -104,14 +105,14 @@ object CastAppRows {
         val enabled = packageName != null
         val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(
-            group(context, "Kích thước", enabled, listOf(
-                "Hẹp" to { resize(-2 * step, 0) }, "Rộng" to { resize(2 * step, 0) },
-                "Thấp" to { resize(0, -2 * step) }, "Cao" to { resize(0, 2 * step) },
+            group(context, Lang.t("Kích thước", "Size"), enabled, listOf(
+                Lang.t("Hẹp", "Narrow") to { resize(-2 * step, 0) }, Lang.t("Rộng", "Wide") to { resize(2 * step, 0) },
+                Lang.t("Thấp", "Short") to { resize(0, -2 * step) }, Lang.t("Cao", "Tall") to { resize(0, 2 * step) },
             )),
             weight(4f),
         )
         row.addView(
-            group(context, "Vị trí", enabled, listOf(
+            group(context, Lang.t("Vị trí", "Position"), enabled, listOf(
                 "◀" to { move(-step, 0) }, "▲" to { move(0, -step) },
                 "▼" to { move(0, step) }, "▶" to { move(step, 0) },
             )),
@@ -120,13 +121,13 @@ object CastAppRows {
         row.addView(
             // Nhãn theo Ý ĐỊNH, không theo số kỹ thuật. "－/＋" trên một đại lượng mà tài liệu từng ghi ngược
             // chiều là công thức chắc chắn gây nhầm. DPI cao = nội dung TO.
-            group(context, "Cỡ chữ", enabled, listOf(
-                "nhỏ" to { dpi(-AppScale.STEP_DPI) }, "to" to { dpi(AppScale.STEP_DPI) },
+            group(context, Lang.t("Cỡ chữ", "Text size"), enabled, listOf(
+                Lang.t("nhỏ", "small") to { dpi(-AppScale.STEP_DPI) }, Lang.t("to", "large") to { dpi(AppScale.STEP_DPI) },
             )),
             weight(2f),
         )
         row.addView(
-            group(context, "Khôi phục", enabled, listOf("↺" to { reset() })),
+            group(context, Lang.t("Khôi phục", "Reset"), enabled, listOf("↺" to { reset() })),
             weight(1.4f),
         )
         column.addView(row)
@@ -136,9 +137,9 @@ object CastAppRows {
     private fun summarise(actions: Actions, packageName: String): String {
         val scale = actions.scaleOf(packageName)
         val (w, h) = actions.clusterSize()
-        if (scale.isAuto) return "Khung: full cụm ${w}×$h · DPI ${scale.dpi}"
+        if (scale.isAuto) return Lang.t("Khung: full cụm ${w}×$h · DPI ${scale.dpi}", "Frame: full cluster ${w}×$h · DPI ${scale.dpi}")
         val bounds = scale.boundsOn(w, h)
-        return "Khung: ${bounds[2] - bounds[0]}×${bounds[3] - bounds[1]} tại (${bounds[0]},${bounds[1]}) · DPI ${scale.dpi}"
+        return Lang.t("Khung: ${bounds[2] - bounds[0]}×${bounds[3] - bounds[1]} tại (${bounds[0]},${bounds[1]}) · DPI ${scale.dpi}", "Frame: ${bounds[2] - bounds[0]}×${bounds[3] - bounds[1]} at (${bounds[0]},${bounds[1]}) · DPI ${scale.dpi}")
     }
 
     private fun group(

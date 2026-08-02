@@ -23,6 +23,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import com.byd.clusternav.Lang
 import com.byd.clusternav.R
 import com.byd.clusternav.modules.clustercast.v2.BubbleProjection
 import com.byd.clusternav.modules.clustercast.v2.BubbleZone
@@ -607,7 +608,7 @@ class FloatingBubbleService : Service() {
      * nút không phản hồi là thứ khiến người lái bấm dồn thêm trong lúc xe đang chạy.
      */
     private fun dispatchHalfZone(zone: BubbleZone) {
-        if (dispatchInFlight.get() || stopAckPending()) { toast("Đang xử lý…"); return }
+        if (dispatchInFlight.get() || stopAckPending()) { toast(Lang.t("Đang xử lý…", "Processing…")); return }
         if (!tapInFlight.compareAndSet(false, true)) return
         val token = generation.get()
         val started = background("cluster-cast-bubble-half-tap") {
@@ -630,7 +631,7 @@ class FloatingBubbleService : Service() {
                     return@background
                 }
                 if (foreignMutationInFlight()) {
-                    handler.post { if (!destroyed) toast("Đang có thao tác khác chạy — thử lại") }
+                    handler.post { if (!destroyed) toast(Lang.t("Đang có thao tác khác chạy — thử lại", "Another operation in progress — try again")) }
                     return@background
                 }
                 val excluded = setOfNotNull(packageName, homePackage())
@@ -642,7 +643,7 @@ class FloatingBubbleService : Service() {
                     if (foreground != null) {
                         dispatchTarget(foreground, zone)
                     } else {
-                        toast("Không xác định được app đang mở")
+                        toast(Lang.t("Không xác định được app đang mở", "Cannot determine foreground app"))
                     }
                 }
             } finally {
@@ -685,7 +686,7 @@ class FloatingBubbleService : Service() {
         val stopWouldReturnTheWrongApp = projection.measuredOccupants > 1 ||
             (occupant != null && active != null && occupant != active)
         if (stopWouldReturnTheWrongApp) {
-            toast("Chưa trả riêng được app ở ${CastBubbleProjection.zoneName(zone)} · dùng “Trả cụm về đồng hồ” ở màn hình chính")
+            toast(Lang.t("Chưa trả riêng được app ở ${CastBubbleProjection.zoneName(zone)} · dùng u201cTrả cụm về đồng hồu201d ở màn hình chính", "Cannot return individual app in ${CastBubbleProjection.zoneName(zone)} · use u201cReturn cluster to clocku201d on home screen"))
             return
         }
         requestStopOnce()
@@ -709,7 +710,7 @@ class FloatingBubbleService : Service() {
             is SimpleCastState.CastingFull, is SimpleCastState.CastingSplit -> {
                 // Currently casting — stop and return
                 SimpleCastRuntime.coordinator(applicationContext).dispatch(SimpleCastIntent.Stop())
-                toast("Đang trả app về…")
+                toast(Lang.t("Đang trả app về…", "Returning app…"))
                 return
             }
             is SimpleCastState.Idle -> {
@@ -721,9 +722,9 @@ class FloatingBubbleService : Service() {
                     val appType = AppMover.classifyApp(foreground)
                     SimpleCastRuntime.coordinator(applicationContext)
                         .dispatch(SimpleCastIntent.CastFull(foreground, appType))
-                    toast("Chiếu ${foreground.substringAfterLast('.')}…")
+                    toast(Lang.t("Chiếu ${foreground.substringAfterLast('.')}…", "Casting ${foreground.substringAfterLast('.')}…"))
                 } else {
-                    toast("Không xác định được app đang mở")
+                    toast(Lang.t("Không xác định được app đang mở", "Cannot determine foreground app"))
                 }
                 return
             }
@@ -733,7 +734,7 @@ class FloatingBubbleService : Service() {
 
         // Đang có lượt chạy dở thì NÓI ra, đừng nuốt cú chạm: nút không phản hồi là thứ khiến người lái
         // bấm dồn thêm trong lúc xe đang chạy.
-        if (dispatchInFlight.get() || stopAckPending()) { toast("Đang xử lý…"); return }
+        if (dispatchInFlight.get() || stopAckPending()) { toast(Lang.t("Đang xử lý…", "Processing…")); return }
         if (!tapInFlight.compareAndSet(false, true)) return
         val token = generation.get()
         val started = background("cluster-cast-bubble-tap") {
@@ -757,7 +758,7 @@ class FloatingBubbleService : Service() {
                     return@background
                 }
                 if (foreignMutationInFlight()) {
-                    handler.post { if (!destroyed) toast("Đang có thao tác khác chạy — thử lại") }
+                    handler.post { if (!destroyed) toast(Lang.t("Đang có thao tác khác chạy — thử lại", "Another operation in progress — try again")) }
                     return@background
                 }
                 val excluded = setOfNotNull(packageName, homePackage())
@@ -769,7 +770,7 @@ class FloatingBubbleService : Service() {
                     if (foreground != null) {
                         dispatchTarget(foreground)
                     } else {
-                        toast("Không xác định được app đang mở")
+                        toast(Lang.t("Không xác định được app đang mở", "Cannot determine foreground app"))
                     }
                 }
             } finally {
@@ -824,8 +825,8 @@ class FloatingBubbleService : Service() {
         // v0.57 báo ngay "đang chiếu…" vì lệnh mất vài giây; không có nó thì chạm xong tưởng máy treo.
         val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString() }
             .getOrDefault(packageName)
-        val into = if (zone == BubbleZone.FULL) "" else " vào ${CastBubbleProjection.zoneName(zone)}"
-        toast("Chiếu $label$into…")
+        val into = if (zone == BubbleZone.FULL) "" else Lang.t(" vào ${CastBubbleProjection.zoneName(zone)}", " to ${CastBubbleProjection.zoneName(zone)}")
+        toast(Lang.t("Chiếu $label$into…", "Casting $label$into…"))
         val token = generation.get()
         val started = background("cluster-cast-bubble-dispatch") {
             // Kết cục PHẢI nói ra. Bản trước `runCatching { … }` rồi bỏ cả kết quả lẫn lỗi: chiếu hỏng thì
@@ -849,7 +850,7 @@ class FloatingBubbleService : Service() {
                     ).statusMessage()
                 }
             }.onFailure { android.util.Log.e(TAG, "cast dispatch failed", it) }
-                .getOrElse { "Không chiếu được $label" }
+                .getOrElse { Lang.t("Không chiếu được $label", "Failed to cast $label") }
             dispatchInFlight.set(false)
             handler.post {
                 if (destroyed || token != generation.get()) return@post
@@ -883,13 +884,13 @@ class FloatingBubbleService : Service() {
             if (accepted != null && accepted.transaction == null) {
                 outcome = runCatching { continueStopAfterAcknowledgement() }
                     .onFailure { android.util.Log.e(TAG, "stop dispatch failed", it); dispatchFailed = true }
-                    .getOrElse { "Dừng chiếu thất bại" }
+                    .getOrElse { Lang.t("Dừng chiếu thất bại", "Failed to stop casting") }
             }
             handler.post {
                 if (destroyed || token != generation.get()) return@post
                 if (accepted == null) {
                     stopInFlight.set(false)
-                    toast("Không lưu được Stop")
+                    toast(Lang.t("Không lưu được Stop", "Failed to save Stop request"))
                 } else {
                     // Phát lệnh dọn dẹp hỏng thì chốt cục bộ phải nhả NGAY: giữ nó là khoá luôn cú chạm
                     // kế tiếp trong khi cụm vẫn còn app trên đó.
@@ -943,7 +944,7 @@ class FloatingBubbleService : Service() {
         return android.app.Notification.Builder(this, channel)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle("Cluster Cast V2")
-            .setContentText("Nhấn để mở điều khiển")
+            .setContentText(Lang.t("Nhấn để mở điều khiển", "Tap to open controls"))
             .setOngoing(true)
             .setContentIntent(pending)
             .build()
