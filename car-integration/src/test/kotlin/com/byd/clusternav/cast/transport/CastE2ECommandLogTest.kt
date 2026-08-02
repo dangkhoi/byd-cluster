@@ -5,6 +5,11 @@ import com.byd.clusternav.modules.clustercast.v2.CastIntentKind
 import com.byd.clusternav.modules.clustercast.v2.CastManualIntentResult
 import com.byd.clusternav.modules.clustercast.v2.CastManualTargetReader
 import com.byd.clusternav.modules.clustercast.v2.CastManualTargetSnapshot
+import com.byd.clusternav.modules.clustercast.v2.CastRect
+import com.byd.clusternav.modules.clustercast.v2.ClusterSlot
+import com.byd.clusternav.modules.clustercast.v2.ClusterSlotLayout
+import com.byd.clusternav.modules.clustercast.v2.ClusterSlotSide
+import com.byd.clusternav.modules.clustercast.v2.ClusterSplitRatio
 import com.byd.clusternav.modules.clustercast.v2.CommandKind
 import com.byd.clusternav.modules.clustercast.v2.ExecutionResult
 import com.byd.clusternav.modules.clustercast.v2.PlanResult
@@ -264,10 +269,115 @@ class CastE2ECommandLogTest {
         assertTrue(fitCalls.isNotEmpty(), "expected at least one FIT_CLUSTER_COMPOSITE dispatch")
         fitCalls.forEach {
             assertEquals(
-                "wm density 220 -d 2; (am task resize 42 0 0 1920 720 2>/dev/null) || wm overscan 0,90,0,90 -d 2",
+                "wm density 220 -d 2; (am task resize 42 0 90 1920 630 2>/dev/null) || wm overscan 0,90,0,90 -d 2",
                 it.shell,
                 "FIT_CLUSTER_COMPOSITE must fold the chosen preferredDensityDpi into an exact wm density prefix",
             )
+        }
+    }
+
+    /**
+     * MẮT XÍCH CUỐI của tính năng chiếu 2 app, khoá bằng ENCODER THẬT.
+     *
+     * `CastPlanner` gắn rect của ô vào `plan.geometry` với `profileId = ClusterSplit.SLOT_PROFILE_ID`.
+     * Trước 2026-08-01 nhánh `FIT_CLUSTER_COMPOSITE` BỎ QUA `geometry.bounds` và luôn resize toàn cụm —
+     * nên một lượt chiếu vào nửa cụm vẫn phát lệnh nhưng đặt sai khung, rồi trượt xác minh (rect quan sát
+     * được ≠ rect đã yêu cầu). Cả hai tầng trên đều đúng mà tính năng vẫn không chạy tới nơi: đúng lớp lỗi
+     * CLAUDE.md §8 canh ("compile xanh không có nghĩa là code chạy"), chỉ lộ ra ở chỗ nối cuối cùng.
+     *
+     * Rect dùng ở đây là rect ĐO THẬT trên xe đêm 31/7: nửa trái của cụm 1920×720 với dải nội dung
+     * [0,90]–[1920,810] ⇒ `[0,90][960,810]` (xem `CastClusterSlotTest`).
+     *
+     * Khoá thêm một điều nữa: yêu cầu ô KHÔNG được kèm đường lui `wm overscan`. Overscan là hiệu ứng cấp
+     * DISPLAY, không nhắm được vào một task — ngã về nó sẽ vừa không đặt được ô, vừa bóp khung app đang
+     * nằm cạnh. Không còn `||` thì `2>/dev/null` cũng phải biến mất, vì lúc đó stderr là tin thật.
+     */
+    @Test
+    fun `a slot request resizes to the slot rect, with no display-wide overscan fallback`() {
+        val target = "com.example.maps"
+        val world = CastVehicleWorld()
+        world.land(target, 2)
+        // Dải nội dung phải suy từ rect TASK thật, không phải khung display: đo trên xe, display báo
+        // [0,0][1920,720] còn mọi dòng task đều là [0,90][1920,810]. Cắt ô theo khung display là lệch
+        // đúng 90px (bug F3) và xác minh nghiêm ngặt sẽ trượt mọi lần.
+        val onCluster = e2eActive(target).copy(taskBounds = mapOf(7 to CastRect(0, 90, 1920, 810)))
+        val fixture = castE2EFixture(stable = e2eActiveSession(target), epoch = 4L, world = world)
+        fixture.scriptStates(onCluster, onCluster, onCluster)
+
+        val slotRect = CastRect(0, 90, 960, 810)
+        fixture.coordinator.runManualIntent(
+            target,
+            SealDl3BootstrapProfile.exactFacts,
+            CastManualTargetReader { CastManualTargetSnapshot(e2eNormalTargetEvidence(), installed = true, hasLauncher = true) },
+            preferredDensityDpi = null,
+            slotLayout = ClusterSlotLayout(
+                mapOf(target to ClusterSlot(ClusterSlotSide.LEFT, ClusterSplitRatio.EVEN)),
+            ),
+        )
+
+        val fitCalls = fixture.commands.filter { it.kind == CommandKind.FIT_CLUSTER_COMPOSITE }
+        assertTrue(fitCalls.isNotEmpty(), "expected at least one FIT_CLUSTER_COMPOSITE dispatch")
+        fitCalls.forEach {
+            assertEquals(
+                "am task resize 42 ${slotRect.left} ${slotRect.top} ${slotRect.right} ${slotRect.bottom}",
+                it.shell,
+                "a slot request must resize to the SLOT rect, not the whole cluster, and must not fall back " +
+                    "to display-wide overscan",
+            )
+            assertFalse(it.shell!!.contains("wm overscan"), "overscan would squeeze the app sharing the cluster")
+            assertFalse(it.shell!!.contains("2>/dev/null"), "no `||` branch left, so stderr is real news")
+        }
+    }
+
+    /**
+     * MẮT XÍCH CUỐI của lượt đặt app ĐẦU TIÊN vào một nửa cụm RỖNG — khoá bằng ENCODER THẬT, vì đây đúng
+     * là chỗ bản thiết kế mới có thể chết lặng mà hai tầng trên vẫn xanh.
+     *
+     * Cụm rỗng ⇒ không có dải vẽ nào đo được ⇒ ô được cắt từ khung DISPLAY, nên rect gửi đi là
+     * `0 0 960 720` chứ không phải `0 90 960 810`. Phép chặn rect trong `CastPlacementCommands` so trục
+     * NGANG tuyệt đối (`r.right <= size.first`) nhưng trục DỌC chỉ theo CHIỀU CAO
+     * (`(r.bottom - r.top) <= size.second`) — nó được viết như vậy cho ca "ô cắt từ dải vẽ" (cao 720, đáy
+     * 810 > 720). Test này chứng minh cùng phép chặn ấy cũng nhận ca "ô cắt từ khung display" (cao 720,
+     * đáy 720), tức KHÔNG cần đụng vào tầng transport để mở khoá tính năng.
+     *
+     * Nếu một bản sau siết trục dọc thành so tuyệt đối, `slot` sẽ thành `null`, lệnh lặng lẽ ngã về
+     * `0 0 1920 720` (toàn cụm) kèm đường lui `wm overscan` — app chiếm trọn cụm thay vì nửa trái, không
+     * một lỗi nào được báo. Đó chính là lớp hỏng mà test này canh.
+     */
+    @Test
+    fun `the first slot on an empty cluster dispatches the display-space rect, not the whole cluster`() {
+        val target = "com.example.maps"
+        val world = CastVehicleWorld()
+        // Hai sự thật khác nhau, cố ý không trộn — và đó chính là trình tự thật của một lượt đặt:
+        //  · QUAN SÁT lúc LẬP KẾ HOẠCH là cụm RỖNG (`e2eIdle()` ở dòng scriptStates) — đây là thứ khiến
+        //    planner cắt ô từ khung display thay vì từ một dải vẽ đo được;
+        //  · THẾ GIỚI mà rung `fit` đọc lúc PHÁT LỆNH đã có task trên cụm — vì các rung trước nó
+        //    (`PLACE_KEEP_SESSION`…) vừa đặt app lên đó. `FIT_CLUSTER_COMPOSITE` no-op khi task chưa đáp
+        //    xuống cụm (CastPlacementCommands.kt), nên không land ở đây là không kiểm được gì cả.
+        world.land(target, 2)
+        val landed = e2eActive(target).copy(taskBounds = mapOf(7 to CastRect(0, 0, 960, 720)))
+        val fixture = castE2EFixture(stable = e2eIdleSession(), epoch = 4L, world = world)
+        fixture.scriptStates(e2eIdle(), landed, landed)
+
+        fixture.coordinator.runManualIntent(
+            target,
+            SealDl3BootstrapProfile.exactFacts,
+            CastManualTargetReader { CastManualTargetSnapshot(e2eNormalTargetEvidence(), installed = true, hasLauncher = true) },
+            preferredDensityDpi = null,
+            slotLayout = ClusterSlotLayout(
+                mapOf(target to ClusterSlot(ClusterSlotSide.LEFT, ClusterSplitRatio.EVEN)),
+            ),
+        )
+
+        val fitCalls = fixture.commands.filter { it.kind == CommandKind.FIT_CLUSTER_COMPOSITE }
+        assertTrue(fitCalls.isNotEmpty(), "expected at least one FIT_CLUSTER_COMPOSITE dispatch")
+        fitCalls.forEach {
+            assertEquals(
+                "am task resize 42 0 0 960 720",
+                it.shell,
+                "an empty cluster cuts its slot from the display frame; the rect must survive the transport guard",
+            )
+            assertFalse(it.shell!!.contains("wm overscan"), "a slot has no display-wide fallback")
         }
     }
 
@@ -304,7 +414,7 @@ class CastE2ECommandLogTest {
         assertTrue(fitCalls.isNotEmpty(), "expected at least one FIT_CLUSTER_COMPOSITE dispatch")
         fitCalls.forEach {
             assertEquals(
-                "(am task resize 42 0 0 1920 720 2>/dev/null) || wm overscan 0,90,0,90 -d 2",
+                "(am task resize 42 0 90 1920 630 2>/dev/null) || wm overscan 0,90,0,90 -d 2",
                 it.shell,
                 "an out-of-range density must never be dispatched as a \"wm density\" fragment",
             )

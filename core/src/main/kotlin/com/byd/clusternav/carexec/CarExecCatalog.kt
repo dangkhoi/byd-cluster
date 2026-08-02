@@ -160,7 +160,10 @@ object CarExecCatalog {
             id = "place",
             feature = CarFeature.CLUSTER_CAST,
             purpose = "Đưa task của app lên display của cụm",
-            precondition = "biết display cụm; app đã cài",
+            // "ĐỖ" bắt buộc từ 2026-08-01: candidate leo thang `place.movestack` mang nhãn MAY_HANG_SYSTEM
+            // (sập system_server 3/3 lần, đo thật). Hai candidate đầu vẫn an toàn khi đang chạy, nhưng
+            // precondition được canh ở mức STEP nên phải nói theo candidate nguy hiểm nhất.
+            precondition = "xe ĐỖ (bước leo thang có thể treo hệ thống); biết display cụm; app đã cài",
             candidates = listOf(
                 StepCandidate(
                     id = "place.freeform-then-resize",
@@ -185,12 +188,32 @@ object CarExecCatalog {
                 ),
                 StepCandidate(
                     id = "place.movestack",
-                    purpose = "Đường leo thang khi hai cách trên không bám",
+                    purpose = "Đường leo thang khi hai cách trên không bám — ĐANG BỊ CẤM, xem fieldNote",
+                    // LỖI THAM SỐ, cố ý GIỮ NGUYÊN chuỗi: tham số thứ nhất của `am display move-stack`
+                    // là STACK id chứ không phải task id (ActivityManagerShellCommand.runDisplayMoveStack).
+                    // Không thêm placeholder {stackId} mới cho một lệnh đang bị CẤM DÙNG — sẽ là nối dây
+                    // cho thứ không ai được phép chạy. Ai gỡ lệnh cấm sau này phải sửa cả hai lỗi cùng lúc.
                     commands = listOf("am display move-stack {taskId} {display}"),
                     evidence = "task chuyển sang display cụm mà không tạo orphan",
                     verdictSource = VerdictSource.MEASURED,
-                    risk = CandidateRisk.READ_ONLY,
-                    fieldNote = "Chưa cần dùng lần nào trong bốn ca đã chứng minh; giữ làm escalation",
+                    // ĐO 2026-08-01 trên DiLink3, 3/3 lần: lệnh này làm system_server ném NPE giữa chừng
+                    // (TaskSnapshotController.createTaskSnapshot ← AppWindowToken.initializeChangeTransition
+                    // ← DisplayContent.moveStackToDisplay), task BIẾN MẤT khỏi hệ thống, phiên CarPlay
+                    // rớt hẳn phải cắm lại cáp. Nhãn READ_ONLY cũ là SAI NGHIÊM TRỌNG — nó nói với người
+                    // vận hành rằng lệnh này không đổi gì.
+                    //
+                    // Gốc: `DisplayContent.java:2401-2402` (AOSP android-10) gỡ stack khỏi display cũ
+                    // (⇒ TaskStack.mDisplayContent = null) rồi để sóng đổi cấu hình nổ TRONG LÚC gắn vào
+                    // display mới, trước khi mDisplayContent mới kịp được gán. Kích hoạt khi vượt ranh
+                    // giới FREEFORM — mà display 0 là fullscreen còn display cụm là freeform, nên lần
+                    // nào cũng vượt. Android 10 không có bản vá ở bất kỳ nhánh release nào.
+                    // Chi tiết: docs/diagnostics/carplay-aa-cluster-placement-research-2026-08-01.md
+                    risk = CandidateRisk.MAY_HANG_SYSTEM,
+                    fieldNote = "CẤM DÙNG cho tới khi có phép đo khác: sập system_server 3/3 lần (2026-08-01). " +
+                        "Hai lỗi phải sửa cùng lúc nếu gỡ cấm: (1) tham số 1 phải là STACK id, chuỗi hiện " +
+                        "tại truyền {taskId} là sai; (2) chọn đường khác. Đường thay thế cần đo là " +
+                        "`am stack move-task` — chuyển TASK vào stack đã nằm sẵn trên display đích, không " +
+                        "chuyển cả stack qua display, nên không rơi vào cửa sổ mDisplayContent=null.",
                 ),
             ),
         ),
@@ -673,7 +696,10 @@ object CarExecCatalog {
             id = "return-protected",
             feature = CarFeature.CLUSTER_CAST,
             purpose = "Trả app về màn giữa một cách nhẹ, kể cả khi nó cưỡng lại",
-            precondition = "app đang trên cụm",
+            // "ĐỖ" bắt buộc từ 2026-08-01: cùng lý do như step `place` — candidate leo thang
+            // `return.movestack-main` dùng `am display move-stack`, đã đo là sập system_server.
+            // Candidate đầu (`am start --display 0`) vẫn an toàn khi đang chạy.
+            precondition = "xe ĐỖ (bước leo thang có thể treo hệ thống); app đang trên cụm",
             candidates = listOf(
                 StepCandidate(
                     id = "return.gentle-main",
@@ -685,12 +711,19 @@ object CarExecCatalog {
                 ),
                 StepCandidate(
                     id = "return.movestack-main",
-                    purpose = "Đường leo thang nếu mở lại không đủ",
+                    purpose = "Đường leo thang nếu mở lại không đủ — ĐANG BỊ CẤM, xem fieldNote",
+                    // Cùng lỗi tham số như `place.movestack` (phải là STACK id) — giữ nguyên chuỗi vì
+                    // lệnh đang bị cấm; xem ghi chú ở đó.
                     commands = listOf("am display move-stack {taskId} 0"),
                     evidence = "task về display 0 mà không tạo orphan (đây là lệnh từng gây NPE ở V1)",
                     verdictSource = VerdictSource.MEASURED,
-                    risk = CandidateRisk.READ_ONLY,
-                    fieldNote = "V1: move-stack một task freeform đang hiện từng gây half-reparent",
+                    // Cùng lỗi framework với `place.movestack`. Đáng chú ý: fieldNote V1 dưới đây ghi đúng
+                    // điều kiện kích hoạt mà mãi 2026-08-01 mới đọc ra được từ source AOSP — "task
+                    // FREEFORM đang HIỆN" chính là hai guard trong `AppWindowToken.initializeChangeTransition`.
+                    // Một xác nhận độc lập từ hiện trường cũ, và là lý do nhãn READ_ONLY cũ càng khó chấp nhận.
+                    risk = CandidateRisk.MAY_HANG_SYSTEM,
+                    fieldNote = "V1: move-stack một task freeform đang hiện từng gây half-reparent. " +
+                        "Xác nhận lại 2026-08-01: sập system_server 3/3 lần, task biến mất khỏi hệ thống.",
                 ),
             ),
         ),

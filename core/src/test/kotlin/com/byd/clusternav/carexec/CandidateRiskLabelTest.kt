@@ -17,6 +17,11 @@ class CandidateRiskLabelTest {
     private val mutatingVerbs = listOf(
         "settings put", "setprop ", "pm disable", "pm enable", "pm install", "pm uninstall",
         "appops set", "am broadcast", "am start", "am task resize", "am stack move", "am force-stop",
+        // Thêm 2026-08-01 sau khi lưới này để lọt đúng lệnh nguy hiểm nhất trong catalog: hai candidate
+        // `am display move-stack …` mang nhãn READ_ONLY suốt một thời gian dài. Không khớp "am stack move"
+        // vì thứ tự từ khác hẳn ("am DISPLAY move-stack"). Bài học: liệt kê động từ bằng cách đọc lệnh
+        // THẬT trong catalog, đừng suy từ trí nhớ về cú pháp `am`.
+        "am display move-stack", "am display move",
         "input tap", "input swipe", "rm ", "mv ", "kill ",
     )
 

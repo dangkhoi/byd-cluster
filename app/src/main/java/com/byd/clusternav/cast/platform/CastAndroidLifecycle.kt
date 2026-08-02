@@ -83,6 +83,24 @@ object CastLifecycleMigration {
     ): CastSessionEnvelope {
         if (envelope.bootId == newBootId) return envelope
         val tx = envelope.transaction
+
+        // 2026-08-01: khi boot thay đổi VÀ cụm đã chứng minh trống → transaction cũ (nếu có) không
+        // còn ý nghĩa. Display cụm không sống qua reboot, nên mọi thứ transaction cũ nghĩ nó đang
+        // làm đã bốc hơi. Xoá cả transaction lẫn stopRequested để app không bị khoá vĩnh viễn.
+        // Đo sáng 01/8: ba lần install mới liên tiếp đều dính vì transaction RECOVERING + stop=1
+        // tồn dư qua reboot khoá mọi intent.
+        val a = (first as? ObservationValue.Known)?.value
+        val b = (second as? ObservationValue.Known)?.value
+        val clusterEmpty = a != null && a == b &&
+            a.coarseState == ObservedCoarseState.IDLE_CLEAN &&
+            a.occupants.isEmpty() && a.target == null && a.protectedResidue == null
+        if (tx != null && clusterEmpty) {
+            return revalidateStable(
+                envelope.copy(bootId = newBootId, transaction = null, stopRequested = false),
+                first, second, verifiedAtEpochMillis,
+            )
+        }
+
         if (tx != null) {
             return envelope.copy(
                 bootId = newBootId,
@@ -108,6 +126,22 @@ object CastLifecycleMigration {
         val stable = envelope.stableSession ?: return envelope
         val a = (first as? ObservationValue.Known)?.value
         val b = (second as? ObservationValue.Known)?.value
+
+        // 2026-08-01: khi cụm ĐÃ CHỨNG MINH là trống (IDLE_CLEAN, hai mẫu giống nhau) VÀ session cũ
+        // là RECOVERY_PENDING → không còn gì để recover, session cũ là dead weight. Xoá để bootstrap
+        // lại từ đầu lượt cast sau. Trước fix này: RECOVERY_PENDING + stopRequested tồn dư qua reboot
+        // khoá app vĩnh viễn — mọi cú bấm trả về "Stop bị chặn" mà không có đường nào thoát ngoài
+        // `pm clear`. Đo trên xe sáng 01/8: ba phiên liên tiếp đều dính.
+        //
+        // Cũng xoá stopRequested: Stop được yêu cầu cho phiên CŨ mà giờ đã không còn. Giữ nó lại là
+        // chặn mọi intent mới vô thời hạn.
+        if (stable.state == StableState.RECOVERY_PENDING &&
+            a != null && a == b && a.coarseState == ObservedCoarseState.IDLE_CLEAN &&
+            a.occupants.isEmpty() && a.target == null && a.protectedResidue == null
+        ) {
+            return envelope.copy(stableSession = null, stopRequested = false)
+        }
+
         val converged = a != null && a == b && when (stable.state) {
             StableState.IDLE_VERIFIED -> a.coarseState == ObservedCoarseState.IDLE_CLEAN &&
                 a.displayIdentity == stable.expectedDisplayIdentity && a.geometry == stable.baseline.geometry &&

@@ -35,11 +35,15 @@ class CastDiagnosticsContractTest {
             }
         assertTrue(receiver.contains("CastAndroidLifecycle.rehydrate"))
         // 2026-07-27: bubble dựng mô hình qua façade; hợp đồng giữ nguyên là nó chỉ render, không mutate.
-        assertTrue(bubble.contains("facade.renderModel()"))
+        // 2026-08-01 (T8): cả cụm việc "đọc bền + quan sát + occupancy theo ô" gộp vào MỘT lời gọi façade
+        // (`bubbleProjection`) thay cho `renderModel()` + tự ghép — xem KDoc `CastFacade.bubbleProjection`.
+        // Hợp đồng được khoá KHÔNG đổi: bề mặt này chỉ hỏi façade để VẼ, không tự chạm tầng dưới.
+        assertTrue(bubble.contains("facade.bubbleProjection {"))
+        assertFalse(bubble.contains("runtime.coordinator"), "bubble không được đi vòng qua façade")
         assertFalse(bubble.contains("ACTION_STOP"), "0.71 Bubble must not send a duplicate Activity Stop")
         // 2026-07-29: nút Stop riêng bị gỡ — một chạm trên vòng tròn quyết định cast/stop tuỳ trạng thái
         // (docs/specs/cast-simplified-active-app-toggle.html). Không còn STOP_MIN_DP.
-        assertTrue(bubble.contains("BUBBLE_SIZE_DP = 56"))
+        assertTrue(bubble.contains("BUBBLE_SIZE_DP = 30"))
         // 2026-07-27: bubble gọi Stop qua CastFacade. Hợp đồng cần giữ là thứ tự latch trước khi phát Stop.
         assertTrue(bubble.contains("facade.requestStop()"))
         assertTrue(bubble.contains("stopInFlight.compareAndSet(false, true)"))

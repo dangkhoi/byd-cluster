@@ -17,6 +17,8 @@ import com.byd.clusternav.cast.platform.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.v2.AcceptedGeometry
 import com.byd.clusternav.modules.clustercast.v2.CastAction
 import com.byd.clusternav.modules.clustercast.v2.DisconnectedSinkRecoveryProof
+import com.byd.clusternav.modules.clustercast.simplified.SimpleCastRuntime
+import com.byd.clusternav.modules.clustercast.simplified.SimpleCastState
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -92,15 +94,38 @@ internal class MainActivityCastController(private val activity: Activity) {
     private lateinit var phoneDisconnectButton: Button
     private lateinit var recoverOnceButton: Button
     private lateinit var physicalInstructionButton: Button
+    /** Nút cứu hộ "Trả cụm về đồng hồ" — logic ở [CastClearClusterAction], xem KDoc ở đó. */
+    private lateinit var clearCluster: CastClearClusterAction
     private lateinit var profileSetupButton: Button
     /** Chủ sở hữu ô tick + dropdown tự-chiếu, và là chỗ DUY NHẤT giữ danh sách app đã cài. */
     private lateinit var autoStart: CastAutoStartBinding
+
+    /**
+     * Dropdown tỉ lệ chia đôi cụm (§R6). Ở đây chứ không ở nút nổi vì nó là CÀI ĐẶT, không phải một cú
+     * chạm lúc lái: nút nổi chỉ có ba ô, mỗi ô một chạm, không menu (xem `CastAccessibilityTest`).
+     */
+    private lateinit var splitRatio: CastSplitRatioBinding
 
     fun onCreate() {
         catalog = CastAppCatalog(activity.applicationContext)
         runtime = CastAndroidRuntime.create(activity.applicationContext)
         facade = CastFacade.wrapping(runtime, catalog)
         refreshReader = CastActivityRefreshReader(runtime, catalog, operationStatus)
+
+        // 2026-08-02: simplified architecture — open projection on app start (R1).
+        // The simplified coordinator runs in parallel with V2; it auto-opens projection so the
+        // cluster is ready to receive apps immediately. V2 resetSessionForFreshBoot still runs
+        // for backward compatibility until full wiring is complete.
+        com.byd.clusternav.modules.clustercast.simplified.SimpleCastRuntime
+            .coordinator(activity.applicationContext).openProjection()
+
+        // 2026-08-01: "mở app = dọn sạch cluster, sẵn sàng cast" (chỉ đạo chủ dự án).
+        // 2026-08-02: "mở app = pristine, sẵn sàng cast" (chỉ đạo chủ dự án).
+        // Reset session về pristine — lượt cast tiếp sẽ chạy full bootstrap (mở projection 30/16/35).
+        // KHÔNG gọi clearCluster ở đây vì nó tạo transaction STOP phức tạp + race condition.
+        // Nếu có app tồn dư trên cụm → bootstrap sẽ từ chối (preflight check "display has task")
+        // → user bấm "Trả cụm về đồng hồ" thủ công 1 lần. Sau đó mọi lần mở app đều sạch.
+        work.misc { facade.resetSessionForFreshBoot() }
 
         status = activity.findViewById(R.id.txt_cast_status)
         statusDot = activity.findViewById(R.id.dot_cast)
@@ -118,17 +143,23 @@ internal class MainActivityCastController(private val activity: Activity) {
         }
         retryButton = activity.findViewById<Button>(R.id.cast_retry).apply { setOnClickListener { retryConnect() } }
         phoneDisconnectButton = activity.findViewById<Button>(R.id.cast_phone_disconnect).apply {
-            setOnClickListener { showPhoneDisconnectGuidance() }
+            setOnClickListener { CastGuidanceDialogs.phoneDisconnect(activity) }
         }
         recoverOnceButton = activity.findViewById<Button>(R.id.cast_recover_once).apply {
             setOnClickListener { confirmEligibleRecovery() }
         }
         physicalInstructionButton = activity.findViewById<Button>(R.id.cast_physical_instruction).apply {
-            setOnClickListener { showPhysicalInstruction() }
+            setOnClickListener { CastGuidanceDialogs.physicalRecovery(activity) }
         }
+        clearCluster = CastClearClusterAction(
+            activity, facade, { work.stop(it) }, { postUi(it) }, { toast(it) }, { status.text = it },
+            { operationStatus.clearAll(); statusTimers.cancelStatusExpiry() }, { refresh() },
+        ).also { it.bind(activity.findViewById(R.id.cast_clear_cluster)) }
         profileSetupButton = activity.findViewById<Button>(R.id.cast_profile_setup).apply {
-            setOnClickListener { openProfileSetup() }
+            setOnClickListener { CastGuidanceDialogs.openProfileSetup(activity) { toast(it) } }
         }
+        // Nút cứu hộ CỐ Ý vắng mặt ở đây: nó phải bấm được kể cả khi không hành động nào được xuất ra —
+        // xem KDoc `CastClearClusterAction.bind`.
         listOf(stopButton, diagnosticsButton, retryButton, phoneDisconnectButton,
             recoverOnceButton, physicalInstructionButton, profileSetupButton).forEach { it.isEnabled = false }
 
@@ -141,6 +172,11 @@ internal class MainActivityCastController(private val activity: Activity) {
             onAppsLoaded = { geometryPanelRendered = false },
         )
         autoStart.bind(autoStartCheckbox, autoStartSpinner)
+        splitRatio = CastSplitRatioBinding(
+            activity, CastSplitRatioStore(activity.applicationContext),
+            background = { work.misc(it) }, postUi = { postUi(it) },
+        )
+        splitRatio.bind(activity.findViewById(R.id.spinner_split_ratio))
         vietmapBubbleExperimentCheckbox = activity.findViewById(R.id.cb_vietmap_bubble_experiment)
         VietmapBubbleExperiment.bind(vietmapBubbleExperimentCheckbox, activity)
         vietmapBubbleTriggerButton = activity.findViewById<Button>(R.id.btn_vietmap_bubble_trigger).apply {
@@ -195,6 +231,8 @@ internal class MainActivityCastController(private val activity: Activity) {
 
     fun onDestroy() {
         destroyed = true
+        // ─── Simplified Cast: close projection on app exit (Stage 2) ───
+        SimpleCastRuntime.coordinator(activity.applicationContext).closeProjection()
         statusTimers.close()
         operationStatus.clearAll()
         work.close()
@@ -350,14 +388,6 @@ internal class MainActivityCastController(private val activity: Activity) {
         }
     }
 
-    private fun showPhoneDisconnectGuidance() {
-        android.app.AlertDialog.Builder(activity)
-            .setTitle("Ngắt kết nối điện thoại")
-            .setMessage("Ngắt CarPlay/Android Auto trên điện thoại hoặc rút cáp. Quay lại đây sau khi phiên báo đã ngắt; ClusterNav không tự tắt phiên điện thoại.")
-            .setPositiveButton("Đã hiểu", null)
-            .show()
-    }
-
     private fun confirmEligibleRecovery() {
         android.app.AlertDialog.Builder(activity)
             .setTitle("Phục hồi một lần?")
@@ -388,20 +418,6 @@ internal class MainActivityCastController(private val activity: Activity) {
             is CastFacade.Outcome.Blocked -> "Phục hồi bị chặn: ${outcome.reason}"
         }
     })
-
-    private fun showPhysicalInstruction() {
-        android.app.AlertDialog.Builder(activity)
-            .setTitle("Khôi phục thủ công")
-            .setMessage("Dừng xe ở vị trí an toàn, dùng nút nguồn vật lý của màn hình để power-cycle hoàn toàn, sau đó mở lại Chẩn đoán. Không dùng adb reboot làm bằng chứng.")
-            .setPositiveButton("Đã hiểu", null)
-            .show()
-    }
-
-    private fun openProfileSetup() {
-        val opened = runCatching { activity.startActivity(Intent("android.settings.USER_SETTINGS")) }
-            .recoverCatching { activity.startActivity(Intent(Settings.ACTION_SETTINGS)) }.isSuccess
-        if (!opened) toast("Thiết bị không cung cấp màn hình thiết lập hồ sơ")
-    }
 
     private fun runOperation(initial: String, block: () -> String, after: () -> Unit = {}) {
         val token = operationStatus.begin(initial)
@@ -446,6 +462,20 @@ internal class MainActivityCastController(private val activity: Activity) {
                     stopRequestedAt != stopSnapshot
                 ) return@postUi
                 status.text = result.visibleStatus
+                // ─── Simplified Cast diagnostic status (Stage 2) ───
+                val simplifiedState = SimpleCastRuntime.coordinator(activity.applicationContext).state
+                val simplifiedLabel = when (simplifiedState) {
+                    is SimpleCastState.Off -> "Off"
+                    is SimpleCastState.Opening -> "Opening"
+                    is SimpleCastState.Idle -> "Idle"
+                    is SimpleCastState.CastingFull -> "Casting ${simplifiedState.targetPkg.substringAfterLast('.')}"
+                    is SimpleCastState.CastingSplit -> "Split"
+                    is SimpleCastState.Stopping -> "Stopping"
+                    is SimpleCastState.Closing -> "Closing"
+                    is SimpleCastState.Error -> "Error: ${simplifiedState.message}"
+                    else -> simplifiedState.toString()
+                }
+                status.text = "${result.visibleStatus}\nSimplified: $simplifiedLabel"
                 val effectiveActions = model.activityActions(mutationSnapshot)
                 fun enabled(action: CastAction) = action in effectiveActions
                 stopButton.isEnabled = enabled(CastAction.STOP)
@@ -469,6 +499,11 @@ internal class MainActivityCastController(private val activity: Activity) {
                     },
                 )
                 refreshGeometryPanel(observedTarget)
+                // ─── Simplified Cast: hide geometry when casting a protected app (Stage 2) ───
+                val simplifiedForGeometry = SimpleCastRuntime.coordinator(activity.applicationContext).state
+                if (simplifiedForGeometry is SimpleCastState.CastingFull && simplifiedForGeometry.appType.isProtected) {
+                    geometryContainer.visibility = View.GONE
+                }
                 if (stopSnapshot != null && model.operationAcknowledged) {
                     stopRequestedAt = null
                     statusTimers.cancelStopAckRefresh()

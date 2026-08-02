@@ -83,4 +83,13 @@ class ObservedStateReader(
             CommandKind.APP_OPS_STATE,
         )
     }
+
+    /**
+     * Đọc ĐÚNG MỘT lệnh shell — nhẹ hơn nhiều so với `inspectRaw` (6 lệnh).
+     *
+     * Dùng cho đường dự phòng của `clearCluster`: khi observation đầy đủ fail (ADB key, timeout),
+     * chỉ cần `am stack list` là đủ để biết ai đang trên cụm.
+     */
+    fun readSingleCommand(kind: CommandKind): ObservationValue<String> =
+        observe(kind, nowEpochMillis() + MAX_OBSERVATION_MILLIS)
 }

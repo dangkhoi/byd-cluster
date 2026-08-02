@@ -99,6 +99,9 @@ internal class CastActivityRefreshReader(
         if (facade.reconcileUnobservableIdleSession()) {
             facade.recordOperation("cleared unobservable idle stable session on refresh")
         }
+        if (facade.reconcileStaleRecovery()) {
+            facade.recordOperation("cleared stale RECOVERY_PENDING: cluster empty, safe to re-bootstrap")
+        }
         // Không cần biết kiểu StoreRead/ObservationValue: façade trả thẳng thứ cần dùng.
         val envelope = facade.envelope()
         // Một lần quan sát cho một lần vẽ. Trước 2026-07-29 chỗ này gọi `observe()` rồi `observedState()`

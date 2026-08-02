@@ -7,6 +7,7 @@ import dadb.Dadb
 private const val NO_OP = "echo cast-v2-noop"
 private const val FREEFORM_MODE = 5
 private const val FULLSCREEN_MODE = 1
+private const val HOME_DISPLAY_ID = 0
 private const val LAUNCH_PREFIX =
     "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER"
 private val PIP_MODES = setOf("allow", "ignore", "deny", "default", "foreground")
@@ -66,6 +67,38 @@ object CastPlacementCommands {
                 val landed = landedStack(adb, target, display, cancelled) ?: return@let NO_OP
                 val size = clusterRealSize(adb, display, cancelled, measuredCluster) ?: return@let NO_OP
                 val density = request.geometry?.densityDpi?.takeIf { it in 80..640 }
+                // Khung đích: mặc định là TOÀN cụm, trừ khi kế hoạch yêu cầu một Ô (nửa cụm).
+                //
+                // `CastPlanner` đánh dấu yêu cầu chia ô bằng `profileId == "cluster-slot-request"` — cùng
+                // quy ước sentinel với "cluster-density-request" đã có. Trước 2026-08-01 chỗ này BỎ QUA
+                // `geometry.bounds` và luôn resize full màn, nên một lượt chiếu vào ô sẽ phát lệnh rồi
+                // trượt xác minh (rect quan sát được ≠ rect đã yêu cầu) — tính năng chia đôi không bao giờ
+                // chạy tới nơi. Đây là mắt xích cuối của chuỗi đó.
+                //
+                // Rect rác (âm, lộn ngược, to hơn cụm) mà bắn thẳng vào `am task resize` là đẩy cửa sổ ra
+                // ngoài vùng nhìn thấy, không có đường quay lại ngoài cứu hộ ⇒ phải chặn. Nhưng phép chặn
+                // này BẮT BUỘC phải tôn trọng đúng hai không gian toạ độ khác nhau — đây chính là chỗ bản
+                // vá đầu tiên của tôi sai và test bắt được:
+                //
+                //   • `clusterRealSize` (từ `dumpsys display`) báo 1920×720.
+                //   • Khung TASK thật trên cùng cụm đó lại là [0,90]–[1920,810] (đo trên xe, đêm 31/7).
+                //
+                // Cùng chiều cao 720 nhưng LỆCH XUỐNG 90 — đúng độ lệch của bug F3. Nên so `bottom` với
+                // chiều cao display là sai: một ô hợp lệ (bottom = 810) bị coi là rác và lặng lẽ ngã về
+                // full cụm, tức tính năng chia đôi lại không chạy, đúng kiểu hỏng-mà-không-ai-biết.
+                // Chiều NGANG thì hai không gian trùng nhau (rect ô lấy left/right từ chính khung display),
+                // nên chỉ chiều đó mới so tuyệt đối được; chiều DỌC chỉ so CHIỀU CAO, không so vị trí đáy.
+                val slot = request.geometry
+                    ?.takeIf { it.profileId == ClusterSplit.SLOT_PROFILE_ID }
+                    ?.bounds
+                    ?.takeIf { r ->
+                        r.left >= 0 && r.top >= 0 && r.right > r.left && r.bottom > r.top &&
+                            r.right <= size.first && (r.bottom - r.top) <= size.second
+                    }
+                val fit = slot?.let { "${it.left} ${it.top} ${it.right} ${it.bottom}" }
+                    ?: ClusterViewport.DILINK3_DEFAULT.let { vp ->
+                        "${vp.left} ${vp.top} ${vp.right} ${vp.bottom}"
+                    }
                 buildString {
                     if (density != null) append("wm density $density -d $display; ")
                     // V1's proven fallback: task resize needs freeform alive. When it is not, the
@@ -81,8 +114,18 @@ object CastPlacementCommands {
                     // every call, so no exact/prefix match survives it, and a loose match risks
                     // hiding a real resize failure elsewhere). Silence the rejected branch's own
                     // stderr; the fallback's stderr, if IT fails too, still surfaces unchanged.
-                    append("(am task resize ${landed.taskId} 0 0 ${size.first} ${size.second} 2>/dev/null)")
-                    append(" || wm overscan $OVERSCAN_FALLBACK -d $display")
+                    // Đường lui `wm overscan` CHỈ đúng cho khung toàn cụm: nó là hiệu ứng cấp DISPLAY,
+                    // không nhắm được vào một task. Với yêu cầu chia ô, ngã về nó vừa không đặt được ô,
+                    // vừa bóp luôn khung của app đang nằm cạnh. Nên ô thì không có đường lui — và vì
+                    // không còn `||` để "quyết định trước" rằng thất bại là lành, `2>/dev/null` cũng phải
+                    // bỏ: lúc này stderr là tin thật cần nổi lên cho tầng phân loại hiệu ứng, không phải
+                    // nhiễu của một nhánh đã được xử lý.
+                    if (slot != null) {
+                        append("am task resize ${landed.taskId} $fit")
+                    } else {
+                        append("(am task resize ${landed.taskId} $fit 2>/dev/null)")
+                        append(" || wm overscan $OVERSCAN_FALLBACK -d $display")
+                    }
                 }
             }
             CommandKind.APPLY_TASK_GEOMETRY -> request.expectedTarget?.takeIf { it.displayId == display }?.let { target ->
@@ -90,6 +133,37 @@ object CastPlacementCommands {
             }
             CommandKind.APPLY_DISPLAY_GEOMETRY -> request.expectedTarget?.takeIf { it.displayId == display }?.let { target ->
                 request.geometry?.let { CastGeometryCommandEncoder.displayDensity(target, request.expectedDisplayIdentity, it) }
+            }
+
+            // ── CarPlay/AA placement: move-task into cluster stack (2026-08-01, field-proven T1) ─────
+            //
+            // `am stack move-task <taskId> <stackId> true` di chuyển TASK vào stack đã nằm sẵn trên
+            // display cụm. An toàn vì `TaskStack.positionChildAt` gán `task.mStack` TRƯỚC `addChild`,
+            // nên không rơi vào cửa sổ null của `DisplayContent.moveStackToDisplay`.
+            // Cần: (1) task tồn tại trên display khác, (2) stack đích tồn tại trên display cụm.
+            CommandKind.MOVE_TASK_TO_CLUSTER_STACK -> {
+                val pkg2 = pkg ?: return@of NO_OP
+                // No-op when the target already landed on the cluster via the cheap path above.
+                if (landedStack(adb, pkg2, display, cancelled) != null) return@of NO_OP
+                val stacks = amStacks(adb, cancelled) ?: return@of NO_OP
+                val task = stacks.tasks.firstOrNull { it.packageName == pkg2 && it.displayId != display }
+                    ?: return@of NO_OP
+                val clusterStack = stacks.stacks.firstOrNull { it.displayId == display }
+                    ?: return@of NO_OP
+                "am stack move-task ${task.taskId} ${clusterStack.stackId} true"
+            }
+
+            // Scale display density so an unresizeable app fits the cluster (field-proven T2c).
+            CommandKind.SCALE_CLUSTER_DENSITY -> {
+                val pkg2 = pkg ?: return@of NO_OP
+                // No-op when the target already landed — density was already set or doesn't need changing.
+                if (landedStack(adb, pkg2, display, cancelled) != null) return@of NO_OP
+                val size = clusterRealSize(adb, display, cancelled, measuredCluster)
+                    ?: return@of NO_OP
+                val sourceHeight = 1080
+                val clusterDensity = 320
+                val scaledDpi = clusterDensity * size.second / sourceHeight
+                "wm density $scaledDpi -d $display"
             }
             // ── Escalation rungs. Measured on DiLink3 2026-07-26: the cheap placement alone is
             // enough for a resizeable app cold and warm, and for an unresizeable system app, so
@@ -146,6 +220,10 @@ object CastPlacementCommands {
         CommandKind.RETURN_NORMAL_TO_MAIN,
         CommandKind.RETURN_PROTECTED_GENTLY,
         CommandKind.PRE_OPEN_ON_MAIN,
+        // CarPlay return path: move-task back to display 0 stack + density reset. Both must work
+        // even when the cluster display has already disappeared (cable disconnected mid-cast).
+        CommandKind.RETURN_TASK_TO_MAIN,
+        CommandKind.RESET_CLUSTER_DENSITY,
     )
 
     private fun displayFreeCommand(
@@ -195,6 +273,24 @@ object CastPlacementCommands {
 
         CommandKind.RESTORE_PIP ->
             pkg?.let { "appops set $it PICTURE_IN_PICTURE ${restorePipMode(request)}" } ?: NO_OP
+
+        // CarPlay/AA return: move task back to any stack on display 0.
+        // Field-proven T3 (2026-08-01): `am stack move-task 15 12 true` returned CarPlay safely.
+        CommandKind.RETURN_TASK_TO_MAIN -> {
+            val target = request.expectedTarget
+            val stacks = if (target != null) amStacks(adb, cancelled) else null
+            val homeStack = stacks?.stacks?.firstOrNull { it.displayId == HOME_DISPLAY_ID }
+            if (target == null) NO_OP
+            else if (homeStack == null) null
+            else "am stack move-task ${target.taskId} ${homeStack.stackId} true"
+        }
+
+        // Reset cluster density after CarPlay returns.
+        CommandKind.RESET_CLUSTER_DENSITY -> {
+            val display = request.expectedTarget?.displayId
+                ?: discoverCastDisplay(adb, cancelled) ?: 1
+            "wm density reset -d $display"
+        }
 
         else -> null
     }
