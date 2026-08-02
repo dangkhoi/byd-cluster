@@ -5,7 +5,7 @@ import dadb.AdbKeyPair
 import java.io.File
 
 /**
- * Keypair ADB DÙNG CHUNG cho mọi client dadb tự-nối (NavConnect tự-heal nav listener + MockLoc.selfGrant cấp
+ * Keypair ADB DÙNG CHUNG cho mọi client dadb tự-nối (NavConnect tự-heal nav listener + ClusterCast cấp
  * mock_location). Trước đây MỖI nơi tự `if (!exists) AdbKeyPair.generate(...)` trên CÙNG file `adb.key/adb.pub`
  * KHÔNG khóa chung → lúc CÀI LẠI (file chưa có) 2 thread cùng generate → keypair HỎNG (generate ghi 2
  * FileOutputStream không nguyên tử) → chết cả mock-grant lẫn nav-reconnect tới khi xoá data.

@@ -21,7 +21,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  *     (ép composite → hết trắng). App chưa chạy → freshLaunch. T3 (daemon app_process, [T3Daemon]) = dự phòng opt-in ([t3Apps]) khi T1 hụt.
  *  3. SCALE PER-APP (R6): dpi + bounds theo TỪNG app ([AppScale], [scaleOf]) thay global DPI+inset. Áp live [applyScaleLive].
  *  4. PROFILE ĐA-MODEL (R8): chuỗi chiếu/teardown + kích cụm nằm sau [ClusterProfile] (Seal DL3 = [30,16,35] / [18,0]).
- *  5. `wm density` = fix scale; `wm overscan` = khung mỹ thuật. WARM switch re-issue 16. TEARDOWN: bê app khỏi VD →
+ *  5. `wm density` = fix scale; `wm overscan` = khung mỹ thuật. Đổi app = COLD-ONLY (v0.63: bỏ warm-switch — nguồn
+ *     treo WM NPE): dọn cụm → dựng VD mới. TEARDOWN: bê app khỏi VD →
  *     reset density/overscan → teardownSeq (Seal 18→0). PROFILE 30=cong giữ km/h · 31=chữ nhật full (toggle [keepKmh]).
  */
 object ClusterCast {
@@ -62,8 +63,7 @@ object ClusterCast {
 
     const val PROFILE_CURVED = 30
     const val PROFILE_RECT = 31
-    private const val CMD_PROJECT = 16
-    private const val CMD_DI40 = 35
+    private const val CMD_DI40 = 35   // (cmd16 CMD_PROJECT đã bỏ ở v0.61: warm-switch KHÔNG tái tạo VD nữa; cold path dùng raw 16 trong ClusterProfile.castSeq)
     // Teardown codes (18=đóng chiếu, 0=refresh video) giờ nằm trong ClusterProfile.teardownSeq (Seal = [18,0]).
 
     // ★ TẮT animation hệ thống LÚC CHIẾU → transition move-stack giữa 2 màn mượt/tức thì (hết lag đổi app). Trả lại khi STOP.
@@ -134,9 +134,6 @@ object ClusterCast {
     @Volatile var casting = false; private set    // đang chiếu? (bong bóng toggle + đổi icon theo cờ này)
     @Volatile var lastDisplayId = -1; private set
 
-    /** Số lần khôi phục app cũ hụt LIÊN TIẾP ở nhánh ấm. Quá [MAX_WARM_RESTORE] = máy đang hỏng → dừng, đừng bắn thêm lệnh. */
-    @Volatile private var warmRestoreStreak = 0
-    private const val MAX_WARM_RESTORE = 1
     // ★ Kích thước VD cụm THẬT — auto-detect từ dumpsys ([DisplayParse.realSize]) lần chiếu gần nhất. Dùng cho rect per-app UI
     //   (R8: KHÔNG hardcode 1920×720 — lấy kích cụm thật). 0 = chưa chiếu lần nào → UI dùng ClusterProfile fallback.
     @Volatile var lastClusterW = 0; private set
@@ -168,10 +165,6 @@ object ClusterCast {
     /** observer cho bong bóng: đổi trạng thái chiếu → cập nhật icon/nền nút nổi. */
     @Volatile var onCastingChanged: (() -> Unit)? = null
     private fun setCasting(v: Boolean) {
-        // ★ "LIÊN TIẾP" phải đúng nghĩa: mọi lần kết thúc một phiên (thành công hay tắt hẳn) đều xoá bộ đếm.
-        //   Bản cũ chỉ reset ở 2 chỗ trong nhánh ấm → trong cùng một phiên xe, lần hụt THỨ HAI (dù cách nhau
-        //   hàng giờ và đã chiếu thành công ở giữa) là teardown thẳng.
-        if (!v) warmRestoreStreak = 0
         if (casting != v) { casting = v; runCatching { onCastingChanged?.invoke() } }
     }
 
@@ -196,6 +189,29 @@ object ClusterCast {
     /** true = cho phép daemon T3 ép freeform SAU KHI app đã bám VD (chỉ có tác dụng khi freeform đã sống). */
     fun setT3(ctx: Context, pkg: String, on: Boolean) { t3Apps = if (on) t3Apps + pkg else t3Apps - pkg; save(ctx) }
     fun isT3(pkg: String) = pkg in t3Apps
+    /**
+     * App có phải loại CHIẾU MÀN ĐIỆN THOẠI không (CarPlay / Android Auto / projection sink) — nhận diện theo
+     * chuỗi component/gói, KHÔNG hardcode một tên cụ thể. Mất phiên của loại này là mất luôn, phải khởi động lại xe.
+     * Tên activity từ firmware đã đọc: `com.google.android.projection.sink.ui.AAPVideoActivity`, `com.byd.carplay.ui`.
+     */
+    private val PROJECTION_HINTS = listOf("projection.sink", "aapactivity", "aapvideo", "carplay", "androidauto")
+    fun isPhoneProjection(comp: String?, pkg: String): Boolean {
+        val hay = ((comp ?: "") + " " + pkg).lowercase()
+        return PROJECTION_HINTS.any { hay.contains(it) }
+    }
+
+    /**
+     * ★ v0.60 TEARDOWN-GUARD (P0) — mọi stack CHIẾU-ĐIỆN-THOẠI (CarPlay/Android Auto) đang bám VD [vd].
+     * Dùng để BÊ RA display 0 TRƯỚC khi huỷ/tái tạo VD (cmd16 re-project · teardownSeq · evictVd). Gốc lỗi
+     * hiện trường 22/07 (diag-0722-172848): AOSP 10 release ActivityDisplay của VD khi sink CÒN BÁM →
+     * `mDisplayContent=null` → cửa sổ mồ côi (WM thấy, AM không) → chỉ TẮT MÁY XE mới sạch.
+     * PURE (chỉ đọc [entries]) → unit-test off-device được (SinkGuardTest).
+     */
+    fun phoneProjectionSinksOn(entries: List<StackEntry>, vd: Int): List<StackEntry> {
+        if (vd < 1) return emptyList()
+        return entries.filter { it.displayId == vd && isPhoneProjection(it.comp, it.pkg) }.distinctBy { it.stackId }
+    }
+
     /** true = CẤM rung R2 (force-stop + mở lại) cho app này → giữ phiên bằng mọi giá, thà không lên cụm. */
     fun setKeepSession(ctx: Context, pkg: String, on: Boolean) { keepSessionApps = if (on) keepSessionApps + pkg else keepSessionApps - pkg; save(ctx) }
     fun isKeepSession(pkg: String) = pkg in keepSessionApps
@@ -347,6 +363,7 @@ object ClusterCast {
     fun cast(ctx: Context, pkg: String, allowDestructive: Boolean = true, log: (String) -> Unit) {
         if (!takeBusy(log)) { log("⏳ đang chạy 1 thao tác cụm — đợi xong"); return }
         val app = ctx.applicationContext
+        val log = castLogger(app, "cast", log)   // ★ v0.60 RT1.6: tee ra file để chẩn đoán khi cắm CP/AA (WiFi tắt)
         vdExec.execute {
             try {
                 runCatching {
@@ -401,10 +418,8 @@ object ClusterCast {
                         //   app đang ở (= cụm). appops enforce trong system_server nên bản mod cũng không lách được.
                         blockPip(app, target, log) { c -> sh(c) }
 
-                        // ── ★ WARM PATH: ĐANG chiếu rồi + VD còn sống → CHỈ ĐỔI APP (move-stack), KHÔNG re-profile.
-                        // Trước đây switch app chạy lại cả 30→16→35 → tái tạo VD + đổi mode cong liên tục → "nhảy loạn
-                        // giữa các mode cong", ADAS hiện lại, app cũ mồ côi, stuck. Warm: bê app cũ ra, bê app mới vào VD.
-                        // ★★ W2-3: LUÔN đi nhìn, rồi mới quyết. Xem KDoc StackParse.isWarm.
+                        // ── ★ v0.63 COLD-ONLY: KHÔNG còn warm-switch (đã bỏ — nguồn treo + mồ côi). curVd chỉ để:
+                        //   (a) chạy guard mồ côi ngay bên dưới; (b) quyết có cần dọn cụm trước khi cold-cast không.
                         val curVd = DisplayParse.clusterDisplayId(sh("dumpsys display | grep -iE 'Display [0-9]+:|fission|xdja'"))
                         // ★ CHẶN TRƯỚC KHI BẮN. Đặt sau `placeAppOnVd` là quá muộn: lúc đó app đang dẫn đường đã
                         //   bị bê khỏi cụm, cụm đã bị cấu hình lại, VD đã bị tái tạo — rồi mới báo "không làm được".
@@ -413,90 +428,15 @@ object ClusterCast {
                             log("   (nút TẮT vẫn dùng được — nó chỉ trả đồng hồ, không đụng stack)")
                             return@use
                         }
-                        val warm = StackParse.isWarm(curVd, StackParse.parse(sh("am stack list")))
-                        if (warm) {
-                            log("③↔ WARM: đổi app trên VD $curVd (không re-profile)")
-                            if (lastCastApp.isNotBlank() && lastCastApp != target) {
-                                // bê MỌI stack của app cũ đang ở trên VD về màn giữa (kể cả PIP mồ côi), không chỉ stack đầu tiên
-                                StackParse.of(StackParse.parse(sh("am stack list")), lastCastApp)
-                                    .filter { it.displayId == curVd }.map { it.stackId }.distinct()
-                                    .forEach { sh("am display move-stack $it 0 2>&1"); Thread.sleep(400) }
-                                // vd=-1: chỉ ép fullscreen cho app vừa bê ra, KHÔNG reset cụm đang chiếu
-                                CastShell.restoreFullscreenOnMain(adb, { c -> sh(c) }, lastCastApp, -1, log)
-                            }
-                            // ★ v0.37: áp lại KIỂU CỤM cho app MỚI trước khi chiếu. Trước đây warm switch chỉ bắn 16
-                            //   nên kiểu cong/thẳng của app TRƯỚC dính lại — đúng hiện tượng "chuyển app không clear mode".
-                            // ★ W2-1: nhánh WARM trước đây bắn opcode TRƯỚC khi svcName được gán ở nhánh lạnh →
-                            //   trên DiLink5 nó gửi tới service sai. Giờ resolve profile ngay tại đây.
-                            val wp = ClusterProfile.resolve(app)
-                            setActiveProfile(app, wp)
-                            val newStyle = styleCmdFor(wp, target)
-                            if (newStyle != null && newStyle != styleCmdFor(wp, lastCastApp)) {
-                                log("③↔ đổi kiểu cụm cho ${labelOf(app, target)}: cmd $newStyle")
-                                sh(wp.svcCall(newStyle)); Thread.sleep(1500)
-                            }
-                            // ADAS-fix: re-issue chiếu (16) để xoá mảng đen — warm switch cũ bỏ qua → ADAS hiện lại (RE DashCast).
-                            // 16 có thể tái tạo VD → dò lại id trước khi đặt app.
-                            sh(wp.svcCall(CMD_PROJECT)); Thread.sleep(1000)
-                            val useVd = DisplayParse.clusterDisplayId(sh("dumpsys display | grep -iE 'Display [0-9]+:|fission|xdja'")).let { if (it >= 1) it else curVd }
-                            // ★ cmd 16 có thể TÁI TẠO VD → id mới. Ghi lastDisplayId NGAY, bất kể đặt app thành công
-                            //   hay không: stop()/rollback() và nút size đều cần id ĐANG SỐNG, không phải id cũ đã chết.
-                            lastDisplayId = useVd
-                            val landedE = placeAppOnVd(app, adb, { c -> sh(c) }, target, useVd, allowDestructive, log)
-                            if (landedE != null) {
-                                warmRestoreStreak = 0
-                                setLastCastApp(app, target); setCasting(true)
-                                log("✅ Đổi sang ${labelOf(app, target)} (warm, display $useVd)")
-                            } else {
-                                // ★ KHÔNG ghi đè lastCastApp bằng app KHÔNG bám được → nút size/bong bóng vẫn trỏ đúng app cũ.
-                                log("⚠ ${labelOf(app, target)} không bám được VD")
-                                // vd = -1: KHÔNG reset density/overscan — cụm vẫn đang chiếu, app cũ sắp quay lại dùng
-                                CastShell.restoreFullscreenOnMain(adb, { c -> sh(c) }, target, -1, log)
-                                // ★ v0.50 CHỤP NGAY LÚC HỎNG. autoDiag trước đây chỉ có call site ở nhánh LẠNH, nên
-                                //   đúng kịch bản gây lỗi hiện trường (đổi qua lại giữa hai app = nhánh ẤM) không bao
-                                //   giờ tự chụp — mất luôn dữ liệu của khoảnh khắc duy nhất đáng chụp.
-                                autoDiag(app, target, useVd, log)
-                                // ★ v0.50 TRẦN SỐ LẦN KHÔI PHỤC. Bản cũ vô điều kiện bê app cũ TRỞ LẠI cụm; cộng với
-                                //   evictVd đã bê nó RA trước đó, người dùng thấy đúng hiện tượng "bấm AA thì Vietmap
-                                //   nhảy sang, tắt AA lại lên Vietmap". Mỗi vòng như vậy thêm một lần tái tạo VD +
-                                //   nhiều move-stack — chính công thức đẻ ra stack mồ côi (WM có, AM không).
-                                //   Lần đầu vẫn cứu; lặp lại là dấu hiệu máy đang hỏng → DỪNG, trả cụm về đồng hồ.
-                                warmRestoreStreak++
-                                if (warmRestoreStreak > MAX_WARM_RESTORE) {
-                                    log("  ⛔ đã khôi phục hụt $warmRestoreStreak lần liên tiếp — DỪNG, trả cụm về đồng hồ gốc")
-                                    log("     (app cũ vẫn ở màn giữa; bấm CHIẾU lại khi cần)")
-                                    runCatching {
-                                        val rcp = activeProfile(app)
-                                        rcp.teardownSeq.forEachIndexed { i, cmd -> if (i > 0) Thread.sleep(800); sh(rcp.svcCall(cmd)) }
-                                    }
-                                    if (useVd >= 1) CastShell.resetDisplayAll({ c -> sh(c) }, useVd)
-                                    // ★ dừng khẩn cũng phải TRẢ LẠI mọi thứ đã đổi ra ngoài (§5) — bản v0.50 quên
-                                    //   animation + app-op PIP, để lại đầu xe ghim animation 0 và app khác mất PIP.
-                                    for (k in ANIM_KEYS) sh("settings put global $k $savedAnimSafe")
-                                    restorePip(app, log) { c -> sh(c) }
-                                    warmRestoreStreak = 0
-                                    lastDisplayId = -1; setCasting(false)
-                                    return@use
-                                }
-                                log("  ↩ giữ nguyên app đang chiếu (lần khôi phục $warmRestoreStreak/$MAX_WARM_RESTORE)")
-                                // ★ đưa app CŨ trở lại bằng rung KHÔNG phá hoại. Chạy nguyên ladder ở đây có thể
-                                //   force-stop chính app đang dẫn đường tốt — đổi app hụt KHÔNG được phép giết phiên cũ.
-                                if (lastCastApp.isNotBlank() && lastCastApp != target) {
-                                    val comp = CastShell.resolveComp(adb, lastCastApp)
-                                    val old = StackParse.pick(StackParse.parse(sh("am stack list")), lastCastApp, 0)
-                                    if (old != null && old.displayId != useVd) sh("am display move-stack ${old.stackId} $useVd 2>&1")
-                                    if (comp != null) sh("am start --display $useVd --windowingMode 5 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $comp 2>&1")
-                                    val back = CastShell.landedOn({ c -> sh(c) }, lastCastApp, useVd)
-                                    if (back != null) {
-                                        // trả lại đúng khung/dpi của app cũ (bước ⑧ của nó đã bị ghi đè khi thử app mới)
-                                        setDensityIfNeeded({ c -> sh(c) }, useVd, scaleOf(lastCastApp).dpi)
-                                        val (w2, h2) = DisplayParse.realSize(sh("dumpsys display"), useVd)
-                                        applyBounds({ c -> sh(c) }, useVd, back, scaleOf(lastCastApp), w2, h2)
-                                        log("  ✓ đã đưa ${labelOf(app, lastCastApp)} trở lại cụm")
-                                    } else log("  ⚠ app cũ chưa trở lại cụm — bấm CHIẾU lại")
-                                }
-                                                                setCasting(StackParse.pick(StackParse.parse(sh("am stack list")), lastCastApp, useVd)?.displayId == useVd)
-                            }
+                        // ★★ v0.64: SWITCH = HOT-SWAP (VALIDATED on-car 2026-07-23 bằng adb manual test, NPE=0).
+                        //   Freeze THẬT không phải warm-vs-cold — mà là HUỶ/TÁI TẠO VD lúc switch (warm=cmd16, cold=teardown)
+                        //   TRONG KHI app đang transition off VD → AppWindowToken.loadAnimation gọi getDisplayInfo() trên
+                        //   DisplayContent NULL → WM NPE lặp → treo head unit. CHỨNG MINH trên xe: đặt app MỚI lên VD
+                        //   ĐANG SỐNG rồi bê app cũ ra SAU (VD KHÔNG bao giờ rỗng/bị huỷ) = NPE=0, không treo.
+                        //   → VD đang có app (isWarm) = SWITCH → HOT-SWAP (tuyệt đối KHÔNG teardown/cmd16).
+                        //     VD chưa có app (first-cast) → COLD path (castSeq tạo VD mới tinh — proven an toàn).
+                        if (StackParse.isWarm(curVd, StackParse.parse(sh("am stack list")))) {
+                            hotSwapOnVd(app, adb, { c -> sh(c) }, target, curVd, log)
                             return@use
                         }
 
@@ -546,6 +486,9 @@ object ClusterCast {
                                 setLastCastApp(app, target); setCasting(true)
                                 autoDiag(app, target, vd, log)
                                 log("✅ Xong — ${labelOf(app, target)} trên cụm (${landedE.brief()}). ${if (isRectProfile(target)) "full (mất km/h)." else "km/h gốc còn."}")
+                                // ★ v0.60 post-op divergence: kiểm mồ côi NGAY SAU cast (không chỉ trước) — bắt sớm
+                                //   nếu chính thao tác đặt app vừa làm WM↔AM lệch.
+                                divergenceOn({ c -> sh(c) }, vd)?.let { log("  ⚠ post-cast: $it") }
                             } else {
                                 // ★ v0.36: KHÔNG còn tự nhận "đang chiếu" khi app không lên. Trả app về màn giữa
                                 //   (fullscreen, không để cửa sổ nổi mồ côi) rồi trả đồng hồ — hết cảnh cụm sáng rỗng
@@ -565,6 +508,7 @@ object ClusterCast {
         // TẮT là đường thoát hiểm: nó PHẢI chạy được kể cả khi thao tác trước còn treo.
         if (!takeBusy(log)) { log("⏳ đang chạy 1 thao tác — thử lại sau"); return }
         val app = ctx.applicationContext
+        val log = castLogger(app, "stop", log)   // ★ v0.60 RT1.6: tee ra file (teardown-guard/bê stack/trả đồng hồ)
         vdExec.execute {
             try {
                 runCatching {
@@ -627,6 +571,9 @@ object ClusterCast {
     private fun rollback(ctx: Context, adb: dadb.Dadb, teardownSeq: List<Int>, log: (String) -> Unit) {
         log("↩ rollback: trả đồng hồ [${teardownSeq.joinToString(",")}${if (teardownProfile >= 0) "→$teardownProfile" else ""}]…")
         val vd = lastDisplayId
+        // ★ v0.60 TEARDOWN-GUARD (P0): bê sink CP/AA khỏi VD TRƯỚC khi reset/teardown (giữ phiên, chống mồ côi).
+        //   rollback là đường HỒI PHỤC → best-effort (dù bê hụt vẫn phải trả đồng hồ), nhưng bê được thì hết orphan.
+        if (vd >= 1) guardSinksOffVd({ c -> adb.shell(c).output.trim() }, vd, "", log)
         runCatching {
             if (vd >= 1) CastShell.resetDisplayAll({ c -> adb.shell(c).output.trim() }, vd)
             val rp = activeProfile(ctx)
@@ -643,6 +590,38 @@ object ClusterCast {
             for (k in ANIM_KEYS) adb.shell("settings put global $k $savedAnimSafe") }   // trả lại animation gốc
         lastDisplayId = -1; activeTeardown = emptyList(); setCasting(false)
         setActiveProfile(ctx, null)
+    }
+
+    /**
+     * ★ v0.66 — HOT-SWAP đổi app trên cụm CHỐNG FREEZE, GIỮ VD SỐNG.
+     * Đặt app MỚI lên VD đang sống TRƯỚC (VD không rỗng), RỒI FORCE-STOP app CŨ về màn chính (đường KHÔNG-transition
+     * [CastShell.returnAppToMain]) → VD KHÔNG bao giờ bị huỷ + KHÔNG `move-stack …0` → né CẢ NPE A (getDisplayInfo
+     * loop → treo) LẪN NPE B (createTaskSnapshot). Lõi shell nằm ở [CastShell.swapOnVd] (test off-xe được).
+     * App mới không bám VD / bounce → GIỮ app cũ trên cụm, thoát (switch hụt nhưng KHÔNG teardown, KHÔNG treo).
+     * ⚠ Freeze THẬT chỉ verify được trên xe — off-car chỉ chốt chuỗi lệnh + bất biến (xem spec §Verification).
+     */
+    private fun hotSwapOnVd(app: Context, adb: dadb.Dadb, sh: (String) -> String, target: String, vd: Int, log: (String) -> Unit) {
+        if (vd < 1) { log("  ❌ VD không hợp lệ ($vd) — bỏ hot-swap"); return }
+        divergenceOn(sh, vd)?.let { log("  ⛔ $it"); return }                                 // KEEP: guard mồ côi WM↔AM
+        val oldApp = lastCastApp
+        val comp = CastShell.resolveComp(adb, target) ?: run { log("❌ không resolve được $target"); return }
+        log("↔ HOT-SWAP v0.66: đặt ${labelOf(app, target)} lên VD $vd (giữ VD sống) rồi FORCE-STOP ${labelOf(app, oldApp)} về màn chính")
+        setDensityIfNeeded(sh, vd, scaleOf(target).dpi); Thread.sleep(150)                    // ① scale/dpi per-app
+        // ②③④⑤ LÕI SHELL (CastShell.swapOnVd) — né NPE A (VD không rỗng) + NPE B (KHÔNG move-stack …0) + CP/AA-correct.
+        //   Split fresh-launch(thường)/resume(sink) + U3 occlude-verify. Giữ chốt F1 (oldApp!=target), F4 (re-check
+        //   B bounce), F5 (không restoreFullscreen target), F10 (re-pick B), R11 (occlude trước gentle).
+        val res = CastShell.swapOnVd(sh, target, comp, oldApp, vd, log)
+        val landed = res.target
+        if (landed == null) {                                                                // R6/abort: GIỮ app cũ trên cụm (KHÔNG treo)
+            log("  ⚠ ${res.note} — GIỮ ${labelOf(app, oldApp)} trên cụm")
+            return
+        }
+        // ⑥ khung/scale app MỚI (dùng StackEntry ĐÃ RE-PICK — F10, taskId có thể đổi sau force-stop/re-assert)
+        val (w, h) = DisplayParse.realSize(sh("dumpsys display"), vd); rememberClusterSize(w, h)
+        log("  ⑧ khung: ${applyBounds(sh, vd, landed, scaleOf(target), w, h)}")
+        setLastCastApp(app, target); setCasting(true); lastDisplayId = vd                     // R4: cấu hình nhắm ĐÚNG app đích
+        log("✅ Đổi sang ${labelOf(app, target)} (hot-swap v0.66, VD $vd giữ sống — force-stop app cũ, không huỷ VD, không treo)")
+        divergenceOn(sh, vd)?.let { log("  ⚠ post-swap: $it") }
     }
 
     /**
@@ -666,7 +645,7 @@ object ClusterCast {
      *
      * @return chuỗi mô tả để hiện cho người dùng, hoặc null nếu lành.
      */
-    private fun divergenceOn(sh: (String) -> String, vd: Int): String? {
+    internal fun divergenceOn(sh: (String) -> String, vd: Int): String? {
         if (vd < 1) return null
         // ★ ĐÒI HAI LẦN LẤY MẪU LIÊN TIẾP. Hai lệnh dumpsys không nguyên tử: stack bị gỡ đúng khe giữa hai lệnh
         //   cũng trông y như mồ côi. Đây là CỔNG CẤM THAO TÁC nên một mẫu là không đủ — cùng mẫu WATCHDOG_MISSES.
@@ -688,6 +667,57 @@ object ClusterCast {
         }.getOrNull()
     }
 
+    /**
+     * ★ v0.60 TEARDOWN-GUARD (P0) — bê MỌI sink chiếu-điện-thoại (pkg ≠ [keepPkg]) khỏi VD về display 0
+     * (`am display move-stack … 0` — GIỮ phiên, KHÔNG force-stop) rồi verify VD sạch sink. Gọi TRƯỚC mỗi lần
+     * huỷ/tái tạo VD (cmd16 re-project · teardownSeq).
+     * @return true nếu VD đã sạch sink (an toàn tiếp tục huỷ/tái tạo VD);
+     *         false nếu move-stack HỤT hoặc còn sót → phía gọi KHÔNG được huỷ/tái tạo VD (fail-safe:
+     *         thà không làm còn hơn tạo cửa sổ mồ côi phải reboot xe).
+     */
+    /**
+     * ★ v0.60 RT1.6 — TEE log chiếu ra FILE (`getExternalFilesDir/castlog/cast_<tag>_v<ver>_<ts>.txt`) song song
+     * với UI. Vì sao: cắm CP/AA là đầu xe tắt WiFi → adb ngoài không vào được; panel Diag chỉ hiện TextView, không
+     * lưu → phân tích R1/R2/R3/evict/guard phải suy từ code. Giữ 5 file mới nhất (chống phình). Lỗi ghi file KHÔNG
+     * được làm ngã đường chiếu (nuốt lỗi, vẫn trả về UI logger).
+     */
+    private fun castLogger(app: Context, tag: String, ui: (String) -> Unit): (String) -> Unit {
+        val f = runCatching {
+            val dir = java.io.File(app.getExternalFilesDir(null), "castlog").apply { mkdirs() }
+            dir.listFiles()?.sortedBy { it.lastModified() }?.dropLast(4)?.forEach { runCatching { it.delete() } }
+            val ver = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "x"
+            java.io.File(dir, "cast_${tag}_v${ver}_${System.currentTimeMillis()}.txt").also {
+                it.appendText("### cast-log $tag · v$ver · " +
+                    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()) + " ###\n")
+            }
+        }.getOrNull()
+        return { line ->
+            ui(line)
+            if (f != null) runCatching {
+                f.appendText(java.text.SimpleDateFormat("HH:mm:ss.SSS ", java.util.Locale.US).format(java.util.Date()) + line + "\n")
+            }
+        }
+    }
+
+    internal fun guardSinksOffVd(sh: (String) -> String, vd: Int, keepPkg: String, log: (String) -> Unit): Boolean {
+        if (vd < 1) return true
+        val sinks = phoneProjectionSinksOn(StackParse.parse(sh("am stack list")), vd).filter { it.pkg != keepPkg }
+        if (sinks.isEmpty()) return true
+        for (s in sinks) {
+            // ★ v0.7x (T9): THAY `am display move-stack …0` (primitive NPE B — gentle-move visible size-compat sink
+            //   → initializeChangeTransition → orphan) bằng [CastShell.returnAppToMain] (sink-safe, R11): occlude →
+            //   gentle am start d0 (GIỮ phiên); còn VISIBLE → ĐỂ YÊN (KHÔNG force-stop = giữ phiên, KHÔNG move-stack).
+            //   Sink còn sót sẽ theo VD về display 0 khi teardown huỷ VD (removeMode 0 = MOVE_CONTENT_TO_PRIMARY).
+            val occluded = !WmParse.isVisibleOn(sh("dumpsys window displays"), s.pkg, vd)
+            log("  🛡 teardown-guard: bê sink chiếu-điện-thoại ${s.brief()} khỏi VD (returnAppToMain — GIỮ phiên, ${if (occluded) "occluded→gentle" else "visible→để yên"})")
+            CastShell.returnAppToMain(sh, s.pkg, vd, occluded, log)
+            Thread.sleep(300)
+        }
+        val still = phoneProjectionSinksOn(StackParse.parse(sh("am stack list")), vd).filter { it.pkg != keepPkg }
+        if (still.isNotEmpty()) { log("  ⛔ teardown-guard: VD còn ${still.size} sink (visible/cưỡng lại) → để yên, sẽ theo VD về d0 khi teardown (removeMode 0)"); return false }
+        return true
+    }
+
     private fun placeAppOnVd(app: Context, adb: dadb.Dadb, sh: (String) -> String, target: String, vd: Int, allowDestructive: Boolean, log: (String) -> Unit): StackEntry? {
         if (vd < 1) { log("  ❌ VD không hợp lệ ($vd) — BỎ QUA (không bao giờ đụng display 0)"); return null }
         // ★ DỪNG TRƯỚC KHI BẮN. Ở trạng thái WM↔AM lệch, mọi lệnh đều vô nghĩa hoặc làm hỏng thêm.
@@ -695,7 +725,7 @@ object ClusterCast {
         CastShell.ensureFreeformSeed(app, sh, log)
         // ★ v0.42: CỤM CHỈ ĐƯỢC CÓ 1 APP — dọn app lạ TRƯỚC khi đặt app mới (chỉ stack app thường, không đụng
         //   home/PIP). Trước đây hàm này viết ra rồi QUÊN GỌI, nên đổi app cứ chồng đống trên cụm.
-        CastShell.evictVd(adb, sh, vd, target, log)
+        CastShell.evictVd(sh, vd, target, log)
         // ★ v0.42 ĐỌC TRƯỚC KHI GHI: mỗi lệnh `wm density` là một config change → framework RELAUNCH activity
         //   (destroy + onCreate mới). App nào giữ overlay theo PROCESS (bong bóng tốc độ Vietmap) thì overlay cũ
         //   KHÔNG bị thu hồi → mỗi lần relaunch là thêm một bong bóng chồng lên. Giá trị đã đúng thì đừng ghi lại.
@@ -779,6 +809,21 @@ object ClusterCast {
             log("  ⛔ R3 BỎ QUA: '$target' đang bật GIỮ PHIÊN (◈) — không force-stop. Bỏ ◈ nếu muốn thử.")
             return null
         }
+        // ★ v0.58/v0.60 TỰ BẢO VỆ app chiếu-điện-thoại. keepSessionApps mặc định rỗng → trước đây R3 được phép
+        //   force-stop CarPlay/Android Auto khi user bấm CHIẾU → RỚT phiên chiếu từ điện thoại (user phải cắm lại).
+        //   ★ ĐÍNH CHÍNH (workflow phản biện 23/07): force-stop KHÔNG phải nguyên nhân "phải reboot xe" — trong
+        //   incident 22/07 force-stop KHÔNG hề chạy mà crash vẫn nổ. Lỗi reboot là do VD bị huỷ/tái tạo khi sink
+        //   CÒN BÁM (cửa sổ mồ côi), nay đã chặn bằng teardown-guard [P0]. Vẫn CHẶN R3 cho sink: mất phiên chiếu
+        //   là mất luôn (khó chịu). Nhận diện theo HÀNH VI (activity đang hiện là sink chiếu màn), KHÔNG hardcode tên gói.
+        if (isPhoneProjection(comp, target)) {
+            log("  ⛔ R3 BỎ QUA: '$target' là app chiếu điện thoại (CarPlay/Android Auto) — force-stop sẽ RỚT phiên " +
+                "chiếu (phải cắm lại điện thoại). Thà không lên cụm còn hơn. Bật GIỮ PHIÊN thủ công nếu muốn ép.")
+            // ★ v0.60 (§5-A.3): R1/R2 có thể đã để sink DÍNH NỬA VỜI trên VD → bê về display 0 (giữ phiên) ngay,
+            //   để lần huỷ/tái tạo VD kế KHÔNG biến nó thành cửa sổ mồ côi. target CHÍNH là sink nên bê đúng nó.
+            StackParse.of(StackParse.parse(sh("am stack list")), target).filter { it.displayId == vd }
+                .map { it.stackId }.distinct().forEach { sh("am display move-stack $it 0 2>&1"); Thread.sleep(300) }
+            return null
+        }
         log("  R3 ⚠ PHÁ PHIÊN: force-stop $target rồi mở lại trên VD — MẤT phiên dẫn/chiếu đang chạy")
         sh("am force-stop $target"); Thread.sleep(700)
         CastShell.logLines(sh("am start --display $vd --windowingMode 5 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $comp --activity-clear-task 2>&1"), log)
@@ -802,7 +847,7 @@ object ClusterCast {
      * rect auto (user chưa cấu hình) → fallback dùng khung mỹ thuật legacy [overscanArg] (giữ hành vi cũ).
      * @return mô tả đường đã áp — để log TRUNG THỰC (trước đây log "đã áp scale" cả khi resize bị ném lỗi).
      */
-    private fun applyBounds(sh: (String) -> String, vd: Int, e: StackEntry?, scale: AppScale, w: Int, h: Int): String {
+    internal fun applyBounds(sh: (String) -> String, vd: Int, e: StackEntry?, scale: AppScale, w: Int, h: Int): String {
         // ★★ GUARD P0 (v0.36): TUYỆT ĐỐI không `am task resize` một task KHÔNG nằm trên VD.
         //   Trước đây taskId lấy từ `am stack list` toàn cục, không kiểm display → khi app không bám VD mà cờ
         //   casting vẫn bật, nút chỉnh size bắn `am task resize <task ở display 0>` với toạ độ cụm 1920×720:
@@ -948,6 +993,15 @@ object ClusterCast {
                             }
                             // tới đây là app THẬT SỰ đang trên cụm → nhận lại phiên nếu cờ RAM đã mất
                             if (!casting || lastCastApp != pkg) { lastDisplayId = vd; setLastCastApp(app, pkg); setCasting(true) }
+                            // ★ v0.58 NÓI THẬT KHI SIZE-COMPAT. Log SL6 chứng minh AA (và app non-resizeable khác)
+                            //   vào size-compat trên cụm → framework đóng băng densityDpi ⇒ wm density / task resize
+                            //   KHÔNG ăn. Trước đây nút DPI im lặng no-op, người dùng tưởng app hỏng. Báo đúng bệnh.
+                            DisplayParse.sizeCompatScale(sh("dumpsys window displays"), pkg)?.let { sc ->
+                                val pct = (sc * 100).toInt()
+                                log("⚠ $pkg đang SIZE-COMPAT (thu nhỏ ${pct}%): app khai KHÔNG cho đổi kích thước, " +
+                                    "framework đóng băng cấu hình → DPI/kích thước KHÔNG ăn với app này. " +
+                                    "Đây là hạn chế của chính app, không phải lỗi ClusterNav.")
+                            }
                             setDensityIfNeeded(::sh, vd, cur.dpi)
                             val (w, h) = DisplayParse.realSize(sh("dumpsys display"), vd); rememberClusterSize(w, h)
                             val how = applyBounds(::sh, vd, e, cur, w, h)

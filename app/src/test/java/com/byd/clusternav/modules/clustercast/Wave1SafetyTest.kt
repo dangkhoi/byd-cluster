@@ -14,7 +14,7 @@ class Wave1SafetyTest {
     // ── W1-3: "không đọc được tốc độ" KHÔNG được đồng nghĩa với "xe đang đỗ" ──
 
     /**
-     * Mô phỏng đúng cổng trong DeadReckonService: `mpsOrNull()?.let { it < 2.0 } == true`.
+     * Mô phỏng cổng ngưỡng tốc độ mà `DeadReckonService` từng dùng (đã bỏ hẳn 27/7, nhưng bất biến vẫn đúng cho mọi người tiêu thụ về sau): `mpsOrNull()?.let { it < 2.0 } == true`.
      * Đây là hình dạng bắt buộc — `mps() < 2.0` (bản cũ) đọc 0.0 khi HAL câm nên LUÔN mở cổng.
      */
     private fun stationaryGate(speed: Double?): Boolean = speed?.let { it < 2.0 } == true

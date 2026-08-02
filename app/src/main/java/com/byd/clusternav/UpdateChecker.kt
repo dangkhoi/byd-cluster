@@ -1,5 +1,6 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.carexec.LocalDeviceShell
 import android.content.Context
 import org.json.JSONArray
 import java.io.File
@@ -96,9 +97,7 @@ object UpdateChecker {
      * `-r` = reinstall giữ dữ liệu; cùng chữ ký nên không cần gỡ trước.
      */
     fun install(ctx: Context, apk: File): String = runCatching {
-        dadb.Dadb.create("localhost", 5555, AdbKeys.ensure(ctx.applicationContext)).use { adb ->
-            adb.install(apk, "-r")
-        }
+        LocalDeviceShell.installApk(AdbKeys.ensure(ctx.applicationContext), apk, "-r")
         Lang.t("đã cài — app sẽ tự khởi động lại", "installed — the app will restart")
     }.getOrElse { Lang.t("cài thất bại: ${it.message}\nAPK đã tải ở: ${apk.absolutePath}", "install failed: ${it.message}\nAPK downloaded at: ${apk.absolutePath}") }
 

@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "ClusterNav"
 include(":app")
+include(":core")
+include(":car-integration")

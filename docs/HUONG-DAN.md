@@ -1,104 +1,47 @@
-# Hướng dẫn sử dụng ClusterNav
+# ClusterNav — Hướng dẫn sử dụng
 
-> Ảnh minh hoạ giao diện app (chụp từ emulator, dữ liệu demo). Trên xe thật giao diện y hệt; phần chiếu sẽ hiện trên **cụm đồng hồ**.
+> Phiên bản: 0.99 — Cluster Cast đơn giản hoá
 
-## 1. Cài đặt
+## Cách dùng Cluster Cast
 
-1. Tải APK: [`apk/ClusterNav-0.35-release.apk`](../apk/ClusterNav-0.35-release.apk) → cài:
-   ```bash
-   adb install -r ClusterNav-0.35-release.apk
-   ```
-   (hoặc copy vào máy bấm cài — cho phép "cài từ nguồn không xác định").
-2. Trên xe bật một lần: **Developer options → USB debugging** + **adb tcp 5555**.
-3. Cấp quyền cho ClusterNav:
-   - **Notification access** (để đọc dẫn đường Google Maps) — *bắt buộc*.
-   - **Mock location app = ClusterNav** (Developer options) — cho GPS hầm.
-   - **Hiển thị trên ứng dụng khác** (overlay) — cho nút nổi (bubble).
+### Mở app = cụm sẵn sàng ngay
 
-## 2. Màn hình chính
+Khi bạn mở ClusterNav, projection tự kích hoạt — cụm đồng hồ sẵn sàng nhận nội dung ngay lập tức.
 
-![Màn hình chính](images/man-hinh-chinh.png)
+### Chiếu app lên cụm
 
-- **Bật/Tắt** (góc phải): bật ClusterNav.
-- **Trạng thái**: "Đang chờ — mở Google Maps để dẫn đường" → khi bắt đầu dẫn sẽ đổi.
-- **Kết nối lại nav**: khi nav trên cụm không lên, bấm để bind lại.
-- **GPS trong hầm**: bật/tắt dịch vụ bù GPS.
-- **Chiếu app lên cụm**: nút chiếu + vào Cài đặt chiếu.
+- **Chạm nút nổi** (floating button) → app đang mở trên màn chính được chiếu lên cụm đồng hồ.
+- **Chạm lại nút nổi** → trả app về màn chính, cụm quay lại trạng thái chờ.
 
-## 3. Đưa dẫn đường lên cụm (giữ nguyên đồng hồ)
+### CarPlay / Android Auto
 
-Bật app → mở **Google Maps** dẫn đường như bình thường. Mũi tên rẽ + khoảng cách + tên đường + ETA sẽ hiện trên cụm, **đồng hồ gốc vẫn còn**:
+- Luôn chiếu **toàn màn hình** (full-screen).
+- Không resize, không chia đôi.
 
-![Nav card trên cụm](images/nav-card.png)
+### App thường
 
-> Không chiếm màn — chỉ thêm dải chỉ dẫn. Đây là cách nhẹ nhất, khuyên dùng khi chỉ cần mũi tên + km.
+- Có thể chiếu **toàn màn hình** hoặc **chia đôi** (split).
+- Cho phép chỉnh kích thước vùng chiếu.
 
-## 4. Chiếu nguyên app lên cụm (giữ phiên dẫn — T1)
+### Tắt app
 
-Khi muốn xem **nguyên bản đồ** (Google Maps / VietMap / Waze / Apple CarPlay) trên cụm mà **vẫn giữ tuyến đang dẫn**:
+Khi tắt ClusterNav, cụm đồng hồ tự động trở về hiển thị đồng hồ mặc định.
 
-### 4.1. Chọn app sẽ chiếu
-Mở **Cài đặt chiếu** → kéo xuống phần **"App được chiếu"** → **tick (chạm)** các app muốn đưa lên cụm. App đã tick hiện **✓ + viền xanh** và xuất hiện trong menu nút nổi.
+## Tóm tắt
 
-![Cài đặt chiếu — tick app](images/cai-dat-chieu.png)
+| Thao tác | Kết quả |
+|----------|---------|
+| Mở ClusterNav | Cụm sẵn sàng (projection tự mở) |
+| Chạm nút nổi | Chiếu app đang mở lên cụm |
+| Chạm lại nút nổi | Trả app về, cụm chờ |
+| Tắt ClusterNav | Cụm về đồng hồ |
 
-- **Giữ-nhấn** 1 app đã tick để đổi **chế độ chiếu**: **T1 mặc định** (giữ dẫn) ↔ **⊞ T3** (dự phòng khi T1 hụt).
-- Mỗi app chỉnh **kích thước riêng** — xem [mục 5](#5-chỉnh-kích-thước-từng-app-scale).
+## Navigation + HUD
 
-### 4.2. Chiếu (thứ tự quan trọng)
-1. Mở app (Maps / VietMap / CarPlay…) ở **màn giữa** và **bắt đầu dẫn TRƯỚC**.
-2. Chiếu bằng **nút nổi** (mục 4.3) hoặc nút **"Chiếu lên cụm"**.
+ClusterNav cũng hỗ trợ một nguồn dẫn đường duy nhất với hai đầu ra độc lập:
+- **Cluster-lane** — hiển thị lane guidance trên cụm đồng hồ.
+- **HUD** — hiển thị thông tin dẫn đường trên head-up display.
 
-> ⚠️ **Quan trọng:** phải để app **đang dẫn** rồi mới chiếu — chưa dẫn mà chiếu thì app mở lại từ đầu (mất tuyến).
->
-> **Đổi kiểu** (khi đỗ): *cong (giữ km/h)* ↔ *thẳng (full màn)*. **TẮT — trả đồng hồ** để về đồng hồ gốc.
+## Lưu ý
 
-### 4.3. Nút nổi (bubble) — chiếu nhanh, không cần mở app
-Bật bằng nút **"Hiện nút nổi"** ở màn chính (cần quyền **Hiển thị trên ứng dụng khác**). Nút lơ lửng trên mọi màn:
-
-![Nút nổi (bubble) ▢ lơ lửng trên màn hình](images/nut-noi.png)
-
-- **Chạm** = bật/tắt chiếu app gần nhất. Biểu tượng đổi theo trạng thái: **▢** = chưa chiếu · **▣** = đang chiếu.
-- **Giữ (long-press)** = hiện **menu các app đã tick** → chọn 1 app để chiếu (tiện khi đang lái, khỏi mở app to).
-- **Kéo** = di chuyển vị trí (tự nhớ).
-
-> Mở app ClusterNav là bubble **tự hiện** (nếu đã cấp quyền overlay).
-
-## 5. Chỉnh kích thước từng app (scale)
-
-Mỗi app một tỷ lệ khác nhau → chỉnh riêng bằng **các nút LỚN, gom gọn 1 hàng** hiện ngay dưới app đã tick (nút to, dễ nhấn trên màn 15.6"). Nhấn tới khi vừa mắt (tự lưu; **ngừng nhấn ~0.3s mới áp lên cụm** cho mượt, khỏi giật). Chia 4 nhóm:
-
-![Chỉnh scale](images/chinh-scale.png)
-
-- **Kích thước** — `Hẹp` / `Rộng` (thu/nới chiều ngang), `Thấp` / `Cao` (thu/nới chiều dọc). Co giãn **quanh tâm**.
-- **Vị trí** — `◀ ▲ ▼ ▶` dời **cả khung** sang trái / lên / xuống / phải, **giữ nguyên kích thước**.
-- **Chữ** — `nhỏ / to` chỉnh độ lớn nội dung (**DPI cao = chữ/nội dung TO hơn, ít nội dung lọt màn**; gốc của cụm là 320, app đặt 200).
-- **Khôi phục** — `↺` về full cụm (auto).
-
-> Cách nhanh: chỉnh **Kích thước** cho vừa trước, rồi **Vị trí** (◀▲▼▶) dời cho cân. Ví dụ CarPlay bị rộng → bấm **Hẹp** vài nhịp cho gọn, rồi **◀ / ▶** đẩy khung về đúng chỗ trên cụm.
-
-> **Ghi chú kỹ thuật (v0.36):** khi mới cài, nút kích thước chạy qua đường "overscan" (co vùng hiển thị) — hoạt động ngay. App đồng thời bật cờ hệ thống `enable_freeform_support` (chỉ có tác dụng từ lần **tắt máy xe hẳn** rồi mở lại — sau đó nút chuyển sang đường resize "xịn" mượt hơn, xem log trong màn chiếu). Cờ này **giữ nguyên kể cả gỡ app**; muốn trả về mặc định: `adb shell settings delete global enable_freeform_support && adb shell settings delete global development_enable_freeform_windows_support && adb shell settings delete global force_resizable_activities` rồi tắt máy xe 1 lần.
-
-## 6. GPS trong hầm (dead-reckon)
-
-Bật ở màn chính. Khi mất GPS (hầm, gầm cầu), app bù vị trí bằng **tốc độ + góc lái** để Google Maps đi tiếp; ra hầm tự về GPS thật. Cần chọn ClusterNav làm *mock location app*.
-
-## 7. Nhiều dòng xe (Seal / SL6 / Han / Tang)
-
-Phần **Hồ sơ cụm** (trong Cài đặt chiếu) tự nhận diện kích thước cụm. Nếu xe lạ hiển thị sai:
-- **Xuất hồ sơ** → copy chuỗi chia sẻ trong nhóm.
-- **Nhập & áp hồ sơ** → dán chuỗi của người đã chỉnh đúng cho dòng xe bạn.
-- **Về auto-detect** → quay lại tự dò.
-
-## 8. Gỡ lỗi thường gặp
-
-| Hiện tượng | Cách xử |
-|---|---|
-| Nav không lên cụm | Bấm **Kết nối lại nav**; vẫn không thì **reboot đầu xe** (AmapService kẹt). |
-| Chiếu xong mất tuyến dẫn | Phải **bắt đầu dẫn TRƯỚC** khi chiếu; dùng **T1** (không phải mở mới). |
-| App chiếu bị méo/lệch | Chỉnh ở mục 5: **Hẹp/Rộng/Thấp/Cao** cho vừa, **◀▲▼▶** dời cho cân, **DPI** chỉnh độ lớn. |
-| Cài bản mới báo lỗi chữ ký | Dùng bản **release** (`install -r`) — cùng chữ ký, khỏi gỡ. |
-| Sau khi cài đè, nav mất | Tắt/bật lại **Notification access** cho ClusterNav. |
-
----
-Chi tiết kỹ thuật (cơ chế chiếu, AutoContainer, dead-reckon): xem `docs/reference/` và mã nguồn `app/src`.
+> ⚠️ Đây là dự án cá nhân thử nghiệm. Không đảm bảo an toàn lái xe, tương thích phần cứng, khả năng hoàn tác, hay sẵn sàng sản xuất. Cài đặt và sử dụng hoàn toàn tự chịu rủi ro. Không liên kết với BYD.
