@@ -88,6 +88,13 @@
             <Spinner android:id="@+id/spinner_autostart_app" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:layout_marginTop="6dp" android:minHeight="@dimen/touch_min" />
 
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:text="Tỉ lệ chia đôi cụm — dùng khi chạm ô nửa trái/nửa phải của nút nổi"
+                android:textColor="@color/text_secondary" android:textSize="@dimen/text_label" />
+            <Spinner android:id="@+id/spinner_split_ratio" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="6dp" android:minHeight="@dimen/touch_min"
+                android:contentDescription="Tỉ lệ chia đôi cụm khi chiếu hai app" />
+
             <CheckBox android:id="@+id/cb_vietmap_bubble_experiment" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:layout_marginTop="6dp"
                 android:minHeight="@dimen/touch_min" android:textColor="@color/text_secondary"
@@ -123,6 +130,10 @@
                 <Button android:id="@+id/cast_recover_once" android:contentDescription="Thử phục hồi projection một lần"
                     android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp"
                     android:layout_marginTop="6dp" android:background="@drawable/btn_outline" android:text="Thử phục hồi một lần" android:textAllCaps="false"
+                    android:textSize="14sp" android:textColor="@color/btn_text" />
+                <Button android:id="@+id/cast_clear_cluster" android:contentDescription="Trả cụm về đồng hồ: đưa mọi app trên cụm về màn chính rồi đóng đường chiếu"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp"
+                    android:layout_marginTop="6dp" android:background="@drawable/btn_warning_outline" android:text="Trả cụm về đồng hồ (cứu hộ)" android:textAllCaps="false"
                     android:textSize="14sp" android:textColor="@color/btn_text" />
                 <Button android:id="@+id/cast_physical_instruction" android:contentDescription="Mở hướng dẫn khôi phục vật lý"
                     android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp"

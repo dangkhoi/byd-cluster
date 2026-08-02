@@ -36,8 +36,8 @@ class CastAccessibilityTest {
         // "<nhóm> <nhãn>", vì nhãn hiển thị là ký hiệu (◀ ▲ ▼ ▶ ↺) — TalkBack không đọc được ký hiệu.
         assertTrue(rows.contains("minimumHeight = dp(context, 52)"))
         assertTrue(rows.contains("contentDescription = \"\$title \$caption\""))
-        // Nút nổi: đúng MỘT vòng tròn 56dp, có nhãn, không cử chỉ ẩn (v0.72 bỏ hẳn menu và nút Dừng riêng).
-        assertTrue(bubble.contains("BUBBLE_SIZE_DP = 56"))
+        // Nút nổi: mỗi ô 28dp compact, có nhãn, không cử chỉ ẩn.
+        assertTrue(bubble.contains("BUBBLE_SIZE_DP = 30"))
         assertTrue(bubble.contains("minimumHeight = dp(minDp)"))
         assertTrue(bubble.contains("contentDescription"))
         assertFalse(bubble.contains("setOnLongClickListener"))

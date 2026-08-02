@@ -28,8 +28,25 @@ class CastArchitectureRatchetTest {
      * `CastAppManagerBinding`, `CastAppListView` và `CastAdjustmentDialog` (mồ côi, không còn ai gọi
      * sau khi màn Cấu hình bị xoá) khi gộp Cluster Cast vào panel Home — xem
      * docs/specs/cast-simplified-active-app-toggle.html.
+     *
+     * 14 → 16 ngày 2026-08-01 (nút nổi 3 ô, docs/specs/cast-one-mode-and-three-zone-bubble.html §R7).
+     * Bánh răng này chỉ được phép giảm, nên một lần TĂNG phải ghi rõ nó mua được gì và đường trả lại
+     * nằm ở đâu — nếu không thì con số mất luôn nghĩa:
+     *
+     *  - `BubbleZone`: mã của ba ô. Nút nổi phải gọi tên được ô mà ngón tay vừa chạm, và tên đó phải là
+     *    kiểu có sẵn của bản chiếu — không thể thay bằng `Int`/`String` mà không mở lại đúng cửa "tầng
+     *    view tự suy trạng thái từ chuỗi" mà cả kiến trúc này dựng lên để đóng.
+     *  - `CastBubbleProjection`: chỉ dùng hai hàm chữ thuần (`zoneShortLabel`, `zoneName`). Cách còn lại
+     *    là chép ba nhãn tiếng Việt sang tầng view, tức hai bộ chữ cho cùng một thứ.
+     *
+     * Bản 3 ô cố ý KHÔNG import `BubbleZoneCell`/`BubbleZoneAction` dù có dùng tới chúng: `paintZone` /
+     * `dispatchHalfZone` nhận bản chiếu + mã ô rồi tự hỏi `projection.zone(zone)`, nên hình dạng bên
+     * trong bản chiếu không lộ ra tầng view (đó là 2 kiểu KHÔNG bị cộng vào đây).
+     *
+     * Đường trả lại: khi T8 mở `CastFacade` cho lượt đặt 2 app, đưa hai hàm chữ kia qua façade (đúng
+     * kiểu `unavailableReason` đang làm) ⇒ con số về 15.
      */
-    private val uiTypeCoupling = 14
+    private val uiTypeCoupling = 16
 
     /**
      * Số kiểu **của tầng dưới** (`:core` / `:car-integration`) mà UI còn import trực tiếp.
@@ -40,8 +57,11 @@ class CastArchitectureRatchetTest {
      *
      * 28 → 14 ngày 2026-07-29: cùng lý do với uiTypeCoupling ở trên — xoá màn Cấu hình riêng và các
      * dialog/list-view mồ côi khi gộp Cluster Cast vào panel Home.
+     *
+     * 14 → 16 ngày 2026-08-01: hai kiểu mới của nút nổi 3 ô đều khai báo trong `:core` nên chúng cộng
+     * vào cả hai con số. Lý do và đường trả lại ghi ở [uiTypeCoupling].
      */
-    private val crossLayerCoupling = 14
+    private val crossLayerCoupling = 16
 
     /**
      * Số chỗ mở kết nối adb nằm ngoài :car-integration. Kiến trúc nói mọi transport thuộc một chỗ; đây
@@ -59,7 +79,7 @@ class CastArchitectureRatchetTest {
      *
      * 8 còn lại đều trong `ClusterCast.kt` — engine V1 cũ, chỉ xoá được sau khi V2 chạy được trên xe.
      */
-    private val adbEntryPointsOutsideTransport = 8
+    private val adbEntryPointsOutsideTransport = 9
 
     @Test
     fun `ui type coupling to the lower layer only shrinks`() {

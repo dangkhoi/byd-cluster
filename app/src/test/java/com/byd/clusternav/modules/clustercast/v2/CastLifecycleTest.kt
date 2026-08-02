@@ -104,8 +104,13 @@ class CastLifecycleTest {
         assertFalse(catalog.contains("legacy.edit()"))
         assertTrue(controller.contains("CastAppCatalog"))
         assertTrue(catalog.contains("fun setProtected"))
-        listOf("retryConnect()", "showPhoneDisconnectGuidance()", "confirmEligibleRecovery()",
-            "showPhysicalInstruction()", "openProfileSetup()")
+        // 2026-08-01: ba hộp thoại chỉ-đọc chuyển sang `CastGuidanceDialogs` và nút cứu hộ sang
+        // `CastClearClusterAction` để controller ở dưới ngưỡng 500 dòng mà `CastRendererContractTest`
+        // canh. Ý của khẳng định này KHÔNG đổi — mỗi nút khắc phục phải nối tới một handler thật, không
+        // được là nút chết — chỉ có chỗ đặt handler là đổi.
+        listOf("retryConnect()", "CastGuidanceDialogs.phoneDisconnect(", "confirmEligibleRecovery()",
+            "CastGuidanceDialogs.physicalRecovery(", "CastGuidanceDialogs.openProfileSetup(",
+            "CastClearClusterAction(")
             .forEach { assertTrue(controller.contains(it), it) }
         listOf("ClusterCast.loadPrefs", "ClusterCast.listInstalledApps", "ClusterCast.isKeepSession", "ClusterCast.isPhoneProjection")
             .forEach { assertFalse(controller.contains(it), it) }

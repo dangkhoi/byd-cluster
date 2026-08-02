@@ -146,6 +146,68 @@ object CastColdBootstrapPreflight {
     private fun blocked(reason: String) = ColdBootstrapPreflight.Blocked(reason)
 }
 
+/**
+ * The single place that decides which PICTURE_IN_PICTURE app-op mode is allowed into a baseline.
+ *
+ * MEASURED on the vehicle 2026-07-31: after several cast transactions involving vn.vietmap.live got
+ * stuck, `appops get vn.vietmap.live PICTURE_IN_PICTURE` still answered `deny`. VietMap's own
+ * speed-bubble PIP was therefore silently dead — the owner only noticed because the bubble never came
+ * back — and nothing in ClusterNav ever restored it. Setting the op back to `allow` by hand restored
+ * the feature, which is what proves the app-op was the entire cause.
+ *
+ * A baseline is supposed to record the world as it was BEFORE ClusterNav touched it. `ignore` is
+ * exactly what our own escalation rung writes (`BLOCK_PIP` → `appops set <pkg> PICTURE_IN_PICTURE
+ * ignore`, car-integration CastPlacementCommands.kt:115-119) and `deny` is the mode the car was
+ * actually left holding, so adopting either one as "the world before us" turns our own residue into a
+ * permanent fact: every later RESTORE_PIP would faithfully write the block back
+ * (`restorePipMode`, CastPlacementCommands.kt:210-212).
+ *
+ * Of the two honest options — never baseline a blocked value, or refuse to baseline at all — this
+ * takes the first, and records `null` ("nothing was recorded") rather than inventing a mode:
+ *
+ *  - `null` is what the transport already answers with `allow` (CastPlacementCommands.kt:212), i.e.
+ *    the one mode that cannot leave a third-party app's PIP silently dead. Writing the literal string
+ *    "allow" here instead would be a claim about the platform default that this file has NOT verified
+ *    in AOSP source, and CLAUDE.md §3 forbids shipping such a claim.
+ *  - `null` is also what an idle observation genuinely yields on this vehicle: the dump parser only
+ *    reads an app-op for an observed TARGET (`val pipMode = target?.packageName?.let` in
+ *    DumpObservedStateParser, CastDeviceParsers.kt:185) and a bootstrap terminal is
+ *    IDLE_CLEAN with no target. Journaling anything else would make the idle convergence checks that
+ *    compare `observed.pipMode == baseline.pipMode` (CastCoordinator.kt:377, CastRuntimeUi.kt:41)
+ *    permanently false — a second, quieter dead end where the session can never re-verify.
+ *  - Refusing to bootstrap at all would be strictly worse in a car: with no stable session there is
+ *    no Stop either (Stop is refused outright without a journaled baseline geometry,
+ *    CastPlanner.kt:37-39), so the driver would keep the block AND lose the only engine able to
+ *    remove it. CLAUDE.md §5: anything changed outside the process must keep a way back that still
+ *    works after the process has died.
+ *
+ * The cost is stated openly: a user who had deliberately denied PIP for an app gets it back at
+ * `allow` after a ClusterNav restore. That is visible and undone with one toggle in Settings; an
+ * invisible permanent `deny` that we caused ourselves is not.
+ *
+ * Evidence levels (CLAUDE.md §2): the `deny` reading on the car and the manual fix are MEASURED. What
+ * the platform itself defaults this app-op to is NOT verified, so nothing here depends on it — only
+ * the two modes that can be named as blocked are treated as blocked: the exact value our own
+ * BLOCK_PIP writes (`ignore`) and the value measured on the vehicle (`deny`).
+ */
+object CastPipBaseline {
+    /**
+     * Modes that mean "this package may not enter PIP".
+     *
+     * `default` is deliberately absent: it means "whatever the platform decides", which this file has
+     * not verified in AOSP source, so it is neither claimed to be blocked nor rewritten.
+     */
+    val BLOCKED_MODES: Set<String> = setOf("ignore", "deny")
+
+    fun isBlocked(mode: String?): Boolean {
+        val normalized = mode?.trim()?.lowercase() ?: return false
+        return normalized in BLOCKED_MODES
+    }
+
+    /** The mode that may be journaled: any observed mode except a blocked one. */
+    fun forBaseline(observedMode: String?): String? = observedMode?.takeUnless { isBlocked(it) }
+}
+
 object CastColdBootstrapVerification {
     private const val MAX_CLUSTER_DIMENSION = 32_768
     private const val MAX_CLUSTER_DENSITY = 10_000
@@ -214,8 +276,7 @@ internal class CastColdBootstrap(
             is ObservationValue.Unsupported -> return ColdBootstrapResult.Blocked("raw preflight unsupported: ${inspected.reason}")
         }
         if (deadlineExpired(deadline)) return ColdBootstrapResult.Blocked("bootstrap deadline exceeded during preflight")
-        val adopt = discoverClusterDisplayId(raw.displays) != null
-        val creation = createTransaction(id, deadline, facts, raw, pendingTarget, adopt, style, profileOverride, resolvedProfile)
+        val creation = createTransaction(id, deadline, facts, raw, pendingTarget, style, profileOverride, resolvedProfile)
         if (creation is BootstrapCreation.Blocked) return ColdBootstrapResult.Blocked(creation.reason)
         val created = (creation as BootstrapCreation.Created).envelope
         val epoch = checkNotNull(created.transaction).epoch
@@ -223,7 +284,32 @@ internal class CastColdBootstrap(
             return fail(id, resolvedProfile, "bootstrap fence changed before activation", true)
         }
 
-        if (!adopt) resolvedProfile.forwardKindsFor(style).forEachIndexed { index, kind ->
+        // ĐO TRÊN DiLink3 ĐÊM 31/7–1/8 — giả định cũ SAI, và đây là gốc rễ của cả đêm mất công:
+        //
+        // Bản trước tính `adopt = discoverClusterDisplayId(raw.displays) != null` rồi BỎ QUA toàn bộ ba
+        // opcode khi display cụm đã có mặt trong `dumpsys display`, với lý lẽ "display đã tồn tại nghĩa
+        // là đã dựng xong, chỉ việc nhận lấy". Lý lẽ đó đánh đồng hai thứ HOÀN TOÀN KHÁC NHAU:
+        //
+        //   • Display ẢO `fission_bg_xdjaVirtualSurface` (displayId=1) do `com.xdja.containerservice` sở
+        //     hữu và giữ THƯỜNG TRỰC — đo được suốt cả đêm, kể cả lúc cụm vật lý đang hiện đồng hồ native.
+        //   • Đường ra MÀN HÌNH VẬT LÝ của cụm thì do chính ba opcode này bật/tắt.
+        //
+        // Bằng chứng ĐÃ CHỨNG MINH (không suy đoán), đo trực tiếp qua adb:
+        //   1. `dumpsys display` luôn thấy display 1 — trong khi cụm vật lý vẫn là đồng hồ native.
+        //   2. App đặt lên display 1 vẽ THẬT vào buffer của nó (`screencap -d 1` chụp ra ảnh app đầy đủ),
+        //      nhưng cụm vật lý KHÔNG hiện gì của app đó.
+        //   3. Gửi tay `service call AutoContainer 2 i32 1000 i32 30 / 16 / 35` → cụm vật lý chuyển sang
+        //      hiện nội dung display 1 NGAY LẬP TỨC. Gửi 18 rồi 0 → cụm trả về đồng hồ native.
+        //
+        // Vì display 1 gần như LUÔN tồn tại trên xe này, `adopt` gần như luôn true ⇒ ba opcode gần như
+        // KHÔNG BAO GIỜ được gửi ⇒ mọi lượt cast đều đặt app đúng chỗ ở tầng WindowManager mà cụm vật lý
+        // không đổi gì. Đúng triệu chứng chủ dự án gặp cả đêm với VietMap lẫn GMaps.
+        //
+        // Nên: LUÔN gửi, không còn cổng `adopt`. Chấp nhận việc gửi lại khi projection đã mở — đo thật
+        // tối qua cho thấy lệnh trả `Parcel(00000000 00000000)` (thành công) ngay cả khi display đã có
+        // sẵn, và đánh đổi này an toàn hơn hẳn chiều ngược lại: không gửi = cụm chắc chắn không hiện gì.
+        // Ledger vì thế cũng luôn ghi đủ cả bước bù hoàn (18/0) — xem `createTransaction`.
+        resolvedProfile.forwardKindsFor(style).forEachIndexed { index, kind ->
             val dispatch = authorizeForward(id, epoch, index, kind)
                 ?: return fail(id, resolvedProfile, "bootstrap epoch, Stop fence, order, or deadline changed before ${kind.name}", true)
             when (val result = execute(dispatch, id, kind)) {
@@ -277,7 +363,6 @@ internal class CastColdBootstrap(
         facts: CastVehicleFacts,
         raw: RawObservation,
         pendingTarget: String?,
-        adopt: Boolean,
         style: ClusterStyle,
         profileOverride: VehicleProfileId?,
         resolvedProfile: VehicleCastProfile,
@@ -296,8 +381,11 @@ internal class CastColdBootstrap(
                     transaction = CastTransaction(
                         id, envelope.durableEpoch, CastOperation.BOOTSTRAP, OperationPhase.PREPARING,
                         null, pendingTarget, null, BOOTSTRAP_PENDING_DISPLAY, preflight.baseline,
-                        if (adopt) emptyList()
-                        else (resolvedProfile.forwardKindsFor(style) + resolvedProfile.compensationKinds)
+                        // Luôn ghi đủ thang tiến + thang bù hoàn: từ 2026-08-01 ba opcode LUÔN được gửi
+                        // (xem khối lý do dài trong `run`), nên sổ phải phản ánh đúng thứ đã phát ra —
+                        // và nhờ vậy `SEAL_DL3_COMPENSATE_18/0` mới có mặt trong sổ để đường bù hoàn
+                        // (`CastRecovery`) có cái mà hoàn tác, thay vì một sổ rỗng không lùi được.
+                        (resolvedProfile.forwardKindsFor(style) + resolvedProfile.compensationKinds)
                             .map { kind ->
                                 LedgerStep(
                                     "bootstrap-${kind.name.lowercase()}", "fixed Seal DL3 bootstrap sequence",
@@ -358,7 +446,15 @@ internal class CastColdBootstrap(
         val stable = StableCastSession(
             StableState.IDLE_VERIFIED, EngineVersion.V2, "runtime-bootstrap", BOOTSTRAP_PROFILE_EXPORT,
             checkNotNull(observed.displayIdentity),
-            CastBaseline(emptySet(), observed.geometry, observed.animationPerKey, observed.pipMode, observed.profile),
+            CastBaseline(
+                emptySet(), observed.geometry, observed.animationPerKey,
+                // Never adopt a blocked PIP app-op as "the world before ClusterNav" — a process that
+                // died while BLOCK_PIP was in effect would otherwise turn its own residue into the
+                // baseline and "restore" the block forever. Measured incident and the reasoning for
+                // dropping the value instead of refusing the bootstrap: see CastPipBaseline above.
+                CastPipBaseline.forBaseline(observed.pipMode),
+                observed.profile,
+            ),
             null, null, observed.geometry, nowEpochMillis(),
         )
         val committed = store.locked {

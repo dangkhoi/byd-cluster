@@ -19,7 +19,7 @@ html.dark{--bg:#08080a;--paper:#171719;--ink:#f5f5f7;--muted:#a1a1a6;--line:#383
 <div class="eyebrow">Consolidated requirements · design · tasks</div>
 <h1>Ba lỗ hổng đo được thật trên xe 30–31/7, cùng một gốc: hệ thống tin vào giả định không còn đúng, không có đường thoát trung thực.</h1>
 <p class="lead">Không phải 3 lỗi rời rạc. Cast VietMap/GMaps/CarPlay hôm nay đều kẹt vì cùng một dạng lỗi: một điều kiện "bình thường không xảy ra" (task không resize được, hai app cùng hiện, Stop được phép bấm) xảy ra thật, và code không có nhánh xử lý trung thực cho nó — chỉ có <code>Unknown</code>/<code>UnknownEffect</code> mơ hồ hoặc một tín hiệu hiển thị sai ý nghĩa.</p>
-<p class="meta">Owner: Đăng Khôi · dangkhoi · Date: 2026-07-31 (đang ngồi trên xe, off-drive) · Root-cause từ dump thật trên DiLink3 (172.20.10.8), không suy đoán</p>
+<p class="meta">Owner: Đăng Khôi · dangkhoi · Date: 2026-07-31 (đang ngồi trên xe, off-drive) · Root-cause từ dump thật trên DiLink3 (<vehicle-ip>), không suy đoán</p>
 <div class="stats"><div class="stat"><b>3</b><span>lỗi đo được thật hôm nay, có dump gốc</span></div><div class="stat"><b>0</b><span>lệnh shell/adb mới cần chứng minh (§14) — chỉ đọc lại dữ liệu đã có</span></div><div class="stat"><b>2</b><span>module core bị đổi (:core thuần, có test off-car)</span></div></div>
 <nav class="toc"><a href="#changelog">Changelog</a><a href="#context">Context</a><a href="#requirements">Requirements</a><a href="#design">Design</a><a href="#tasks">Tasks</a><a href="#verification">Verification</a><a href="#questions">Open Questions</a><a href="#references">References</a><a href="#reviewers">Reviewer Log</a></nav>
 </header>
@@ -31,7 +31,7 @@ html.dark{--bg:#08080a;--paper:#171719;--ink:#f5f5f7;--muted:#a1a1a6;--line:#383
 
 <section id="context"><div class="head"><span class="num">02</span><h2>Context</h2></div>
 <div class="grid3">
-<div class="card"><h3>Sự cố 1 — FIT_CLUSTER_COMPOSITE / CarPlay</h3><p>Đo trên xe lúc 17:57 (172.20.10.8). Cast CarPlay (<code>com.byd.carplay.ui</code>, <code>ClusterStyle.PROJECTION_SINK</code>) — task đã lên đúng vị trí, nhưng bước <code>FIT_CLUSTER_COMPOSITE</code> phát ra:</p><pre>unknown effect:
+<div class="card"><h3>Sự cố 1 — FIT_CLUSTER_COMPOSITE / CarPlay</h3><p>Đo trên xe lúc 17:57 (<vehicle-ip>). Cast CarPlay (<code>com.byd.carplay.ui</code>, <code>ClusterStyle.PROJECTION_SINK</code>) — task đã lên đúng vị trí, nhưng bước <code>FIT_CLUSTER_COMPOSITE</code> phát ra:</p><pre>unknown effect:
 Exception occurred while executing:
 java.lang.IllegalArgumentException: resizeTask not
 allowed on task=TaskRecord{c924b0c #24

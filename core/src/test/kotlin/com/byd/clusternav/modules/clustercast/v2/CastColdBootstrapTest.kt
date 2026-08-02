@@ -19,11 +19,26 @@ class CastColdBootstrapTest {
         ).forEach { assertFalse(SealDl3BootstrapProfile.eligible(it), it.toString()) }
     }
 
+    /**
+     * ĐẢO NGƯỢC CÓ CHỦ ĐÍCH ngày 2026-08-01. Test này trước đây tên là "an existing clean cluster display
+     * is adopted with zero seal commands" và khoá đúng cái GIẢ ĐỊNH SAI đã ngốn trọn đêm 31/7–1/8:
+     * "display cụm đã có trong `dumpsys display` ⇒ đã dựng xong ⇒ khỏi gửi opcode".
+     *
+     * Đo trực tiếp trên DiLink3 chứng minh đó là hai thứ khác nhau (xem khối lý do dài trong
+     * `CastColdBootstrap.run`): display ẢO `fission_bg_xdjaVirtualSurface` do `com.xdja.containerservice`
+     * giữ THƯỜNG TRỰC — nó có mặt suốt đêm trong khi cụm VẬT LÝ vẫn hiện đồng hồ native; app đặt lên nó
+     * vẽ thật vào buffer (`screencap -d 1` chụp được đầy đủ) mà cụm không hiện gì. Chỉ khi gửi tay
+     * 30 → 16 → 35 thì cụm vật lý mới chuyển. Vì display này gần như LUÔN tồn tại trên xe, cổng `adopt`
+     * cũ khiến ba opcode gần như KHÔNG BAO GIỜ được gửi ⇒ cast "thành công" ở tầng WindowManager mà tài
+     * xế không thấy gì đổi trên cụm.
+     *
+     * Giờ khoá chiều ngược lại: display có sẵn và sạch thì VẪN phải gửi đủ thang opcode.
+     */
     @Test
-    fun `an existing clean cluster display is adopted with zero seal commands`() {
+    fun `an existing clean cluster display still dispatches the full seal ladder`() {
         val fixture = fixture()
         val calls = mutableListOf<CommandKind>()
-        val executor = executor(fixture.store, CastMutationGateway { request -> calls += request.kind; MutationResult.Observed("unexpected") })
+        val executor = executor(fixture.store, CastMutationGateway { request -> calls += request.kind; MutationResult.Observed("known") })
         val observations = ArrayDeque(listOf(knownIdle(), knownIdle()))
         val result = executor.bootstrap(
             facts(),
@@ -32,7 +47,7 @@ class CastColdBootstrapTest {
         )
 
         assertTrue(result is ColdBootstrapResult.Succeeded, result.toString())
-        assertEquals(emptyList<CommandKind>(), calls)
+        assertEquals(SealDl3BootstrapProfile.forwardKinds, calls)
         val envelope = loaded(fixture.store)
         assertNull(envelope.transaction)
         val stable = envelope.stableSession!!

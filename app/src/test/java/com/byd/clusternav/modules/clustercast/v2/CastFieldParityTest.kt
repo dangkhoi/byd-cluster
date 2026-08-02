@@ -117,22 +117,41 @@ class CastFieldParityTest {
     }
 
     /**
-     * v0.72 (docs/specs/cast-simplified-active-app-toggle.html): bong bóng chỉ còn ĐÚNG một vòng tròn,
-     * một chạm quyết định cast/stop tuỳ trạng thái — không menu, không app picker, không cử chỉ ẩn.
-     * Khoá lại hình dáng đó, thay cho test cũ khoá bản có menu lưới (đã bị bỏ theo yêu cầu người dùng).
+     * v0.73 (docs/specs/cast-one-mode-and-three-zone-bubble.html §R7): nút nổi là BẢN ĐỒ của cụm — ô
+     * rộng phía trên là cả cụm, hai ô dưới là nửa trái và nửa phải. Thay cho test cũ khoá bản một-vòng-
+     * tròn (v0.72): điều đáng khoá KHÔNG đổi — mỗi vùng đúng một chạm, không menu, không app picker,
+     * không cử chỉ ẩn — chỉ là nay có ba vùng và mỗi vùng tự nói được nó đang có gì.
      */
     @Test
-    fun `the bubble is exactly one circle, no menu, no hidden gesture`() {
+    fun `the bubble is exactly three tap zones, no menu, no hidden gesture`() {
         val bubble = source("main/java/com/byd/clusternav/modules/clustercast/FloatingBubbleService.kt")
         val idleRow = bubble.substring(
             bubble.indexOf("val root = LinearLayout(this).apply {"),
             bubble.indexOf("val type = if (Build.VERSION.SDK_INT >= 26)"),
         )
-        assertTrue(idleRow.contains("addView(circle)"))
-        assertTrue(bubble.contains("BUBBLE_SIZE_DP = 56"))
-        // Vòng tròn đổi hình theo dữ liệu chiếu, không phải theo cờ RAM hay theo chữ trong nhãn.
-        assertTrue(bubble.contains("paintBubble(projection.projecting)"))
-        assertTrue(bubble.contains("if (projecting) \"▣\" else \"▢\""))
+        // Bản đồ: một ô rộng phía trên, hàng hai nửa phía dưới. Đúng ba ô, không hơn.
+        assertTrue(idleRow.contains("addView(zoneFull)"))
+        assertTrue(idleRow.contains("addView(zoneHalves)"))
+        listOf("BubbleZone.FULL", "BubbleZone.LEFT", "BubbleZone.RIGHT").forEach {
+            assertTrue(bubble.contains("zoneView($it"), "thiếu ô $it")
+        }
+        // Vùng chạm 28dp cho TỪNG ô — compact theo yêu cầu chủ dự án 2026-08-01.
+        assertTrue(bubble.contains("BUBBLE_SIZE_DP = 30"))
+        // Mỗi ô đổi hình theo dữ liệu của CHÍNH nó, không theo cờ RAM hay theo chữ trong nhãn.
+        assertTrue(bubble.contains("paintZones(projection)"))
+        assertTrue(bubble.contains("val cell = projection?.zone(zone)"))
+        assertTrue(bubble.contains("if (occupied) BRAND else BRAND_LIGHT"))
+        // Luật §R7 ở tầng chạm: ô không dùng được phải NÓI ra lý do; ô cả cụm giữ nguyên đường
+        // Dừng/Chiếu đã field-proven; hai nửa đi vào đúng một chỗ dành sẵn cho T8.
+        assertTrue(bubble.contains("if (cell != null && !cell.enabled) { toast(cell.message); return }"))
+        assertTrue(bubble.contains("if (zone == BubbleZone.FULL) { onPrimaryTap(); return }"))
+        assertTrue(bubble.contains("dispatchHalfZone(zone)"))
+        // 2026-08-01 (T8): hai nửa đã nối dây thật. Ô trống ⇒ chiếu app đang mở vào ĐÚNG nửa đó qua
+        // `runHalfIntent` (mang theo ô), ô có app ⇒ TRẢ về. Không còn câu "chưa nối dây" nào, và cũng
+        // không có nhánh nào lặng lẽ hạ cấp một yêu cầu nửa cụm thành một lượt chiếu toàn cụm.
+        assertTrue(bubble.contains("facade.runHalfIntent("))
+        assertTrue(bubble.contains("facade.zoneReturnsOnTap(decided, zone)"))
+        assertFalse(bubble.contains("chưa nối dây"), "nửa cụm đã nối dây; câu chờ-làm phải biến mất")
         // Không còn menu/app-picker/cử chỉ ẩn nào.
         assertFalse(bubble.contains("menuPanel"))
         assertFalse(bubble.contains("toggleMenu"))
@@ -296,6 +315,8 @@ class CastFieldParityTest {
                 "FORCE_STOP_NORMAL", "DISCONNECTED_SINK_RECOVERY_ONCE",
                 "RESTORE_TRANSITION_ANIMATION", "RESTORE_PIP",
                 "RETURN_NORMAL_TO_MAIN", "RETURN_PROTECTED_GENTLY", "PRE_OPEN_ON_MAIN",
+                // CarPlay/AA return path (2026-08-01): must work even when cluster display disappeared.
+                "RETURN_TASK_TO_MAIN", "RESET_CLUSTER_DENSITY",
             ),
             declared,
         )

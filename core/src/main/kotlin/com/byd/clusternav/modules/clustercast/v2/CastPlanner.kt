@@ -34,7 +34,9 @@ object CastPlanner {
         if (observed.protectedResidue != null && intent.kind == CastIntentKind.SWITCH) {
             return PlanResult.Blocked("Existing protected residue must converge before another switch")
         }
-        if (intent.kind == CastIntentKind.STOP && snapshot.stableSession?.baseline?.geometry == null) {
+        if (intent.kind == CastIntentKind.STOP && snapshot.stableSession?.baseline?.geometry == null &&
+            snapshot.stableSession?.state != StableState.RECOVERY_PENDING
+        ) {
             return PlanResult.Blocked("Stop baseline geometry is unavailable")
         }
         if (intent.kind == CastIntentKind.RECOVER) {
@@ -52,6 +54,82 @@ object CastPlanner {
             }
         }
 
+        // ── Ô cụm (chia đôi) ────────────────────────────────────────────────────────────────────────
+        // Toàn bộ khối này KHÔNG chạy khi `intent.slotLayout == null`, tức mọi lượt chiếu đang có ngoài
+        // hiện trường đi qua đây mà không chạm một dòng nào — điều kiện bắt buộc của đợt thay đổi này.
+        //
+        // Đặt Ở ĐÂY, sau mọi cổng cũ và trước khi dựng thang, vì hai lẽ: (1) một yêu cầu chia ô phải bị
+        // các cổng cũ (trạng thái bền, display, installed/launcher, policy) từ chối y hệt một lượt chiếu
+        // thường — không được có đường tắt nào chỉ vì có ô; (2) rect của ô phải tính từ CHÍNH `observed`
+        // mà kế hoạch đang dựng trên đó, không phải từ một lần đọc khác.
+        val slotLayout = intent.slotLayout
+        var intendedLayout: IntendedClusterLayout? = null
+        var slotGeometry: AcceptedGeometry? = null
+        if (slotLayout != null) {
+            if (intent.kind != CastIntentKind.CAST && intent.kind != CastIntentKind.SWITCH) {
+                return PlanResult.Blocked("A cluster slot only applies to a placement, not to ${intent.kind}")
+            }
+            val targetPackage = intent.targetPackage
+                ?: return PlanResult.Blocked("Target package is required")
+            if (targetPackage !in slotLayout.packages) {
+                return PlanResult.Blocked("The placed app must own one of the requested slots")
+            }
+            // Dải để cắt ô — xem KDoc `ClusterSplit.slotBand` để biết hai nguồn của nó và vì sao thứ tự
+            // ấy không được đảo. Cụm ĐANG CÓ TASK thì dải phải ĐO ĐƯỢC từ khung task thật (con số 90 của
+            // bug F3 chỉ đọc được ở đó); cụm đã CHỨNG MINH là rỗng thì dùng khung display — chính không
+            // gian toạ độ mà `FIT_CLUSTER_COMPOSITE` vẫn gửi đi ở đường toàn cụm đã field-proven.
+            val band = ClusterSplit.slotBand(observed)
+                ?: return PlanResult.Blocked(
+                    "Cluster slot band is unreadable: the cluster is neither proven empty nor laid out in " +
+                        "measurable slots",
+                )
+            val resolved = slotLayout.resolve(band)
+                ?: return PlanResult.Blocked("Cluster $band is too small to split into the requested slots")
+
+            // Lượt này đặt ĐÚNG MỘT app: `CastMutationRequest` mang đúng một `targetPackage`
+            // (CastExecutor.kt:205-208), nên không có bước nào trong thang đây dựng ra có thể resize app
+            // KIA. Vậy nửa còn lại phải ĐÃ nằm đúng ô của nó rồi — kiểm bằng quan sát, không bằng niềm
+            // tin. Không đạt thì từ chối SỚM, thay vì phát lệnh rồi để phép xác minh nghiêm ngặt kết luận
+            // "diverged" và ghim transaction vào RECOVERING (CLAUDE.md §5: không tạo ngõ cụt).
+            //
+            // Hệ quả sản phẩm, nói thẳng: bố cục hai app dựng bằng HAI lượt — đặt app đầu vào ô của nó
+            // trước, rồi mới đưa app thứ hai vào ô còn lại. Mỗi lượt tự xác minh được, và không lượt nào
+            // phải chạm vào app của lượt kia.
+            //
+            // So theo DẢI NGANG, không theo cả rect (sửa 2026-08-01 cùng lượt mở khoá app đầu tiên). Lý do
+            // là hệ quả trực tiếp của [ClusterSplit.slotBand]: khi app kia được đặt lúc cụm còn rỗng, rect
+            // của nó mang trục dọc mà HỆ THỐNG phát cho, không phải trục dọc app này xin. Đòi bằng cả rect
+            // ở đây là đòi đúng thứ chưa đo được, và cái giá rất cụ thể: app đầu nằm ngay ngắn ở nửa trái
+            // mà lượt đưa app thứ hai vào nửa phải bị từ chối vĩnh viễn — người lái không có đường nào đi
+            // tiếp. Dải ngang thì ĐÃ ĐO là đồng nhất (xem [ClusterSpan]), nên nó vừa so được, vừa đúng là
+            // điều duy nhất cần đúng để hai app không che nhau.
+            resolved.occupantSpans.forEach { (packageName, span) ->
+                if (packageName == targetPackage) return@forEach
+                if (packageName !in observed.occupants) {
+                    return PlanResult.Blocked("$packageName must already be on the cluster to keep its slot")
+                }
+                if (observed.taskBounds.values.none { it.horizontalSpan == span }) {
+                    return PlanResult.Blocked("$packageName does not hold slot $span yet; place it into its slot first")
+                }
+            }
+            // Một app lạ trên cụm KHÔNG được lặng lẽ nằm dưới một bố cục không có tên nó: hoặc nó bị che
+            // (đã đo: rect chồng nhau thì che hẳn), hoặc nó chiếm chỗ của một ô. Cả hai đều là "cụm không
+            // như người lái yêu cầu" ⇒ từ chối, để đường Dừng/Dọn cụm xử lý.
+            val strangers = observed.occupants - resolved.packages
+            if (strangers.isNotEmpty()) {
+                return PlanResult.Blocked("Unexpected app(s) $strangers on the cluster; clear it before splitting")
+            }
+            intendedLayout = resolved
+            // Rect của ô đi ra xe bằng CHÍNH trường mà thang fit đã đọc hôm nay (`request.geometry`), với
+            // `profileId` là dấu "đây là một Ô" — xem `ClusterSplit.SLOT_PROFILE_ID` để biết vì sao không
+            // thêm trường mới. Mật độ vẫn giữ nguyên đường cũ, không bị nuốt mất.
+            slotGeometry = AcceptedGeometry(
+                checkNotNull(resolved.rectOf(targetPackage)),
+                intent.geometry?.densityDpi,
+                ClusterSplit.SLOT_PROFILE_ID,
+            )
+        }
+
         val operation = when (intent.kind) {
             CastIntentKind.CAST -> CastOperation.CAST
             CastIntentKind.SWITCH -> CastOperation.SWITCH
@@ -63,8 +141,44 @@ object CastPlanner {
             CastIntentKind.CAST, CastIntentKind.SWITCH -> buildList {
                 val sameTarget = observed.target?.packageName == intent.targetPackage
                 if (!sameTarget) addAll(placementSteps(snapshot.targetClass, intent.allowDestructive))
+                // ── Z-ORDER, và vì sao ca "app đã ở trên cụm" chỉ được RESIZE ──────────────────────
+                //
+                // ĐÃ ĐO (DiLink3, 31/07): thứ tự vẽ đi theo lần `am start` CUỐI CÙNG, KHÔNG theo lần
+                // resize cuối. Hai hệ quả, và cả hai đều được mã hoá tường minh ở đây thay vì phó mặc:
+                //
+                //  1. App vừa được người lái chọn phải là app `am start` SAU CÙNG. Đúng như thang cũ vẫn
+                //     làm: chỉ app đích mới có rung `am start` (PLACE_KEEP_SESSION/REASSERT_ON_CLUSTER),
+                //     app kia không có rung nào. Nhờ vậy, nếu bước fit có hỏng thì thứ nằm TRÊN là app
+                //     người lái vừa yêu cầu — hỏng kiểu nhìn thấy được, không phải hỏng kiểu app biến mất
+                //     dưới một app khác mà không ai biết.
+                //  2. Xếp một app ĐANG chiếu vào ô của nó thì tuyệt đối KHÔNG được `am start` lại: làm thế
+                //     là kéo nó lên trên cùng, và trong khoảnh khắc trước khi rect kịp đổi (nó vẫn đang
+                //     toàn cụm) nó che hẳn app kia — đúng ca "rect chồng nhau thì không ghép" đã đo. Đường
+                //     đúng là resize thuần, và resize ĐÃ ĐO là không đổi thứ tự vẽ.
+                //
+                // Hôm nay ca `sameTarget` lập ra thang RỖNG (không rung nào), nên thêm ĐÚNG MỘT rung fit ở
+                // đây là cộng thêm, không đảo thứ tự gì của đường đã kiểm thực địa (CLAUDE.md §6). Nó chỉ
+                // xuất hiện khi có yêu cầu ô — không có ô thì `sameTarget` vẫn lập thang rỗng y như trước.
+                if (sameTarget && slotLayout != null) {
+                    add(PlannedStep(
+                        "fit-cluster-slot",
+                        CommandKind.FIT_CLUSTER_COMPOSITE,
+                        "target already on the cluster: resize into its slot without changing z-order",
+                    ))
+                }
                 val outgoing = observed.target?.packageName
-                if (intent.kind == CastIntentKind.SWITCH && outgoing != null && outgoing != intent.targetPackage) {
+                // App đang chiếu chỉ là "app đi ra" khi bố cục mới KHÔNG có tên nó. Trong một lượt xếp ô,
+                // nó thường lại chính là app giữ nửa kia — mà `RETURN_PROTECTED_GENTLY` là
+                // `am start --display 0` (CastPlacementCommands.kt), tức ĐUỔI nó khỏi cụm. Chạy rung đó ở
+                // đây là tự tay phá đúng bố cục vừa yêu cầu: người lái xin hai app, nhận về một.
+                //
+                // Điều kiện chỉ nới ra khi có ô VÀ app ấy có tên trong bố cục; không có ô thì biểu thức
+                // này đúng từng ký tự như trước bản vá.
+                val outgoingKeepsASlot =
+                    outgoing != null && slotLayout != null && outgoing in slotLayout.packages
+                if (intent.kind == CastIntentKind.SWITCH && outgoing != null &&
+                    outgoing != intent.targetPackage && !outgoingKeepsASlot
+                ) {
                     add(PlannedStep(
                         "return-outgoing-gently",
                         CommandKind.RETURN_PROTECTED_GENTLY,
@@ -77,9 +191,13 @@ object CastPlanner {
                     TargetClass.NORMAL -> add(
                         PlannedStep("return-normal", CommandKind.RETURN_NORMAL_TO_MAIN, "active normal target identity is fresh")
                     )
-                    TargetClass.PROJECTION_SINK, TargetClass.KEEP_SESSION -> add(
-                        PlannedStep("return-protected", CommandKind.RETURN_PROTECTED_GENTLY, "protected session must be preserved")
-                    )
+                    TargetClass.PROJECTION_SINK, TargetClass.KEEP_SESSION -> {
+                        add(PlannedStep("return-protected", CommandKind.RETURN_PROTECTED_GENTLY, "protected session must be preserved"))
+                        add(PlannedStep("return-task-fallback", CommandKind.RETURN_TASK_TO_MAIN,
+                            "no-op when gentle return worked; fallback for not-exported"))
+                        add(PlannedStep("reset-cluster-density", CommandKind.RESET_CLUSTER_DENSITY,
+                            "restore display density after unresizeable app leaves"))
+                    }
                     // Trước 2026-07-27 nhánh này KHÔNG trả task về, vì không biết target có phải phiên
                     // được bảo vệ nên sợ làm sai. Nhưng không làm gì lại tạo trạng thái tệ hơn: chiếu
                     // đóng nên cụm về đồng hồ, mà task vẫn nằm trên display 1 → app không hiện ở cả hai
@@ -127,13 +245,60 @@ object CastPlanner {
                     "projection closed, so the OEM repaints its own cluster content",
                 ))
             }
-            CastIntentKind.RECOVER -> listOf(
-                PlannedStep(
+            CastIntentKind.RECOVER -> buildList {
+                add(PlannedStep(
                     "recover-disconnected-sink-once",
                     CommandKind.DISCONNECTED_SINK_RECOVERY_ONCE,
                     "owner, disconnected phone and two stable observations are proven",
-                )
-            )
+                ))
+                // Đo trên xe 2026-07-31: sau vài transaction cast bị kẹt với vn.vietmap.live, lệnh
+                // `appops get vn.vietmap.live PICTURE_IN_PICTURE` vẫn trả `deny`. Tính năng bong bóng
+                // tốc độ của CHÍNH VietMap vì thế chết lặng — không báo lỗi, không dấu vết trên UI —
+                // chủ xe chỉ nhận ra vì bong bóng không bao giờ hiện lại. Đặt tay về `allow` là hết.
+                //
+                // Đường trả app-op duy nhất tới hôm nay là bước `restore-pip` của nhánh STOP ở trên.
+                // Mà STOP lại bị từ chối thẳng khi chưa journal được baseline geometry (dòng 37-39
+                // file này), nên nếu tiến trình chết giữa một lần cast đã leo tới rung BLOCK_PIP thì
+                // KHÔNG còn đường nào gỡ block nữa — đúng nghĩa ngõ cụt mà CLAUDE.md §5 cấm: thứ gì
+                // đổi ra ngoài hệ thống phải có đường trả lại chạy được cả khi tiến trình đã chết.
+                //
+                // RECOVER là đường phục hồi duy nhất KHÔNG phụ thuộc baseline, nên bước trả app-op
+                // được gắn vào đây, dưới hai ràng buộc tự đặt:
+                //
+                //   1. Không đảo thứ tự thang đã kiểm thực địa. Rung quyết định (force-stop đúng
+                //      owner) vẫn là bước ĐẦU TIÊN, giữ nguyên guard cũ; bước mới xuống CUỐI
+                //      (CLAUDE.md §6 — đường mới luôn xuống cuối). Nhờ vậy nếu `appops set` có hỏng
+                //      thì hành động chữa cháy thật sự đã phát đi và đã journal OBSERVED trước đó.
+                //   2. Không ghi app-op của một app mà mình không chứng minh được là đã bị chặn.
+                //      Chỉ thêm bước khi có bằng chứng, không thêm mù:
+                //        · quan sát hiện tại cho thấy chính owner đang ở mode chặn (`ignore` đúng là
+                //          thứ BLOCK_PIP ghi ra, `deny` là thứ đo được trên xe), hoặc
+                //        · baseline đã journal sẵn một mode KHÔNG chặn — lúc đó RESTORE_PIP trả về
+                //          đúng giá trị đã ghi chứ không đoán.
+                //      Không có bằng chứng nào thì thang RECOVER giữ nguyên đúng một bước như cũ.
+                //
+                // `observed.pipMode` chỉ được đọc cho TARGET đang quan sát (`val pipMode =
+                // target?.packageName?.let` trong DumpObservedStateParser, CastDeviceParsers.kt:185).
+                // Khi owner là residue chứ không phải target thì trường đó là app-op của app KHÁC, dùng
+                // làm bằng chứng cho owner là sai — đó là lý do có `ownerIsObservedTarget`.
+                val ownerIsObservedTarget = observed.target?.packageName == intent.targetPackage
+                val ownerBlockedNow = ownerIsObservedTarget && CastPipBaseline.isBlocked(observed.pipMode)
+                val journaledMode = snapshot.stableSession?.baseline?.pipMode
+                // Chốt chặn cuối: RESTORE_PIP ghi ra ĐÚNG mode trong baseline, chỉ rơi về "allow" khi
+                // baseline trống (CastPlacementCommands.kt:210-212). Vậy nếu envelope cũ — ghi từ trước
+                // bản vá CastPipBaseline — đang giữ một mode chặn thì bước "phục hồi" này sẽ ghi lại
+                // chính cái chặn đó. Trường hợp đó thà không phát lệnh còn hơn tự tay chặn lần nữa;
+                // đường sửa đúng nằm ở tầng transport (`restorePipMode` cũng phải từ chối mode chặn),
+                // ngoài phạm vi thay đổi này nên ghi lại đây thay vì đoán.
+                val restoreWouldRewriteTheBlock = CastPipBaseline.isBlocked(journaledMode)
+                if ((ownerBlockedNow || journaledMode != null) && !restoreWouldRewriteTheBlock) {
+                    add(PlannedStep(
+                        "restore-pip",
+                        CommandKind.RESTORE_PIP,
+                        "owner app-op is observed blocked or a non-blocked baseline mode is journaled",
+                    ))
+                }
+            }
             CastIntentKind.APPLY_GEOMETRY -> {
                 // Bind locally: these properties live in :core now, and Kotlin does not smart-cast a
                 // property declared in another module. Same checks, same values.
@@ -163,7 +328,8 @@ object CastPlanner {
                 expectedTarget = observed.target,
                 geometry = if (intent.kind == CastIntentKind.STOP) {
                     snapshot.stableSession?.baseline?.geometry
-                } else intent.geometry,
+                } else slotGeometry ?: intent.geometry,
+                intendedLayout = intendedLayout,
             )
         )
     }
@@ -197,6 +363,23 @@ object CastPlanner {
                 ),
             )
             add(PlannedStep("fit-cluster", CommandKind.FIT_CLUSTER_COMPOSITE, "measured cluster size for the landed task"))
+
+            // ── Phase 0b: move-task escalation for not-exported targets (CarPlay/AA) ─────────────────
+            // These are no-ops when the target already landed via RESUME_PROTECTED above. They only
+            // fire as fallback when `am start` throws SecurityException (not exported from uid 1000).
+            // Field-proven 2026-08-01 T1: `am stack move-task` bypasses ActivityStarter entirely.
+            if (protected) {
+                add(PlannedStep(
+                    "move-task-to-cluster",
+                    CommandKind.MOVE_TASK_TO_CLUSTER_STACK,
+                    "no-op when target already on cluster; fallback for not-exported activities",
+                ))
+                add(PlannedStep(
+                    "scale-cluster-density",
+                    CommandKind.SCALE_CLUSTER_DENSITY,
+                    "no-op when target already on cluster; scales unresizeable app to fit",
+                ))
+            }
 
             // ── Phase 1: escalation; each rung is a no-op once the target has landed ─────
             add(PlannedStep("allow-resizable", CommandKind.SET_FORCE_RESIZABLE, "only when the cheap placement did not land"))

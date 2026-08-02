@@ -32,6 +32,8 @@ internal object ExpectedLadder {
     val protectedTarget: List<CommandKind> = listOf(
         CommandKind.RESUME_PROTECTED,
         CommandKind.FIT_CLUSTER_COMPOSITE,
+        CommandKind.MOVE_TASK_TO_CLUSTER_STACK,
+        CommandKind.SCALE_CLUSTER_DENSITY,
     ) + escalate
 
     /** Explicit destructive opt-in appends R3 after every gentler rung has been attempted. */
@@ -50,6 +52,18 @@ internal object ExpectedLadder {
      */
     val stopNormal: List<CommandKind> = listOf(
         CommandKind.RETURN_NORMAL_TO_MAIN,
+        CommandKind.RESTORE_PIP,
+        CommandKind.RESTORE_TRANSITION_ANIMATION,
+        CommandKind.RESET_CLEAN_DISPLAY,
+        CommandKind.SEAL_DL3_COMPENSATE_18,
+        CommandKind.SEAL_DL3_COMPENSATE_0,
+    )
+
+    /** Stop for a protected target: return gently + move-task fallback + density reset + teardown. */
+    val stopProtected: List<CommandKind> = listOf(
+        CommandKind.RETURN_PROTECTED_GENTLY,
+        CommandKind.RETURN_TASK_TO_MAIN,
+        CommandKind.RESET_CLUSTER_DENSITY,
         CommandKind.RESTORE_PIP,
         CommandKind.RESTORE_TRANSITION_ANIMATION,
         CommandKind.RESET_CLEAN_DISPLAY,
