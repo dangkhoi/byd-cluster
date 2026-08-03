@@ -16,15 +16,11 @@ class DisplayConfigurator(
     /**
      * Applies display config for the given app type.
      * Skips if the same config is already applied.
-     * Marks prefs dirty BEFORE changing (CLAUDE.md §5).
      *
      * @return true on success, false on shell failure.
      */
-    fun apply(displayId: Int, config: DisplayConfig, prefs: SimpleCastPrefs? = null): Boolean {
+    fun apply(displayId: Int, config: DisplayConfig): Boolean {
         if (config == currentConfig) return true
-
-        // §5: mark dirty BEFORE mutating system state (survives crash/reboot)
-        prefs?.setDisplayDirty(true)
 
         // Set wm size
         val sizeResult = shell.execute("wm size ${config.wmSize} -d $displayId")
@@ -49,27 +45,13 @@ class DisplayConfigurator(
 
     /**
      * Resets all display settings to default.
-     * Clears dirty flag on success (CLAUDE.md §5).
      */
-    fun reset(displayId: Int, prefs: SimpleCastPrefs? = null): Boolean {
+    fun reset(displayId: Int): Boolean {
         val r1 = shell.execute("wm size reset -d $displayId")
         val r2 = shell.execute("wm overscan reset -d $displayId")
         val r3 = shell.execute("wm density reset -d $displayId")
         currentConfig = null
-        val ok = r1.success && r2.success && r3.success
-        if (ok) prefs?.setDisplayDirty(false)
-        return ok
-    }
-
-    /**
-     * CLAUDE.md §5: reset display to defaults on boot/app-start if previous session crashed
-     * while display config was applied (dirty flag set, never cleared).
-     *
-     * @return true if reset was needed and succeeded, false if not needed or failed.
-     */
-    fun resetIfDirtyOnBoot(displayId: Int, prefs: SimpleCastPrefs): Boolean {
-        if (!prefs.isDisplayDirty()) return false
-        return reset(displayId, prefs)
+        return r1.success && r2.success && r3.success
     }
 
     /**

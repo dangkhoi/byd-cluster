@@ -35,6 +35,7 @@ object SimpleCastRuntime {
     }
 
     private fun create(app: Context): SimpleCastCoordinator {
+        android.util.Log.i("SimpleCast", "Creating SimpleCastCoordinator")
         val shell = DadbSimpleCastShell(app)
         val prefs = SharedPrefsSimpleCastPrefs(app)
         val projection = ProjectionManager(shell)
@@ -42,7 +43,7 @@ object SimpleCastRuntime {
         val mover = AppMover(shell)
         // Display ID 1 is the cluster on BYD DiLink3 (measured on vehicle)
         val displayId = prefs.lastDisplayId() ?: 1
-        return SimpleCastCoordinator(projection, configurator, mover, prefs, displayId)
+        return SimpleCastCoordinator(projection, configurator, mover, prefs, shell, displayId)
     }
 
     /** Shutdown the coordinator. Call from Application.onTerminate or process exit. */
@@ -62,9 +63,11 @@ private class DadbSimpleCastShell(private val app: Context) : SimpleCastShell {
 
     override fun execute(command: String): ShellResult {
         return try {
+            android.util.Log.i("SimpleCast", "shell: $command")
             val keyPair = AdbKeys.ensure(app)
             Dadb.create("localhost", 5555, keyPair).use { adb ->
                 val result = adb.shell(command)
+                android.util.Log.i("SimpleCast", "shell OK: exit=${result.exitCode}")
                 ShellResult(
                     exitCode = result.exitCode,
                     stdout = result.output,
@@ -72,6 +75,7 @@ private class DadbSimpleCastShell(private val app: Context) : SimpleCastShell {
                 )
             }
         } catch (e: Exception) {
+            android.util.Log.e("SimpleCast", "shell FAIL: ${e.message}", e)
             ShellResult(exitCode = -1, stdout = "", stderr = e.message ?: e.javaClass.simpleName)
         }
     }
@@ -108,9 +112,23 @@ private class SharedPrefsSimpleCastPrefs(context: Context) : SimpleCastPrefs {
         sp.edit().putInt("last_display_id", id).apply()
     }
 
-    override fun isDisplayDirty(): Boolean = sp.getBoolean("display_dirty", false)
+    // Autostart
+    override fun autoStartPackage(): String? = sp.getString("autostart_package", null)
 
-    override fun setDisplayDirty(dirty: Boolean) {
-        sp.edit().putBoolean("display_dirty", dirty).apply()
+    override fun setAutoStartPackage(pkg: String?) {
+        sp.edit().putString("autostart_package", pkg).apply()
+    }
+
+    override fun autoStartEnabled(): Boolean = sp.getBoolean("autostart_enabled", false)
+
+    override fun setAutoStartEnabled(enabled: Boolean) {
+        sp.edit().putBoolean("autostart_enabled", enabled).apply()
+    }
+
+    // Split ratio
+    override fun splitRatioLeftPercent(): Int = sp.getInt("split_ratio_left_pct", 50)
+
+    override fun setSplitRatioLeftPercent(pct: Int) {
+        sp.edit().putInt("split_ratio_left_pct", pct).apply()
     }
 }

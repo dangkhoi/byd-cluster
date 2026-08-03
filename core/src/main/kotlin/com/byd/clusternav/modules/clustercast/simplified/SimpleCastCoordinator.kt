@@ -19,7 +19,8 @@ class SimpleCastCoordinator(
     private val projection: ProjectionManager,
     private val configurator: DisplayConfigurator,
     private val mover: AppMover,
-    private val prefs: SimpleCastPrefs,
+    val prefs: SimpleCastPrefs,
+    private val shell: SimpleCastShell,
     private val displayId: Int,
 ) {
     private val executor = Executors.newSingleThreadExecutor { r ->
@@ -54,9 +55,6 @@ class SimpleCastCoordinator(
             if (state != SimpleCastState.Off) return@execute
             setState(SimpleCastState.Opening)
 
-            // CLAUDE.md §5: if previous session crashed with display dirty, reset now.
-            configurator.resetIfDirtyOnBoot(displayId, prefs)
-
             val ok = projection.open(displayId)
             setState(if (ok) SimpleCastState.Idle else SimpleCastState.Error("Projection open failed"))
         }
@@ -67,8 +65,6 @@ class SimpleCastCoordinator(
         executor.execute {
             // Return any active apps first
             returnAllApps()
-            // CLAUDE.md §5: reset display to defaults — clean shutdown clears dirty flag
-            configurator.reset(displayId, prefs)
             setState(SimpleCastState.Closing)
             val ok = projection.close(displayId)
             setState(if (ok) SimpleCastState.Off else SimpleCastState.Error("Projection close failed"))
@@ -93,18 +89,24 @@ class SimpleCastCoordinator(
 
     private fun handleCastFull(intent: SimpleCastIntent.CastFull) {
         val current = state
+        // If projection is still opening, wait and retry once
+        if (current == SimpleCastState.Opening) {
+            Thread.sleep(1500) // projection open takes ~1.1s
+            if (state != SimpleCastState.Idle) return // still not ready — give up
+        }
+        val afterWait = state
         // Only cast from IDLE or replace current full cast
-        if (current != SimpleCastState.Idle && current !is SimpleCastState.CastingFull) {
+        if (afterWait != SimpleCastState.Idle && afterWait !is SimpleCastState.CastingFull) {
             return // invalid transition — ignore
         }
 
         // If currently casting something else full, stop it first
-        if (current is SimpleCastState.CastingFull) {
-            returnApp(current.targetPkg, current.appType)
+        if (afterWait is SimpleCastState.CastingFull) {
+            returnApp(afterWait.targetPkg, afterWait.appType)
         }
 
         val config = configurator.resolveConfig(intent.pkg, intent.appType, prefs)
-        if (!configurator.apply(displayId, config, prefs)) {
+        if (!configurator.apply(displayId, config)) {
             setState(SimpleCastState.Error("Display config failed"))
             return
         }
@@ -124,7 +126,13 @@ class SimpleCastCoordinator(
 
     private fun handleCastSlot(intent: SimpleCastIntent.CastSlot) {
         val current = state
-        if (current != SimpleCastState.Idle && current !is SimpleCastState.CastingSplit) {
+        // If projection is still opening, wait and retry once
+        if (current == SimpleCastState.Opening) {
+            Thread.sleep(1500)
+            if (state != SimpleCastState.Idle) return
+        }
+        val afterWait = state
+        if (afterWait != SimpleCastState.Idle && afterWait !is SimpleCastState.CastingSplit) {
             return // can only split from idle or existing split
         }
 
@@ -132,16 +140,19 @@ class SimpleCastCoordinator(
         val slot = SlotState(intent.pkg, config)
 
         // R5: apply display config before moving the app
-        if (!configurator.apply(displayId, config, prefs)) {
+        if (!configurator.apply(displayId, config)) {
             setState(SimpleCastState.Error("Display config failed for slot"))
             return
         }
 
+        val leftPercent = prefs.splitRatioLeftPercent()
         val ok = mover.castToCluster(
             pkg = intent.pkg,
             activity = null, // resolved at app layer
             displayId = displayId,
             appType = AppType.NORMAL,
+            slotSide = intent.side,
+            leftPercent = leftPercent,
         )
         if (!ok) {
             setState(SimpleCastState.Error("Cast to slot failed"))
@@ -149,10 +160,10 @@ class SimpleCastCoordinator(
         }
 
         val newState = when {
-            current is SimpleCastState.CastingSplit && intent.side == ClusterSlotSide.LEFT ->
-                current.copy(left = slot)
-            current is SimpleCastState.CastingSplit && intent.side == ClusterSlotSide.RIGHT ->
-                current.copy(right = slot)
+            afterWait is SimpleCastState.CastingSplit && intent.side == ClusterSlotSide.LEFT ->
+                afterWait.copy(left = slot)
+            afterWait is SimpleCastState.CastingSplit && intent.side == ClusterSlotSide.RIGHT ->
+                afterWait.copy(right = slot)
             intent.side == ClusterSlotSide.LEFT ->
                 SimpleCastState.CastingSplit(left = slot, right = null)
             else ->
@@ -169,6 +180,7 @@ class SimpleCastCoordinator(
             current is SimpleCastState.CastingFull -> {
                 setState(SimpleCastState.Stopping)
                 returnApp(current.targetPkg, current.appType)
+                refreshCluster() // clear stale frame from display 1
                 setState(SimpleCastState.Idle)
             }
             // Split mode: stop specific slot
@@ -195,6 +207,7 @@ class SimpleCastCoordinator(
                 setState(SimpleCastState.Stopping)
                 current.left?.let { returnApp(it.pkg, AppType.NORMAL) }
                 current.right?.let { returnApp(it.pkg, AppType.NORMAL) }
+                refreshCluster() // clear stale frame
                 setState(SimpleCastState.Idle)
             }
             else -> {} // already idle or off, ignore
@@ -211,6 +224,15 @@ class SimpleCastCoordinator(
         )
     }
 
+    /**
+     * Clear stale frame from cluster display after stop.
+     * Uses profile 0 (refresh video) — lightweight, no full close/open cycle needed.
+     * Measured on vehicle: profile 0 alone forces recomposite without closing projection.
+     */
+    private fun refreshCluster() {
+        shell.execute("service call AutoContainer 2 i32 1000 i32 0 s16 \"\"")
+    }
+
     private fun returnAllApps() {
         when (val current = state) {
             is SimpleCastState.CastingFull -> returnApp(current.targetPkg, current.appType)
@@ -224,15 +246,102 @@ class SimpleCastCoordinator(
 
     private fun closeProjectionSync() {
         returnAllApps()
-        // CLAUDE.md §5: reset display to defaults before closing — undo all wm changes
-        configurator.reset(displayId, prefs)
+        // Reset display to defaults before closing — undo all wm changes
+        configurator.reset(displayId)
         setState(SimpleCastState.Closing)
         val ok = projection.close(displayId)
         setState(if (ok) SimpleCastState.Off else SimpleCastState.Error("Close failed"))
     }
 
+    // ─── Resize active target ────────────────────────────────────────────────
+
+    /**
+     * Resize the currently casting app to the given bounds.
+     * Only works in CastingFull state with a NORMAL app.
+     * Thread-safe — queued on serial executor.
+     */
+    fun resizeActiveTarget(left: Int, top: Int, right: Int, bottom: Int) {
+        executor.execute {
+            val current = state
+            if (current !is SimpleCastState.CastingFull) return@execute
+            val taskId = findTaskIdForPkg(current.targetPkg) ?: return@execute
+            shell.execute("am task resize $taskId $left $top $right $bottom")
+            // Save to prefs
+            prefs.saveDisplayConfig(current.targetPkg, DisplayConfig(
+                wmSize = "${right - left}x${bottom - top}",
+                overscan = "0,0,0,0"
+            ))
+        }
+    }
+
+    private fun findTaskIdForPkg(pkg: String): String? {
+        val result = shell.execute("am stack list")
+        if (!result.success) return null
+        return Regex("taskId=(\\d+):[^\\n]*$pkg").find(result.stdout)?.groupValues?.get(1)
+    }
+
+    // ─── Density control ──────────────────────────────────────────────────────
+
+    /**
+     * Set or reset cluster display density.
+     * @param dpi density value, or null to reset.
+     */
+    fun setDensity(dpi: Int?) {
+        executor.execute {
+            if (dpi != null && dpi in 80..640) {
+                shell.execute("wm density $dpi -d $displayId")
+            } else {
+                shell.execute("wm density reset -d $displayId")
+            }
+        }
+    }
+
     /** Shutdown executor. Call on app destroy. */
     fun shutdown() {
         executor.shutdownNow()
+    }
+
+    // ─── Foreground detection (replaces V2 CastAmStackParser path) ────────────
+
+    /**
+     * Detect the foreground package on [targetDisplayId] (default: HOME display 0).
+     *
+     * Runs `am stack list` and parses visible tasks. Returns the single visible package
+     * on the specified display, excluding packages in [excluded]. Returns null if ambiguous
+     * (multiple distinct visible packages) or if shell fails.
+     *
+     * Must be called off main thread — performs shell I/O.
+     */
+    fun foregroundPackage(targetDisplayId: Int = 0, excluded: Set<String>): String? {
+        val result = shell.execute("am stack list")
+        if (!result.success || result.stdout.isBlank()) return null
+        return parseForeground(result.stdout, targetDisplayId, excluded)
+    }
+
+    companion object {
+        /**
+         * Minimal `am stack list` parser for foreground detection.
+         * Looks for tasks with `visible=true` on the given display and returns the package.
+         */
+        internal fun parseForeground(amOutput: String, displayId: Int, excluded: Set<String>): String? {
+            // Pattern: taskId=N ... displayId=D ... visible=true ... realActivity=pkg/activity
+            val taskPattern = Regex("""taskId=\d+.*?(?=taskId=|\z)""", RegexOption.DOT_MATCHES_ALL)
+            val displayIdPattern = Regex("""displayId=(\d+)""")
+            val visiblePattern = Regex("""visible=(true|false)""")
+            val realActivityPattern = Regex("""realActivity=([^/\s]+)/""")
+
+            val candidates = mutableSetOf<String>()
+            for (match in taskPattern.findAll(amOutput)) {
+                val block = match.value
+                val dId = displayIdPattern.find(block)?.groupValues?.get(1)?.toIntOrNull() ?: continue
+                if (dId != displayId) continue
+                val visible = visiblePattern.find(block)?.groupValues?.get(1) == "true"
+                if (!visible) continue
+                val pkg = realActivityPattern.find(block)?.groupValues?.get(1) ?: continue
+                if (pkg in excluded) continue
+                candidates.add(pkg)
+            }
+            return candidates.singleOrNull()
+        }
     }
 }

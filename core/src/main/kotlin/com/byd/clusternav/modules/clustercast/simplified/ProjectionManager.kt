@@ -27,17 +27,18 @@ class ProjectionManager(
         if (isOpen) return true
 
         // Profile 30 = curved mode (keeps km/h gauge visible)
-        val r1 = shell.execute("service call SurfaceFlinger 1035 i32 $displayId i32 30")
+        // Correct command: service call AutoContainer (BYD OEM service), NOT SurfaceFlinger
+        val r1 = shell.execute("service call AutoContainer 2 i32 1000 i32 30 s16 \"\"")
         if (!r1.success) return false
         sleepMs(300)
 
         // Profile 16 = keepKmh marker
-        val r2 = shell.execute("service call SurfaceFlinger 1035 i32 $displayId i32 16")
+        val r2 = shell.execute("service call AutoContainer 2 i32 1000 i32 16 s16 \"\"")
         if (!r2.success) return false
         sleepMs(300)
 
         // Profile 35 = activate projection
-        val r3 = shell.execute("service call SurfaceFlinger 1035 i32 $displayId i32 35")
+        val r3 = shell.execute("service call AutoContainer 2 i32 1000 i32 35 s16 \"\"")
         if (!r3.success) return false
         sleepMs(500)
 
@@ -55,12 +56,12 @@ class ProjectionManager(
         if (!isOpen) return true
 
         // Profile 18 = close projection
-        val r1 = shell.execute("service call SurfaceFlinger 1035 i32 $displayId i32 18")
+        val r1 = shell.execute("service call AutoContainer 2 i32 1000 i32 18 s16 \"\"")
         if (!r1.success) return false
         sleepMs(300)
 
         // Profile 0 = refresh video output
-        val r2 = shell.execute("service call SurfaceFlinger 1035 i32 $displayId i32 0")
+        val r2 = shell.execute("service call AutoContainer 2 i32 1000 i32 0 s16 \"\"")
         if (!r2.success) return false
 
         isOpen = false

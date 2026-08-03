@@ -25,18 +25,14 @@ import android.widget.TextView
 import android.widget.Toast
 import com.byd.clusternav.Lang
 import com.byd.clusternav.R
-import com.byd.clusternav.modules.clustercast.v2.BubbleProjection
 import com.byd.clusternav.modules.clustercast.v2.BubbleZone
 import com.byd.clusternav.modules.clustercast.v2.CastBubbleProjection
-import com.byd.clusternav.cast.platform.CastAndroidLifecycle
-import com.byd.clusternav.cast.platform.CastAndroidRuntime
 import com.byd.clusternav.cast.platform.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.simplified.AppMover
+import com.byd.clusternav.modules.clustercast.simplified.ClusterSlotSide
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastIntent
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastRuntime
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastState
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Presentation-only overlay host for the canonical Cast model. Ba ô, mỗi ô một chạm.
@@ -56,31 +52,20 @@ import java.util.concurrent.atomic.AtomicLong
  * đã bản địa hoá để đoán ra trạng thái.
  */
 class FloatingBubbleService : Service() {
-    private lateinit var runtime: CastAndroidRuntime.Runtime
-    private lateinit var facade: CastFacade
     /**
      * Khởi tạo TRỄ, không phải `lateinit`.
      *
-     * `catalog` cần `facade` (để hỏi phiên điện thoại) còn `facade` cần `catalog` — vòng tròn. Nó chạy được
-     * vì lambda hoãn việc đọc `facade` tới lúc gọi thật. Nhưng với `lateinit` thì thứ tự hai dòng gán trở
-     * thành thứ quyết định app sống hay chết: 2026-07-27 commit 00e5438 chèn `facade = ...` LÊN TRÊN dòng
-     * gán `catalog`, và nút nổi crash ngay khi bật —
-     * `UninitializedPropertyAccessException: lateinit property catalog has not been initialized`.
-     *
-     * `by lazy` làm sai thứ tự đó thành KHÔNG THỂ: ai đọc trước thì nó dựng lúc đó.
+     * `catalog` needs only application context for bubble position storage and app listing.
+     * V2 phoneSession lambda removed — defaults to { null }.
      */
     private val catalog: CastAppCatalog by lazy {
-        CastAppCatalog(applicationContext) { facade.phoneSession(it) }
+        CastAppCatalog(applicationContext)
     }
 
     /**
      * Tỉ lệ chia đôi cụm mà người lái đã chọn ở panel Home (50-50 / 30-70 / 70-30, mặc định 50-50).
-     *
-     * Đọc TẠI LÚC PHÁT LỆNH chứ không giữ một bản sao trong RAM: người lái có thể đổi tỉ lệ ở Home
-     * trong lúc nút nổi đang sống (service này chạy suốt, không có "lần mở màn hình" nào để nạp lại) —
-     * một bản sao lấy lúc khởi động sẽ lặng lẽ chiếu sai tỉ lệ so với thứ đang hiện trên màn hình.
+     * 2026-08-03: V2 split ratio removed — simplified coordinator handles geometry.
      */
-    private val splitRatio: CastSplitRatioStore by lazy { CastSplitRatioStore(applicationContext) }
     private var windowManager: WindowManager? = null
     private var bubble: LinearLayout? = null
     /**
@@ -107,90 +92,26 @@ class FloatingBubbleService : Service() {
         setBubbleAlpha(ACTIVE_ALPHA)
         handler.postDelayed(fade, FADE_DELAY_MS)
     }
-    /**
-     * Một ô đổi hình theo trạng thái CỦA CHÍNH NÓ — kế thừa nguyên tắc "một chạm không nhầm" của v0.57,
-     * chỉ là nay có ba ô: rỗng viền xanh = ô đó đang trống, đặc xanh = ô đó đang có app.
-     *
-     * Trạng thái vào đây từ ô tương ứng trong [BubbleProjection.zones] (dữ liệu CÓ KIỂU), không phải từ
-     * cờ RAM hay từ việc dò chữ trong nhãn. Nhận cả bản chiếu rồi tự hỏi ô của mình, thay vì nhận sẵn
-     * một ô: tầng view chỉ cần biết ĐÚNG HAI kiểu của tầng dưới (bản chiếu và mã ô), phần còn lại là
-     * hình dạng nội bộ của bản chiếu — xem bánh răng `CastArchitectureRatchetTest`.
-     *
-     * `projection == null` = chưa có lượt chiếu nào về tới nơi (lần vẽ đầu tiên) ⇒ vẽ như ô trống và
-     * KHÔNG làm mờ, vì "chưa biết" không phải là "không dùng được".
-     */
-    private fun paintZone(zone: BubbleZone, view: TextView, projection: BubbleProjection?) {
-        val cell = projection?.zone(zone)
-        val occupied = cell?.occupied == true
-        view.setTextColor(if (occupied) Color.WHITE else BRAND)
-        view.background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(ZONE_CORNER_DP).toFloat()
-            setColor(if (occupied) BRAND else BRAND_LIGHT)
-            setStroke(dp(ZONE_STROKE_DP), BRAND)
-        }
-        // Ô không chạm được thì MỜ đi, nhưng vẫn nhận chạm: chạm vào phải nói ra được vì sao không
-        // dùng được (xem [onZoneTap]). Một ô câm lặng là thứ khiến người lái bấm thêm mấy lần nữa
-        // trong lúc xe đang chạy — và `setEnabled(false)` còn đẩy cú chạm ra khỏi cả đường kéo.
-        view.alpha = if (cell == null || cell.enabled) 1f else DISABLED_ZONE_ALPHA
-        cell?.let { view.contentDescription = it.contentDescription }
-    }
-
-    /**
-     * Vẽ lại CẢ bản đồ từ một bản chiếu.
-     *
-     * Duyệt trên [zoneViews] chứ không gọi tay ba lần: ô nào có trong cây thì ô đó được vẽ lại, nên
-     * không có đường nào để một ô bị bỏ quên lại vẫn hiện ra với trạng thái của lần chiếu trước.
-     */
-    private fun paintZones(projection: BubbleProjection) {
-        zoneViews.forEach { (zone, view) -> paintZone(zone, view, projection) }
-    }
+    // paintZone/paintZones (V2 BubbleProjection-based) removed 2026-08-03.
+    // Zone painting is now done directly by refreshBubbleState/paintOccupied/paintEmpty/paintDisabled.
 
     private val handler = Handler(Looper.getMainLooper())
 
-    /**
-     * Bốn chốt độc lập, mỗi chốt canh ĐÚNG MỘT lượt việc nền. Tên nói rõ nó canh cái gì:
-     * [projectionInFlight] KHÔNG phải "cụm đang chiếu" — chỗ đó là [BubbleProjection.projecting], và tên
-     * cũ (`projecting`) đứng ngay cạnh `projection.projecting` là một cái bẫy đọc nhầm chờ sẵn.
-     */
-    private val projectionInFlight = AtomicBoolean(false)
-
-    /**
-     * Có ai đó xin vẽ lại trong lúc lượt trước còn chạy.
-     *
-     * Trước 2026-07-29 lượt xin đó bị NUỐT (`compareAndSet` thất bại là return luôn), mà hai chỗ xin
-     * quan trọng nhất lại là "vừa chiếu xong" và "vừa dừng xong". Rơi trúng nhịp 15s là vòng tròn giữ
-     * nguyên hình cũ tới 15 giây — và cú chạm kế tiếp làm ĐÚNG CÁI NGƯỢC LẠI với thứ đang ở trên cụm.
-     * Gộp nhịp thay vì bỏ nhịp: lượt đang chạy xong thì chạy bù đúng một lượt.
-     */
-    private val projectionPending = AtomicBoolean(false)
-    private val stopInFlight = AtomicBoolean(false)
-    private val dispatchInFlight = AtomicBoolean(false)
-
-    /** Một cú chạm đang đọc sự thật. Không có nó, chạm dồn dập là bấy nhiêu vòng I/O ra xe song song. */
-    private val tapInFlight = AtomicBoolean(false)
-    @Volatile private var stopRequestedAtMs = 0L
-    private val generation = AtomicLong(0)
     @Volatile private var destroyed = false
-
-    /** Ghi trên luồng vẽ, đọc trên làn nền lúc chạm — phải `@Volatile` để lần đọc kia không thấy bản cũ. */
-    @Volatile private var lastProjection: BubbleProjection? = null
     private var foregroundStarted = false
+
+    /** Refresh bubble visuals based on simplified coordinator state. */
     private val refresh = object : Runnable {
-        override fun run() { projectState(); handler.postDelayed(this, REFRESH_INTERVAL_MS) }
+        override fun run() { refreshBubbleState(); handler.postDelayed(this, REFRESH_INTERVAL_MS) }
     }
 
     override fun onCreate() {
         super.onCreate()
-        runtime = CastAndroidRuntime.create(applicationContext)
-        facade = CastFacade.wrapping(runtime, catalog)
         if (!requestOverlayIfMissing()) { stopSelf(); return }
         if (!startForegroundOnce()) { stopSelf(); return }
         showBubble()
-        background("cluster-cast-bubble-rehydrate") {
-            runCatching { CastAndroidLifecycle.rehydrate(applicationContext) }
-            handler.post { if (!destroyed) handler.post(refresh) }
-        }
+        // 2026-08-03: V2 lifecycle rehydrate removed — simplified coordinator owns projection.
+        handler.post { if (!destroyed) handler.post(refresh) }
     }
 
     /**
@@ -229,12 +150,9 @@ class FloatingBubbleService : Service() {
 
     override fun onDestroy() {
         destroyed = true
-        generation.incrementAndGet()
         handler.removeCallbacksAndMessages(null)
         bubble?.let { view -> runCatching { windowManager?.removeView(view) } }
         bubble = null
-        // Bỏ luôn tham chiếu tới ba ô: giữ lại là giữ nguyên một cây view đã gỡ khỏi cửa sổ (và cùng
-        // với nó là cả Context của service) sống trong bộ nhớ tới lần khởi động sau.
         zoneViews.clear()
         super.onDestroy()
     }
@@ -325,7 +243,7 @@ class FloatingBubbleService : Service() {
             setPadding(0, 0, 0, 0)
             layoutParams = LinearLayout.LayoutParams(widthPx, heightPx).apply { leftMargin = leftMarginPx }
             contentDescription = CastBubbleProjection.zoneShortLabel(zone)
-            paintZone(zone, this, null)
+            paintEmpty(this)
             setOnClickListener {
                 performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                 onZoneTap(zone)
@@ -495,314 +413,141 @@ class FloatingBubbleService : Service() {
         return value.coerceIn(0, (height - bubbleHeightPx(view)).coerceAtLeast(0))
     }
 
-    /** Bounded worker projection fenced by lifecycle generation, so stale callbacks cannot paint. */
-    private fun projectState() {
-        if (destroyed) return
-        if (!projectionInFlight.compareAndSet(false, true)) {
-            // Đừng nuốt lượt xin: chạy bù sau khi lượt đang chạy kết thúc (xem [projectionPending]).
-            projectionPending.set(true)
-            return
-        }
-        val token = generation.get()
-        val started = background("cluster-cast-bubble-projection") {
-            try {
-                runCatching { project(token) }
-                    .onFailure { android.util.Log.e(TAG, "projection failed", it) }
-            } finally {
-                projectionInFlight.set(false)
-                if (projectionPending.compareAndSet(true, false)) {
-                    handler.post { if (!destroyed) projectState() }
-                }
+    // ─── 2026-08-03: V2 projection/observation path removed ───
+    // Only simplified coordinator controls state now. projectState/project/applyProjection removed.
+
+    /** Repaint bubble zones based on simplified coordinator state. */
+    private fun refreshBubbleState() {
+        if (destroyed || bubble == null) return
+        val state = SimpleCastRuntime.coordinator(applicationContext).state
+        // Paint zones directly from simplified state — no V2 BubbleProjection needed
+        val fullView = zoneViews[BubbleZone.FULL] ?: return
+        val leftView = zoneViews[BubbleZone.LEFT]
+        val rightView = zoneViews[BubbleZone.RIGHT]
+        when (state) {
+            is SimpleCastState.CastingFull -> {
+                paintOccupied(fullView, state.targetPkg.substringAfterLast('.'))
+                leftView?.let { paintDisabled(it) }
+                rightView?.let { paintDisabled(it) }
+            }
+            is SimpleCastState.CastingSplit -> {
+                paintDisabled(fullView)
+                leftView?.let { if (state.left != null) paintOccupied(it, state.left!!.pkg.substringAfterLast('.')) else paintEmpty(it) }
+                rightView?.let { if (state.right != null) paintOccupied(it, state.right!!.pkg.substringAfterLast('.')) else paintEmpty(it) }
+            }
+            is SimpleCastState.Idle -> {
+                paintEmpty(fullView)
+                leftView?.let { paintEmpty(it) }
+                rightView?.let { paintEmpty(it) }
+            }
+            else -> {
+                // Off/Opening/Stopping/Closing/Error
+                paintDisabled(fullView)
+                leftView?.let { paintDisabled(it) }
+                rightView?.let { paintDisabled(it) }
             }
         }
-        if (!started) projectionInFlight.set(false)
-    }
-
-    /**
-     * Trả về chính bản chiếu vừa dựng, để đường CHẠM quyết định bằng nó thay vì bằng ảnh chụp cũ.
-     *
-     * 2026-08-01: cả phần ghép (đọc bền + quan sát + occupancy theo ô) chuyển xuống façade — xem KDoc
-     * [CastFacade.bubbleProjection]. Bề mặt chỉ còn giữ đúng thứ thuộc về nó: cái chốt xác nhận Stop cục
-     * bộ trong RAM của cửa sổ này. Nhờ vậy occupancy ĐO ĐƯỢC theo ô và mô hình hiển thị dùng CHUNG một
-     * lần quan sát, thay vì hai lần đọc có thể lệch nhau trong cùng một lần vẽ.
-     */
-    private fun project(token: Long): BubbleProjection {
-        val projection = facade.bubbleProjection { durableStop -> localAckActive(durableStop) }
-        handler.post { applyProjection(projection, token) }
-        return projection
-    }
-
-    /**
-     * The local acknowledgement latch releases as soon as durable truth owns the Stop or the 500 ms
-     * acknowledgement budget expires, so the canonical control can never be pinned disabled.
-     */
-    private fun localAckActive(durableStop: Boolean): Boolean {
-        if (durableStop) { stopInFlight.set(false); return false }
-        return stopAckPending()
-    }
-
-    /**
-     * Một lượt Stop vừa phát và CÒN trong ngân sách xác nhận — không phải một cái chốt sống mãi.
-     *
-     * Hết hạn thì tự nhả ngay tại đây, nên không có cửa nào để `requestStopOnce()` bị chốt cũ khoá vĩnh
-     * viễn (CLAUDE.md §3: không bao giờ gate một đường phục hồi bằng dữ liệu mà chỉ chính đường đó mới
-     * làm mới được).
-     */
-    private fun stopAckPending(): Boolean {
-        if (!stopInFlight.get()) return false
-        if (android.os.SystemClock.elapsedRealtime() - stopRequestedAtMs > STOP_ACK_DEADLINE_MS) {
-            stopInFlight.set(false)
-            return false
-        }
-        return true
-    }
-
-    private fun applyProjection(projection: BubbleProjection, token: Long) {
-        if (destroyed || token != generation.get() || bubble == null) return
-        lastProjection = projection
-        bubble?.contentDescription = projection.contentDescription
-        paintZones(projection)
         wakeBubble()
     }
 
+    private fun paintOccupied(view: TextView, label: String) {
+        view.setTextColor(Color.WHITE)
+        view.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(ZONE_CORNER_DP).toFloat()
+            setColor(BRAND)
+            setStroke(dp(ZONE_STROKE_DP), BRAND)
+        }
+        view.alpha = 1f
+        view.contentDescription = label
+    }
+
+    private fun paintEmpty(view: TextView) {
+        view.setTextColor(BRAND)
+        view.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(ZONE_CORNER_DP).toFloat()
+            setColor(BRAND_LIGHT)
+            setStroke(dp(ZONE_STROKE_DP), BRAND)
+        }
+        view.alpha = 1f
+    }
+
+    private fun paintDisabled(view: TextView) {
+        view.setTextColor(BRAND)
+        view.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(ZONE_CORNER_DP).toFloat()
+            setColor(BRAND_LIGHT)
+            setStroke(dp(ZONE_STROKE_DP), BRAND)
+        }
+        view.alpha = DISABLED_ZONE_ALPHA
+    }
+
     /**
-     * Cửa vào DUY NHẤT của mọi cú chạm trên nút nổi, và là chỗ luật §R7 được thi hành:
-     * ô có app ⇒ trả về, ô trống ⇒ chiếu, ô không dùng được ⇒ NÓI RA vì sao.
-     *
-     * Cửa từ chối đọc [lastProjection] — một ảnh chụp có thể cũ tới 15 giây — nên nó chỉ được phép
-     * TỪ CHỐI kèm lời giải thích, không bao giờ được phép tự quyết định làm gì (CLAUDE.md §5: cấm
-     * quyết định bằng ảnh chụp cũ). Quyết định thật nằm sau một lần đọc lại sự thật, ở [onPrimaryTap]
-     * cho ô cả cụm và ở [dispatchHalfZone] cho hai nửa — và cả hai đều hỏi lại chính cửa này trên bản
-     * chiếu TƯƠI, nên một ô vừa chuyển sang "không dùng được" trong 15 giây qua vẫn được chặn đúng.
-     *
-     * Từ 2026-08-01 occupancy theo ô là ĐO ĐƯỢC ([CastFacade.bubbleProjection] → `ClusterZoneReading`),
-     * nên cửa này thật sự đóng trong hai ca bố cục: cụm đang bị chiếm trọn (hai nửa câm) và hai nửa
-     * đang có app (ô cả cụm câm, vì chiếu full sẽ nuốt chúng — đo 31/7). Ca một-app-toàn-cụm đi qua
-     * đúng như v0.72: ô cả cụm vẫn Dừng-hay-Chiếu bằng [BubbleProjection.stopOnTap].
+     * Cửa vào DUY NHẤT của mọi cú chạm trên nút nổi.
+     * Simplified Cast: state from SimpleCastCoordinator determines action directly.
      */
     private fun onZoneTap(zone: BubbleZone) {
-        val cell = lastProjection?.zone(zone)
-        if (cell != null && !cell.enabled) { toast(cell.message); return }
-        if (zone == BubbleZone.FULL) { onPrimaryTap(); return }
-        dispatchHalfZone(zone)
-    }
-
-    /**
-     * Đặt app vào / trả app khỏi MỘT NỬA cụm — cùng một luật với ô cả cụm, chỉ khác cái ô.
-     *
-     * Hình dạng của hàm này là BẢN SAO CÓ CHỦ Ý của [onPrimaryTap], không phải một đường thứ hai nghĩ
-     * lại từ đầu, vì mọi bài học đắt tiền của đường kia đều áp nguyên vào đây:
-     *
-     *  - **Đọc lại sự thật ngay lúc chạm.** `lastProjection` chỉ tươi tối đa 15 giây, mà cụm còn bị đổi
-     *    từ panel Home, từ tự-chiếu-lúc-khởi-động và từ chính app trên xe. Quyết định "trả hay chiếu"
-     *    bằng ảnh chụp đó nghĩa là cú chạm có thể làm ĐÚNG CÁI NGƯỢC LẠI — chiếu đè lên một nửa vừa có
-     *    app (đo 31/7: rect chồng nhau thì app này che hẳn app kia, không có cơ chế tự thu nhỏ nào).
-     *    CLAUDE.md §5: "Cấm quyết định bằng cờ RAM. Kiểm bằng sự thật."
-     *  - **Hỏi HÀNH ĐỘNG, không hỏi màu tô** ([CastFacade.zoneReturnsOnTap]) — xem KDoc ở đó.
-     *  - **Không tạo hàng đợi bền** ([foreignMutationInFlight]): một `pendingIntent` gốc USER chỉ mang
-     *    được TÊN GÓI qua tầng bền, nên yêu cầu-theo-ô mà bị xếp hàng sẽ sống lại thành một lượt chiếu
-     *    TOÀN CỤM — tức nuốt mất app ở nửa kia. `:core` cũng từ chối thẳng ca đó (`SLOT_NEVER_QUEUES`);
-     *    cửa ở đây chỉ để nói ra sớm bằng tiếng người.
-     *
-     * Cửa "đang bận" đặt trước mọi thứ: một cú chạm rơi vào lúc có lượt khác đang chạy phải NÓI ra, vì
-     * nút không phản hồi là thứ khiến người lái bấm dồn thêm trong lúc xe đang chạy.
-     */
-    private fun dispatchHalfZone(zone: BubbleZone) {
-        if (dispatchInFlight.get() || stopAckPending()) { toast(Lang.t("Đang xử lý…", "Processing…")); return }
-        if (!tapInFlight.compareAndSet(false, true)) return
-        val token = generation.get()
-        val started = background("cluster-cast-bubble-half-tap") {
-            try {
-                val fresh = runCatching { project(token) }
-                    .onFailure { android.util.Log.e(TAG, "half tap projection failed", it) }
-                    .getOrNull()
-                // Không đọc được sự thật tươi thì lùi về ảnh chụp — vẫn tốt hơn nuốt cú chạm, và mọi
-                // nhánh bên dưới đều còn cửa từ chối của riêng nó ở tầng dưới.
-                val decided = fresh ?: lastProjection
-                val cell = decided?.zone(zone)
-                if (cell != null && !cell.enabled) {
-                    handler.post { if (!destroyed) toast(cell.message) }
-                    return@background
-                }
-                // Ô đang có app ⇒ TRẢ về. Không "đổi app", không chiếu lại — §R7 chốt nguyên văn "chỉ có
-                // cast ↔ trả, không có switch app", và cả kiểu `BubbleZoneAction` cũng chỉ có hai giá trị.
-                if (decided != null && facade.zoneReturnsOnTap(decided, zone)) {
-                    handler.post { if (!destroyed) returnZoneOccupant(decided, zone) }
-                    return@background
-                }
-                if (foreignMutationInFlight()) {
-                    handler.post { if (!destroyed) toast(Lang.t("Đang có thao tác khác chạy — thử lại", "Another operation in progress — try again")) }
-                    return@background
-                }
-                val excluded = setOfNotNull(packageName, homePackage())
-                val foreground = runCatching { facade.foregroundPackage(HOME_DISPLAY_ID, excluded) }
-                    .onFailure { android.util.Log.e(TAG, "foreground read failed", it) }
-                    .getOrNull()
-                handler.post {
-                    if (destroyed) return@post
-                    if (foreground != null) {
-                        dispatchTarget(foreground, zone)
-                    } else {
-                        toast(Lang.t("Không xác định được app đang mở", "Cannot determine foreground app"))
-                    }
-                }
-            } finally {
-                tapInFlight.set(false)
-            }
-        }
-        if (!started) tapInFlight.set(false)
-    }
-
-    /**
-     * Trả app của một ô về màn chính, bằng ĐÚNG đường Dừng đã chạy tốt ngoài hiện trường.
-     *
-     * Vì sao không có đường "trả riêng một app": tầng dưới hôm nay chỉ trả được app đang GIỮ PHIÊN
-     * (`CastFacade.continueStopAfterAcknowledgement` lập kế hoạch cho `stableSession.activeTarget`), và
-     * viết một đường plan/execute riêng ở đây là đúng thứ `TwoPipelineStaticBoundaryTest` cấm — nút nổi
-     * chỉ được là bề mặt phát ý định, không phải chủ sở hữu mutation thứ hai.
-     *
-     * Nên khi bản đồ nói ô này thuộc về một app KHÁC app đang giữ phiên, câu trả lời trung thực là từ
-     * chối và chỉ đúng chỗ có đường thoát, chứ không phải phát một lệnh Dừng sẽ trả nhầm app còn lại —
-     * người lái mất thứ đang nhìn mà không hiểu vì sao. Chưa đọc được tên gói (ô có app nhưng quan sát
-     * không nói được của ai) thì vẫn đi đường Dừng: đó đúng bằng hành vi ô cả cụm đang có hôm nay, không
-     * thêm rủi ro mới nào.
-     *
-     * ★ CỬA THỨ HAI, thêm trong review Pass 2 ([P1]): **cụm đang có TỪ HAI occupant đo được thì Dừng
-     * không phải đường trả về, nó là một cái bẫy.** Khi bố cục hai app xác minh xong,
-     * `completeVerificationLocked` ghi `activeTarget = observed.target`, mà quan sát trung thực của hai
-     * app cùng `visible=true` là `target = null` (CastDeviceParsers.kt, khoá bởi
-     * `CastMultiOccupantObservationTest`). Vế `active != null` ở trên vì thế KHÔNG bắt được ca này, và
-     * đường Dừng chạy tiếp với `targetPackage = null`: rung `RETURN_NORMAL_TO_MAIN` thành NO_OP
-     * (CastPlacementCommands.kt:213), `RESET_CLEAN_DISPLAY` cũng NO_OP vì cụm còn task — nhưng
-     * `SEAL_DL3_COMPENSATE_18/_0` VẪN phát và ĐÓNG đường chiếu. Kết cục: đồng hồ về, hai app vẫn nằm
-     * trên display cụm nhưng không ai thấy, và phép xác minh STOP đòi `IDLE_CLEAN` nên transaction rơi
-     * thẳng vào RECOVERING. Đúng hình dạng "app đi đâu mất tiêu" đo được chiều 27/7, cộng thêm một cuốn
-     * sổ kẹt. `clearCluster` mới là phép xử lý nhiều occupant (nó liệt kê từng app từ dump và trả từng
-     * cái một), nên chỗ này phải chỉ sang đó chứ không được tự phát Dừng.
-     */
-    private fun returnZoneOccupant(projection: BubbleProjection, zone: BubbleZone) {
-        val occupant = projection.zone(zone)?.occupantPackage
-        val active = projection.activeTargetPackage
-        val stopWouldReturnTheWrongApp = projection.measuredOccupants > 1 ||
-            (occupant != null && active != null && occupant != active)
-        if (stopWouldReturnTheWrongApp) {
-            toast(Lang.t("Chưa trả riêng được app ở ${CastBubbleProjection.zoneName(zone)} · dùng u201cTrả cụm về đồng hồu201d ở màn hình chính", "Cannot return individual app in ${CastBubbleProjection.zoneName(zone)} · use u201cReturn cluster to clocku201d on home screen"))
-            return
-        }
-        requestStopOnce()
-    }
-
-    /**
-     * Cú chạm vào ô CẢ CỤM ([BubbleZone.FULL]) — nguyên vẹn đường đã chạy tốt ngoài xe từ v0.72.
-     *
-     * Một chạm, không cử chỉ ẩn nào khác (dự án cấm long-press/double-tap ẩn — xem
-     * `CastAccessibilityTest`): đang rảnh (đồng hồ) → chiếu đúng app đang mở trên màn chính, không cần
-     * chọn từ danh sách. Đang chiếu → về đồng hồ, tái dùng nguyên luồng Stop đã có. Không xác định được
-     * app đang mở → báo ngắn, không đoán mò, không mở gì thêm (docs/specs/cast-simplified-active-app-toggle.html).
-     *
-     * Bản 3 ô KHÔNG đụng vào một dòng nào của hàm này (CLAUDE.md §6: đường mới xuống cuối, không đảo
-     * đường cũ) — nó chỉ thêm [onZoneTap] ở phía trước làm chỗ rẽ.
-     */
-    private fun onPrimaryTap() {
-        // ─── Simplified Cast architecture (Stage 2): intercept when coordinator is active ───
+        // ─── Simplified Cast: intercept ALL taps before V2 projection/cell checks ───
         val simplifiedState = SimpleCastRuntime.coordinator(applicationContext).state
         when (simplifiedState) {
-            is SimpleCastState.CastingFull, is SimpleCastState.CastingSplit -> {
-                // Currently casting — stop and return
+            is SimpleCastState.CastingFull -> {
+                // Full mode: any tap = stop all
                 SimpleCastRuntime.coordinator(applicationContext).dispatch(SimpleCastIntent.Stop())
                 toast(Lang.t("Đang trả app về…", "Returning app…"))
                 return
             }
+            is SimpleCastState.CastingSplit -> {
+                // Split mode: tap specific slot to stop, or FULL to stop all
+                val slot = when (zone) {
+                    BubbleZone.LEFT -> ClusterSlotSide.LEFT
+                    BubbleZone.RIGHT -> ClusterSlotSide.RIGHT
+                    else -> null // FULL = stop all
+                }
+                SimpleCastRuntime.coordinator(applicationContext).dispatch(SimpleCastIntent.Stop(slot))
+                toast(Lang.t("Đang trả app về…", "Returning app…"))
+                return
+            }
             is SimpleCastState.Idle -> {
-                // Ready to cast — detect foreground app and dispatch CastFull
                 val excluded = setOfNotNull(packageName, homePackage())
-                val foreground = runCatching { facade.foregroundPackage(HOME_DISPLAY_ID, excluded) }
-                    .getOrNull()
-                if (foreground != null) {
+                // foregroundPackage does shell I/O — must not block main thread.
+                // Use background thread, then dispatch cast intent on coordinator's executor.
+                if (!background("cluster-cast-detect-fg") {
+                    val foreground = runCatching {
+                        SimpleCastRuntime.coordinator(applicationContext).foregroundPackage(HOME_DISPLAY_ID, excluded)
+                    }.getOrNull()
+                    if (foreground == null) {
+                        handler.post { toast(Lang.t("Không xác định được app đang mở", "Cannot determine foreground app")) }
+                        return@background
+                    }
                     val appType = AppMover.classifyApp(foreground)
-                    SimpleCastRuntime.coordinator(applicationContext)
-                        .dispatch(SimpleCastIntent.CastFull(foreground, appType))
-                    toast(Lang.t("Chiếu ${foreground.substringAfterLast('.')}…", "Casting ${foreground.substringAfterLast('.')}…"))
-                } else {
-                    toast(Lang.t("Không xác định được app đang mở", "Cannot determine foreground app"))
+                    when (zone) {
+                        BubbleZone.FULL -> {
+                            SimpleCastRuntime.coordinator(applicationContext)
+                                .dispatch(SimpleCastIntent.CastFull(foreground, appType))
+                        }
+                        BubbleZone.LEFT -> {
+                            SimpleCastRuntime.coordinator(applicationContext)
+                                .dispatch(SimpleCastIntent.CastSlot(foreground, ClusterSlotSide.LEFT))
+                        }
+                        BubbleZone.RIGHT -> {
+                            SimpleCastRuntime.coordinator(applicationContext)
+                                .dispatch(SimpleCastIntent.CastSlot(foreground, ClusterSlotSide.RIGHT))
+                        }
+                    }
+                    handler.post { toast(Lang.t("Chiếu ${foreground.substringAfterLast('.')}…", "Casting ${foreground.substringAfterLast('.')}…")) }
+                }) {
+                    toast(Lang.t("Không thể khởi động luồng dò app", "Cannot start foreground detection thread"))
                 }
                 return
             }
-            else -> {} // Off/Opening/Stopping/Closing/Error — fall through to V2 logic below
-        }
-        // ─── End simplified intercept ───
-
-        // Đang có lượt chạy dở thì NÓI ra, đừng nuốt cú chạm: nút không phản hồi là thứ khiến người lái
-        // bấm dồn thêm trong lúc xe đang chạy.
-        if (dispatchInFlight.get() || stopAckPending()) { toast(Lang.t("Đang xử lý…", "Processing…")); return }
-        if (!tapInFlight.compareAndSet(false, true)) return
-        val token = generation.get()
-        val started = background("cluster-cast-bubble-tap") {
-            try {
-                // CLAUDE.md §5: "Cấm quyết định bằng cờ RAM. Kiểm bằng sự thật. Cờ chỉ để hiển thị."
-                // `lastProjection` chỉ được làm mới mỗi 15s, mà từ v0.72 cụm còn được đổi từ panel Home
-                // và từ tự-chiếu-lúc-khởi-động — tức nó có thể đi sau sự thật cả 15 giây. Quyết định
-                // Dừng-hay-Chiếu bằng ảnh chụp đó nghĩa là cú chạm có thể làm ĐÚNG CÁI NGƯỢC LẠI: đang
-                // chiếu mà lại phát một lượt cold-cast mới lên cụm đồng hồ lúc xe đang lăn bánh.
-                // Đọc lại đúng một lần ngay tại đây; [project] cũng vẽ lại vòng tròn nên hình và hành vi
-                // luôn cùng một sự thật. Không đọc được thì lùi về ảnh chụp — vẫn tốt hơn không làm gì.
-                val fresh = runCatching { project(token) }
-                    .onFailure { android.util.Log.e(TAG, "tap projection failed", it) }
-                    .getOrNull()
-                // Hỏi [BubbleProjection.stopOnTap], KHÔNG hỏi `projecting`: `projecting` là tín hiệu TÔ
-                // MÀU và từ 2026-07-31 nó đòi thêm phiên đã xác minh (§R3), nên đúng lúc cụm kẹt ở một
-                // nhánh phục hồi — lúc Stop là hành động an toàn kế tiếp DUY NHẤT — nó thành false và cú
-                // chạm sẽ làm ngược lại: hoặc câm, hoặc phát một lượt chiếu mới lên cụm đang kẹt.
-                if (fresh?.stopOnTap ?: (lastProjection?.stopOnTap == true)) {
-                    handler.post { if (!destroyed) requestStopOnce() }
-                    return@background
-                }
-                if (foreignMutationInFlight()) {
-                    handler.post { if (!destroyed) toast(Lang.t("Đang có thao tác khác chạy — thử lại", "Another operation in progress — try again")) }
-                    return@background
-                }
-                val excluded = setOfNotNull(packageName, homePackage())
-                val foreground = runCatching { facade.foregroundPackage(HOME_DISPLAY_ID, excluded) }
-                    .onFailure { android.util.Log.e(TAG, "foreground read failed", it) }
-                    .getOrNull()
-                handler.post {
-                    if (destroyed) return@post
-                    if (foreground != null) {
-                        dispatchTarget(foreground)
-                    } else {
-                        toast(Lang.t("Không xác định được app đang mở", "Cannot determine foreground app"))
-                    }
-                }
-            } finally {
-                tapInFlight.set(false)
+            else -> {
+                toast(Lang.t("Đang chuẩn bị cụm…", "Preparing cluster…"))
+                return
             }
         }
-        if (!started) tapInFlight.set(false)
     }
-
-    /**
-     * Một transaction của bề mặt KHÁC đang chạy (panel Home, tự-chiếu-lúc-khởi-động, watchdog).
-     *
-     * Vì sao nút nổi phải tự hỏi câu này thay vì cứ phát rồi để tầng dưới từ chối: khi có transaction,
-     * `CastManualIntentRunner.run` KHÔNG từ chối — nó XẾP HÀNG, và `queueLatestTarget` ghi một
-     * `pendingIntent` gốc USER (`CastModels.withPendingPackage` mặc định `CastIntentOrigin.USER`) vào
-     * store BỀN. `CastSessionStore.initializeForBoot` CỐ Ý giữ lại pendingIntent gốc USER qua mọi lần
-     * khởi động, và `CastAutomationService.evaluate` terminalize yêu cầu tự-chiếu-lúc-khởi-động thành
-     * `USER_SUPERSEDED` khi thấy nó ⇒ MỘT cú chạm rơi trúng lúc bận sẽ tắt tự-chiếu-khi-khởi-động (R7)
-     * của MỌI lần khởi động sau đó.
-     *
-     * Chỗ rút hàng đợi duy nhất là `MainActivityCastController.drainPendingTarget()`, chạy lúc MỞ màn
-     * Home. Nút nổi là một service sống mãi — nó không có khoảnh khắc "mở app" nào để rút, và rút trên
-     * nhịp hẹn giờ thì thành một cú chiếu bất ngờ lúc nổ máy. Vậy nên nút nổi không được phép TẠO ra
-     * hàng đợi: một chạm là một hành động ngay, hoặc là một câu từ chối đọc được.
-     *
-     * Đây là cửa lịch sự, KHÔNG phải guard cứng: cửa cứng vẫn nằm ở tầng thi hành (`CastExecutor`
-     * kiểm lại `transaction == null` trong chính `store.locked`). Còn lại một khe TOCTOU vài mili giây
-     * — chấp nhận được, vì hậu quả khe đó đúng bằng hành vi hôm nay.
-     */
-    private fun foreignMutationInFlight(): Boolean = runCatching { facade.envelope()?.transaction != null }
-        .onFailure { android.util.Log.e(TAG, "durable read failed", it) }
-        .getOrDefault(false)
 
     /** Gói launcher hiện tại, dò qua Intent chuẩn — không hardcode tên launcher (khác theo đời xe/ROM). */
     private fun homePackage(): String? = runCatching {
@@ -811,107 +556,6 @@ class FloatingBubbleService : Service() {
             android.content.pm.PackageManager.MATCH_DEFAULT_ONLY,
         )?.activityInfo?.packageName
     }.getOrNull()
-
-    /**
-     * Exported canonical action dispatch through the one process runtime and manual-intent owner.
-     *
-     * MỘT hàm cho cả ba ô, rẽ nhánh đúng ở chỗ khác nhau duy nhất — cả cụm đi [CastFacade.runManualIntent],
-     * nửa cụm đi [CastFacade.runHalfIntent] kèm ô và tỉ lệ. Gộp chứ không chép: mọi thứ quanh lời gọi
-     * (chốt chống trùng, câu "đang chiếu…", dịch kết cục ra tiếng người, vẽ lại sau khi xong) đã là bài
-     * học phải trả giá một lần, và một bản sao thứ hai là một chỗ để đánh rơi chúng lần nữa.
-     */
-    private fun dispatchTarget(packageName: String, zone: BubbleZone = BubbleZone.FULL) {
-        if (!dispatchInFlight.compareAndSet(false, true)) return
-        // v0.57 báo ngay "đang chiếu…" vì lệnh mất vài giây; không có nó thì chạm xong tưởng máy treo.
-        val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString() }
-            .getOrDefault(packageName)
-        val into = if (zone == BubbleZone.FULL) "" else Lang.t(" vào ${CastBubbleProjection.zoneName(zone)}", " to ${CastBubbleProjection.zoneName(zone)}")
-        toast(Lang.t("Chiếu $label$into…", "Casting $label$into…"))
-        val token = generation.get()
-        val started = background("cluster-cast-bubble-dispatch") {
-            // Kết cục PHẢI nói ra. Bản trước `runCatching { … }` rồi bỏ cả kết quả lẫn lỗi: chiếu hỏng thì
-            // người lái chỉ thấy "Chiếu X…" rồi cụm không đổi gì, không một dòng log. Dùng đúng câu mà
-            // panel Home dùng cho cùng kết cục (`statusMessage()`), không tự viết bộ chữ thứ hai.
-            val message = runCatching {
-                if (zone == BubbleZone.FULL) {
-                    facade.runManualIntent(
-                        packageName,
-                        preferredDensityDpi = catalog.clusterDensityDpi(packageName),
-                        clusterStyle = catalog.clusterStyle(packageName),
-                    ).statusMessage()
-                } else {
-                    // Tỉ lệ đọc ở đây, trên làn nền, ngay trước khi phát: xem KDoc [splitRatio].
-                    facade.runHalfIntent(
-                        packageName,
-                        zone,
-                        splitRatio.leftPercent(),
-                        preferredDensityDpi = catalog.clusterDensityDpi(packageName),
-                        clusterStyle = catalog.clusterStyle(packageName),
-                    ).statusMessage()
-                }
-            }.onFailure { android.util.Log.e(TAG, "cast dispatch failed", it) }
-                .getOrElse { Lang.t("Không chiếu được $label", "Failed to cast $label") }
-            dispatchInFlight.set(false)
-            handler.post {
-                if (destroyed || token != generation.get()) return@post
-                toast(message)
-                projectState()
-            }
-        }
-        if (!started) dispatchInFlight.set(false)
-    }
-
-    /**
-     * One tap renders local acknowledgement immediately and dispatches exactly one typed Stop.
-     *
-     * The durable Stop request only journals `stopRequested=true` and fences any in-flight mutation --
-     * it never tears anything down by itself. Once the request is accepted with no in-flight
-     * transaction to wait out, continue exactly like the old Activity's Stop button did.
-     */
-    private fun requestStopOnce() {
-        // Một lượt Stop đang thật sự chạy trong ngân sách thì thôi; quá hạn thì [stopAckPending] tự nhả
-        // chốt ngay tại đây, nếu không `compareAndSet` bên dưới nuốt cú chạm mà không báo gì.
-        if (stopAckPending()) return
-        // Ghi mốc TRƯỚC khi giữ chốt: ai thấy chốt đang giữ thì cũng thấy mốc của đúng lượt đó, không
-        // phải mốc cũ còn sót. Ngược lại thì làn vẽ có thể coi lượt vừa phát là đã quá hạn và nhả sớm.
-        stopRequestedAtMs = android.os.SystemClock.elapsedRealtime()
-        if (!stopInFlight.compareAndSet(false, true)) return
-        val token = generation.get()
-        val started = background("cluster-cast-bubble-stop") {
-            val accepted = runCatching { facade.requestStop() }.getOrNull()
-            var dispatchFailed = false
-            var outcome: String? = null
-            if (accepted != null && accepted.transaction == null) {
-                outcome = runCatching { continueStopAfterAcknowledgement() }
-                    .onFailure { android.util.Log.e(TAG, "stop dispatch failed", it); dispatchFailed = true }
-                    .getOrElse { Lang.t("Dừng chiếu thất bại", "Failed to stop casting") }
-            }
-            handler.post {
-                if (destroyed || token != generation.get()) return@post
-                if (accepted == null) {
-                    stopInFlight.set(false)
-                    toast(Lang.t("Không lưu được Stop", "Failed to save Stop request"))
-                } else {
-                    // Phát lệnh dọn dẹp hỏng thì chốt cục bộ phải nhả NGAY: giữ nó là khoá luôn cú chạm
-                    // kế tiếp trong khi cụm vẫn còn app trên đó.
-                    if (dispatchFailed) stopInFlight.set(false)
-                    // Kết cục nói ra bằng đúng câu panel Home dùng cho cùng đường Stop.
-                    outcome?.let { toast(it) }
-                }
-                projectState()
-            }
-        }
-        if (!started) stopInFlight.set(false)
-    }
-
-    /**
-     * Builds and executes the actual Stop plan once the request is durably acknowledged and no
-     * older mutation is still in flight. Delegates to the one shared implementation in
-     * [CastFacade.continueStopAfterAcknowledgement] so the raw mutation call lives in exactly one
-     * place instead of being copied per surface.
-     */
-    private fun continueStopAfterAcknowledgement(): String =
-        facade.continueStopAfterAcknowledgement { pkg -> catalog.evidence(pkg, facade.phoneSession(pkg)) }
 
     /** Chỉ gọi trên luồng vẽ. `runCatching` vì Toast có thể bị chặn bởi cài đặt thông báo của xe. */
     private fun toast(message: String) {

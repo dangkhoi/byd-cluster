@@ -33,16 +33,13 @@ class RebindReceiver : BroadcastReceiver() {
         when (action) {
             Intent.ACTION_BOOT_COMPLETED -> {
                 scheduleWatchdog(context)
-                com.byd.clusternav.modules.clustercast.CastLifecycleReceiver.schedule(context)
                 castBootWork(context, automation = true)
             }
             Intent.ACTION_LOCKED_BOOT_COMPLETED -> {
                 scheduleWatchdog(context)
-                com.byd.clusternav.modules.clustercast.CastLifecycleReceiver.schedule(context)
                 castBootWork(context, automation = false)
             }
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
-                com.byd.clusternav.modules.clustercast.CastLifecycleReceiver.schedule(context)
                 castBootWork(context, automation = false)
             }
         }
@@ -52,25 +49,21 @@ class RebindReceiver : BroadcastReceiver() {
      * One bounded background pass: read-only Cast rehydration, optional opted-in Bubble presentation
      * and, only for post-unlock BOOT_COMPLETED, the durable-first boot automation record.
      *
-     * The receiver performs no observation, planner, journal, DADB or gateway call, and it always
-     * finishes. Locked boot, package replacement and the watchdog can never record or claim
-     * automation.
+     * 2026-08-03: V2 lifecycle rehydrate removed — simplified coordinator owns projection.
+     * Only bubble presentation and boot automation remain.
      */
     private fun castBootWork(context: Context, automation: Boolean) {
         val pending = goAsync()
         Thread {
             try {
                 val app = context.applicationContext
-                runCatching {
-                    val result = com.byd.clusternav.cast.platform.CastAndroidLifecycle.rehydrate(app)
-                    Log.i(TAG, "Cast V2 lifecycle: $result")
-                }.onFailure { Log.e(TAG, "Cast rehydrate failed", it) }
+                // V2 CastAndroidLifecycle.rehydrate removed — simplified coordinator active
                 runCatching { startOptedInBubble(app) }.onFailure { Log.e(TAG, "bubble restore failed", it) }
                 if (automation) {
-                    val request = runCatching {
+                    runCatching {
                         com.byd.clusternav.modules.clustercast.CastAutomationService.recordAndEnqueue(app)
-                    }.onFailure { Log.e(TAG, "boot automation record failed", it) }.getOrNull()
-                    Log.i(TAG, "Cast boot automation: ${request?.state ?: "none"}")
+                    }.onFailure { Log.e(TAG, "boot automation record failed", it) }
+                    Log.i(TAG, "Cast boot automation: disabled (simplified coordinator)")
                 }
             } finally {
                 pending.finish()

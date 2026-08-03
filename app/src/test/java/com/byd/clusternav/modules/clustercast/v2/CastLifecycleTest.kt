@@ -63,13 +63,15 @@ class CastLifecycleTest {
         val receiver = source("main/java/com/byd/clusternav/modules/clustercast/CastLifecycleReceiver.kt")
         val navReceiver = source("main/java/com/byd/clusternav/RebindReceiver.kt")
         val manifest = source("main/AndroidManifest.xml")
-        assertTrue(receiver.contains("CastAndroidLifecycle.revalidate"))
+        // 2026-08-03: V2 lifecycle disabled — simplified coordinator active.
+        // CastLifecycleReceiver logs no-op; schedule calls removed from RebindReceiver; manifest entry removed.
+        assertTrue(receiver.contains("V2 lifecycle disabled"))
         assertTrue(receiver.contains("ACTION_REVALIDATE"))
         assertFalse(receiver.contains("coordinator.execute"))
         assertFalse(receiver.contains("requestStop"))
         assertFalse(navReceiver.contains("ACTION_WATCHDOG -> rehydrateCast"))
-        assertTrue(navReceiver.contains("CastLifecycleReceiver.schedule"))
-        assertTrue(manifest.contains(".modules.clustercast.CastLifecycleReceiver"))
+        assertFalse(navReceiver.contains("CastLifecycleReceiver.schedule"))
+        assertFalse(manifest.contains(".modules.clustercast.CastLifecycleReceiver"))
     }
 
     @Test
