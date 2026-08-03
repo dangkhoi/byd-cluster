@@ -47,6 +47,18 @@ class SimpleCastCoordinator(
         copy.forEach { it(new) }
     }
 
+    /** Set error state with auto-recovery to Idle (or Off) after 3 seconds. */
+    private fun setError(message: String) {
+        setState(SimpleCastState.Error(message))
+        // Auto-recover after 3s — projection likely still open
+        executor.execute {
+            Thread.sleep(3000)
+            if (state is SimpleCastState.Error) {
+                setState(if (projection.isOpen) SimpleCastState.Idle else SimpleCastState.Off)
+            }
+        }
+    }
+
     // ─── Projection lifecycle ─────────────────────────────────────────────────
 
     /** Opens projection. Called on app start (onCreate). */
@@ -56,7 +68,7 @@ class SimpleCastCoordinator(
             setState(SimpleCastState.Opening)
 
             val ok = projection.open(displayId)
-            setState(if (ok) SimpleCastState.Idle else SimpleCastState.Error("Projection open failed"))
+            if (ok) setState(SimpleCastState.Idle) else setError("Projection open failed")
         }
     }
 
@@ -67,7 +79,7 @@ class SimpleCastCoordinator(
             returnAllApps()
             setState(SimpleCastState.Closing)
             val ok = projection.close(displayId)
-            setState(if (ok) SimpleCastState.Off else SimpleCastState.Error("Projection close failed"))
+            if (ok) setState(SimpleCastState.Off) else setError("Projection close failed")
         }
     }
 
@@ -107,7 +119,7 @@ class SimpleCastCoordinator(
 
         val config = configurator.resolveConfig(intent.pkg, intent.appType, prefs)
         if (!configurator.apply(displayId, config)) {
-            setState(SimpleCastState.Error("Display config failed"))
+            setError("Display config failed")
             return
         }
 
@@ -134,7 +146,12 @@ class SimpleCastCoordinator(
                 }
             }
         } else {
-            setState(SimpleCastState.Error("Cast failed"))
+            val msg = if (intent.appType.isProtected) {
+                "Open ${intent.appType.name} app first / Mở app trước rồi chiếu"
+            } else {
+                "Cast failed / Không chiếu được"
+            }
+            setError(msg)
         }
     }
 
@@ -153,10 +170,16 @@ class SimpleCastCoordinator(
         val config = configurator.resolveConfig(intent.pkg, AppType.NORMAL, prefs)
         val slot = SlotState(intent.pkg, config)
 
-        // R5: apply display config before moving the app
-        if (!configurator.apply(displayId, config)) {
-            setState(SimpleCastState.Error("Display config failed for slot"))
-            return
+        // Split mode: display config (wm size/overscan) is DISPLAY-GLOBAL on Android.
+        // Cannot set different wm sizes per task. Use the config from the first cast app.
+        // Both split apps share the same display resolution.
+        if (afterWait is SimpleCastState.CastingSplit) {
+            // Don't re-apply display config — would affect the existing app
+        } else {
+            if (!configurator.apply(displayId, config)) {
+                setError("Display config failed for slot")
+                return
+            }
         }
 
         val leftPercent = prefs.splitRatioLeftPercent()
@@ -169,7 +192,7 @@ class SimpleCastCoordinator(
             leftPercent = leftPercent,
         )
         if (!ok) {
-            setState(SimpleCastState.Error("Cast to slot failed"))
+            setError("Cast to slot failed")
             return
         }
 
@@ -264,7 +287,7 @@ class SimpleCastCoordinator(
         configurator.reset(displayId)
         setState(SimpleCastState.Closing)
         val ok = projection.close(displayId)
-        setState(if (ok) SimpleCastState.Off else SimpleCastState.Error("Close failed"))
+        if (ok) setState(SimpleCastState.Off) else setError("Close failed")
     }
 
     // ─── Resize active target ────────────────────────────────────────────────

@@ -110,7 +110,11 @@ class FloatingBubbleService : Service() {
         if (!requestOverlayIfMissing()) { stopSelf(); return }
         if (!startForegroundOnce()) { stopSelf(); return }
         showBubble()
-        // 2026-08-03: V2 lifecycle rehydrate removed — simplified coordinator owns projection.
+        // 2026-08-03: Register state listener for immediate bubble refresh on state change.
+        // The 2s poll remains as fallback, but primary repaint is driven by this listener.
+        SimpleCastRuntime.coordinator(applicationContext).addStateListener { _ ->
+            handler.post { refreshBubbleState() }
+        }
         handler.post { if (!destroyed) handler.post(refresh) }
     }
 
@@ -601,7 +605,7 @@ class FloatingBubbleService : Service() {
         private const val NOTIFICATION_ID = 1042
         /** Xe này luôn dùng display 0 cho màn chính (đã xác nhận qua nhiều dump thật — xem CastAmStackForegroundTest). */
         private const val HOME_DISPLAY_ID = 0
-        private const val REFRESH_INTERVAL_MS = 15_000L
+        private const val REFRESH_INTERVAL_MS = 2_000L
 
         /**
          * Cạnh TỐI THIỂU của MỘT vùng chạm — và cạnh vuông dự phòng khi chưa đo được nút nổi.
