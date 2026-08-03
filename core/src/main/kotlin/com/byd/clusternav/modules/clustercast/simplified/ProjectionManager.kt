@@ -30,17 +30,17 @@ class ProjectionManager(
         // Correct command: service call AutoContainer (BYD OEM service), NOT SurfaceFlinger
         val r1 = shell.execute("service call AutoContainer 2 i32 1000 i32 30 s16 \"\"")
         if (!r1.success) return false
-        sleepMs(300)
+        sleepMs(2000)
 
         // Profile 16 = keepKmh marker
         val r2 = shell.execute("service call AutoContainer 2 i32 1000 i32 16 s16 \"\"")
         if (!r2.success) return false
-        sleepMs(300)
+        sleepMs(2000)
 
         // Profile 35 = activate projection
         val r3 = shell.execute("service call AutoContainer 2 i32 1000 i32 35 s16 \"\"")
         if (!r3.success) return false
-        sleepMs(500)
+        sleepMs(1000)
 
         isOpen = true
         return true

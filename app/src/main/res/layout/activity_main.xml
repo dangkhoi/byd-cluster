@@ -117,15 +117,6 @@
                 android:layout_height="wrap_content" android:layout_marginTop="6dp" android:minHeight="@dimen/touch_min"
                 android:contentDescription="Tỉ lệ chia đôi cụm khi chiếu hai app" />
 
-            <CheckBox android:id="@+id/cb_vietmap_bubble_experiment" android:layout_width="match_parent"
-                android:layout_height="wrap_content" android:layout_marginTop="6dp"
-                android:minHeight="@dimen/touch_min" android:textColor="@color/text_secondary"
-                android:text="Hiển thị bong bóng VietMap" />
-            <Button android:id="@+id/btn_vietmap_bubble_trigger" android:layout_width="match_parent"
-                android:layout_height="wrap_content" android:minHeight="56dp" android:layout_marginTop="6dp"
-                android:background="@drawable/btn_outline" android:text="Chiếu bong bóng VietMap ngay"
-                android:textAllCaps="false" android:textSize="14sp" android:textColor="@color/btn_text" />
-
             <TextView android:id="@+id/cast_recovery_toggle" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical"
                 android:layout_marginTop="14dp" android:text="Khắc phục sự cố"

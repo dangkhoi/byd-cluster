@@ -503,14 +503,41 @@ class FloatingBubbleService : Service() {
                 return
             }
             is SimpleCastState.CastingSplit -> {
-                // Split mode: tap specific slot to stop, or FULL to stop all
-                val slot = when (zone) {
+                val slotSide = when (zone) {
                     BubbleZone.LEFT -> ClusterSlotSide.LEFT
                     BubbleZone.RIGHT -> ClusterSlotSide.RIGHT
-                    else -> null // FULL = stop all
+                    else -> null
                 }
-                SimpleCastRuntime.coordinator(applicationContext).dispatch(SimpleCastIntent.Stop(slot))
-                toast(Lang.t("Đang trả app về…", "Returning app…"))
+                // Check if the tapped slot is occupied
+                val slotOccupied = when (slotSide) {
+                    ClusterSlotSide.LEFT -> (simplifiedState as SimpleCastState.CastingSplit).left != null
+                    ClusterSlotSide.RIGHT -> (simplifiedState as SimpleCastState.CastingSplit).right != null
+                    null -> true // FULL zone in split = stop all
+                }
+                if (slotOccupied) {
+                    // Slot has app → stop it
+                    SimpleCastRuntime.coordinator(applicationContext).dispatch(SimpleCastIntent.Stop(slotSide))
+                    toast(Lang.t("Đang trả app về…", "Returning app…"))
+                } else {
+                    // Slot empty → cast foreground app into it (run on background thread)
+                    val slotToCast = slotSide!!
+                    val started = background("cast-split-slot") {
+                        val excluded = setOfNotNull(packageName, homePackage())
+                        val foreground = runCatching {
+                            SimpleCastRuntime.coordinator(applicationContext).foregroundPackage(0, excluded)
+                        }.getOrNull()
+                        handler.post {
+                            if (foreground != null) {
+                                SimpleCastRuntime.coordinator(applicationContext)
+                                    .dispatch(SimpleCastIntent.CastSlot(foreground, slotToCast))
+                                toast(Lang.t("Chiếu ${foreground.substringAfterLast('.')}…", "Casting ${foreground.substringAfterLast('.')}…"))
+                            } else {
+                                toast(Lang.t("Không xác định được app đang mở", "Cannot determine foreground app"))
+                            }
+                        }
+                    }
+                    if (!started) toast(Lang.t("Đang xử lý…", "Processing…"))
+                }
                 return
             }
             is SimpleCastState.Idle -> {
