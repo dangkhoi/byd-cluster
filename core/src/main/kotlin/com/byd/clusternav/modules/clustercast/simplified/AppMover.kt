@@ -43,16 +43,29 @@ class AppMover(
                 val cpTaskId = taskId ?: findTaskId(pkg)
                     ?: return false  // CP/AA not running = cannot move
                 val result = shell.execute("am stack move-task $cpTaskId $clusterStackId true")
-                result.success
+                if (!result.success) return false
+                // Resize CP to fill cluster with correct dimensions
+                // CP: 1422x800 (field-proven 2026-08-02), AA: 1920x720 (full)
+                sleepMs(500)
+                val (w, h) = when (appType) {
+                    AppType.CARPLAY -> 1422 to 800
+                    AppType.ANDROID_AUTO -> 1920 to 720
+                    else -> 1920 to 720
+                }
+                shell.execute("am task resize $cpTaskId 0 0 $w $h")
+                true
             }
             AppType.NORMAL -> {
                 // Resolve launcher activity component (proven pattern from CastPlacementCommands)
                 val component = activity ?: resolveLauncherComponent(pkg) ?: "$pkg/.MainActivity"
                 // Fresh launch with freeform on cluster display
+                // NOTE: do NOT use --activity-clear-task — it kills the existing task and on
+                // Android 10 BYD the new task fails to land on display 1.
+                // force_resizable_activities=1 must be set (checked/set on vehicle).
                 val launchCmd = "am start -a android.intent.action.MAIN" +
                     " -c android.intent.category.LAUNCHER" +
                     " --display $displayId --windowingMode 5" +
-                    " --activity-clear-task -n '$component'"
+                    " -n '$component'"
                 val result = shell.execute(launchCmd)
                 if (!result.success) return false
                 // Fit to cluster viewport after landing (give 1s for task to land)
@@ -88,6 +101,30 @@ class AppMover(
         // Parse: "Stack id=<N> ... displayId=<D> ..."
         val regex = Regex("Stack id=(\\d+)[^\\n]*displayId=$displayId")
         return regex.find(result.stdout)?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    /** Find a stack on the given display that already has tasks (proven to accept move-task).
+     *  If none exists on display 0, create one by launching Settings. */
+    private fun findNonHomeStackOnDisplay(targetDisplayId: Int): Int? {
+        val found = findExistingStackOnDisplay(targetDisplayId)
+        if (found != null) return found
+        if (targetDisplayId != 0) return null
+        // No usable stack on display 0 — create one
+        shell.execute("am start --display 0 --windowingMode 1 -n 'com.android.settings/.Settings'")
+        sleepMs(1000)
+        return findExistingStackOnDisplay(0)
+    }
+
+    private fun findExistingStackOnDisplay(targetDisplayId: Int): Int? {
+        val result = shell.execute("am stack list")
+        if (!result.success) return null
+        // Any non-home (id > 0) stack on the target display is a valid move-task target
+        val regex = Regex("""Stack id=(\d+).*displayId=$targetDisplayId""")
+        for (match in regex.findAll(result.stdout)) {
+            val stackId = match.groupValues[1].toIntOrNull() ?: continue
+            if (stackId > 0) return stackId
+        }
+        return null
     }
 
     /** Find the taskId for a running package. */
@@ -174,16 +211,10 @@ class AppMover(
     ): Boolean {
         return when (appType) {
             AppType.CARPLAY, AppType.ANDROID_AUTO -> {
-                if (taskId == null || mainStackId == null) {
-                    // Find task and home stack dynamically
-                    val cpTaskId = findTaskId(pkg) ?: return false
-                    val homeStack = findStackOnDisplay(0) ?: return false
-                    val result = shell.execute("am stack move-task $cpTaskId $homeStack true")
-                    result.success
-                } else {
-                    val result = shell.execute("am stack move-task $taskId $mainStackId true")
-                    result.success
-                }
+                val cpTaskId = taskId ?: findTaskId(pkg) ?: return false
+                val homeStack = mainStackId ?: findNonHomeStackOnDisplay(0) ?: return false
+                val result = shell.execute("am stack move-task $cpTaskId $homeStack true")
+                result.success
             }
             AppType.NORMAL -> {
                 // Return to fullscreen on display 0. windowingMode 1 only affects THIS app's task,
@@ -200,6 +231,7 @@ class AppMover(
         private val CARPLAY_PACKAGES = setOf(
             "com.byd.autolink.carplay",
             "com.byd.carlife.carplay",
+            "com.byd.carplay.ui",
         )
 
         /** Known Android Auto packages on BYD DiLink. */

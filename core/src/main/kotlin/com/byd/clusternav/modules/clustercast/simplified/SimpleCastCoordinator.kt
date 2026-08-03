@@ -64,22 +64,69 @@ class SimpleCastCoordinator(
     /** Opens projection. Called on app start (onCreate). */
     fun openProjection() {
         executor.execute {
-            if (state != SimpleCastState.Off) return@execute
+            if (state is SimpleCastState.CastingFull || state is SimpleCastState.CastingSplit) return@execute
             setState(SimpleCastState.Opening)
 
+            // Step 0: Clean slate — return any leftover apps from display 1 to display 0.
+            // After reboot/crash, previous cast session may leave apps on cluster.
+            cleanDisplay1()
+
+            // Step 1: Set display config BEFORE opening projection
+            configurator.apply(displayId, DisplayConfig.NORMAL_DEFAULT)
+
+            // Step 2: Open projection — resetState forces re-send even if local state thinks open
+            projection.resetState(false)
             val ok = projection.open(displayId)
-            if (ok) setState(SimpleCastState.Idle) else setError("Projection open failed")
+            if (!ok) { setError("Projection open failed"); return@execute }
+
+            // Step 3: Launch black placeholder to keep projection alive
+            shell.execute("am start --display $displayId --windowingMode 5" +
+                " -n 'com.byd.clusternav/.modules.clustercast.ClusterBlackActivity'")
+
+            // Step 4: Resize black activity to full display (freeform default is too small)
+            Thread.sleep(1000)
+            val stackResult = shell.execute("am stack list")
+            if (stackResult.success) {
+                val taskMatch = Regex("taskId=(\\d+):[^\\n]*ClusterBlackActivity").find(stackResult.stdout)
+                taskMatch?.groupValues?.get(1)?.let { taskId ->
+                    shell.execute("am task resize $taskId 0 0 1920 720")
+                }
+            }
+
+            // Detect if an external app already occupies display 1 (e.g. CP left from previous session)
+            // Adopt it as CastingFull so bubble shows Stop instead of Cast
+            val adoptResult = shell.execute("am stack list")
+            var adopted = false
+            if (adoptResult.success) {
+                var checkDisplayId = -1
+                for (line in adoptResult.stdout.lines()) {
+                    val sm = Regex("""Stack id=\d+.*displayId=(\d+)""").find(line)
+                    if (sm != null) { checkDisplayId = sm.groupValues[1].toIntOrNull() ?: -1; continue }
+                    if (checkDisplayId == displayId && line.contains("visible=true")) {
+                        val tm = Regex("""taskId=\d+:\s*([^/\s]+)/""").find(line)
+                        val pkg = tm?.groupValues?.get(1)
+                        if (pkg != null && pkg != "com.byd.clusternav" && !pkg.startsWith("com.android.")) {
+                            val appType = AppMover.classifyApp(pkg)
+                            setState(SimpleCastState.CastingFull(pkg, appType, DisplayConfig.forAppType(appType)))
+                            adopted = true; break
+                        }
+                    }
+                }
+            }
+            if (!adopted) setState(SimpleCastState.Idle)
         }
     }
 
     /** Closes projection. Called on app exit. */
     fun closeProjection() {
         executor.execute {
-            // Return any active apps first
+            // Return any active apps first (known state)
             returnAllApps()
+            // Safety net: also clean any unknown leftovers from display 1
+            cleanDisplay1()
             setState(SimpleCastState.Closing)
             val ok = projection.close(displayId)
-            if (ok) setState(SimpleCastState.Off) else setError("Projection close failed")
+            setState(if (ok) SimpleCastState.Off else SimpleCastState.Error("Projection close failed"))
         }
     }
 
@@ -115,6 +162,12 @@ class SimpleCastCoordinator(
         // If currently casting something else full, stop it first
         if (afterWait is SimpleCastState.CastingFull) {
             returnApp(afterWait.targetPkg, afterWait.appType)
+        }
+
+        // If app is ALREADY on display 1, just adopt state — don't re-cast (prevents infinite loop)
+        if (isAppOnDisplay(intent.pkg, displayId)) {
+            setState(SimpleCastState.CastingFull(intent.pkg, intent.appType, DisplayConfig.forAppType(intent.appType)))
+            return
         }
 
         val config = configurator.resolveConfig(intent.pkg, intent.appType, prefs)
@@ -207,6 +260,12 @@ class SimpleCastCoordinator(
                 SimpleCastState.CastingSplit(left = null, right = slot)
         }
         setState(newState)
+
+        // Apply saved DPI for the newly cast app (per-app restore on re-cast)
+        val savedConfig = prefs.displayConfigFor(intent.pkg)
+        if (savedConfig?.density != null && savedConfig.density != "reset") {
+            shell.execute("wm density ${savedConfig.density} -d $displayId")
+        }
     }
 
     private fun handleStop(intent: SimpleCastIntent.Stop) {
@@ -254,6 +313,7 @@ class SimpleCastCoordinator(
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private fun returnApp(pkg: String, appType: AppType) {
+        if (pkg == "com.byd.clusternav") return // never return our own black activity
         mover.returnToMain(
             pkg = pkg,
             activity = null, // resolved at app layer
@@ -279,6 +339,91 @@ class SimpleCastCoordinator(
             }
             else -> {}
         }
+    }
+
+    /**
+     * Return ALL apps from display 1 to display 0.
+     * Parses `am stack list`, finds all tasks on display 1 (except our own ClusterBlackActivity),
+     * and moves them back to display 0 via `am stack move-task`.
+     * Falls back to `am start --display 0` for exported activities if move-task fails.
+     * Idempotent: safe to call even if display 1 is already empty.
+     */
+    private fun cleanDisplay1() {
+        val result = shell.execute("am stack list")
+        if (!result.success) return
+
+        // Find a target stack on display 0 (any non-home standard stack)
+        var targetStack: Int? = null
+        var currentDisplayId = -1
+        val tasksOnCluster = mutableListOf<Pair<Int, String>>() // taskId, component
+
+        for (line in result.stdout.lines()) {
+            val stackMatch = Regex("""Stack id=(\d+).*displayId=(\d+)""").find(line)
+            if (stackMatch != null) {
+                val stackId = stackMatch.groupValues[1].toIntOrNull() ?: continue
+                val dId = stackMatch.groupValues[2].toIntOrNull() ?: continue
+                currentDisplayId = dId
+                // Find a usable stack on display 0 (not home stack 0)
+                if (dId == 0 && stackId > 0 && targetStack == null) {
+                    targetStack = stackId
+                }
+                continue
+            }
+            // Task line on cluster display
+            if (currentDisplayId == displayId && line.contains("taskId=")) {
+                val taskMatch = Regex("""taskId=(\d+):\s*([^\s]+)""").find(line) ?: continue
+                val taskId = taskMatch.groupValues[1].toIntOrNull() ?: continue
+                val component = taskMatch.groupValues[2]
+                val pkg = component.substringBefore("/")
+                // CLAUDE.md §4: NEVER move home/recents/pinned/system — causes surfaceflinger crash
+                // Also skip CP — it has auto-relaunch behavior; moving it back makes it jump right back
+                if (pkg == "com.byd.clusternav") continue
+                if (pkg == "com.android.launcher3") continue
+                if (pkg == "com.android.systemui") continue
+                if (pkg.startsWith("com.android.")) continue // all system framework
+                if (pkg == "com.byd.carplay.ui") continue // CP auto-relaunches to display 1
+                tasksOnCluster.add(taskId to component)
+            }
+        }
+
+        // Move each task back to display 0
+        if (tasksOnCluster.isEmpty()) return
+
+        // Ensure we have a target stack on display 0 — create one if needed
+        if (targetStack == null) {
+            shell.execute("am start --display 0 --windowingMode 1 -n 'com.android.settings/.Settings'")
+            Thread.sleep(1000)
+            // Re-parse to find the new stack
+            val recheck = shell.execute("am stack list")
+            if (recheck.success) {
+                for (line in recheck.stdout.lines()) {
+                    val m = Regex("""Stack id=(\d+).*displayId=0""").find(line)
+                    if (m != null) {
+                        val sid = m.groupValues[1].toIntOrNull() ?: continue
+                        if (sid > 0) { targetStack = sid; break }
+                    }
+                }
+            }
+        }
+
+        for ((taskId, component) in tasksOnCluster) {
+            if (targetStack != null) {
+                val moveResult = shell.execute("am stack move-task $taskId $targetStack true")
+                if (moveResult.success) { Thread.sleep(300); continue }
+            }
+            // Fallback: try am start (works for exported activities)
+            val activity = component.takeIf { it.contains("/") }
+            if (activity != null) {
+                shell.execute("am start --display 0 --windowingMode 1 -n '$activity'")
+            }
+            Thread.sleep(300)
+        }
+
+        // Close stale projection
+        shell.execute("service call AutoContainer 2 i32 1000 i32 18 s16 \"\"")
+        Thread.sleep(300)
+        shell.execute("service call AutoContainer 2 i32 1000 i32 0 s16 \"\"")
+        Thread.sleep(500)
     }
 
     private fun closeProjectionSync() {
@@ -317,6 +462,21 @@ class SimpleCastCoordinator(
         return Regex("taskId=(\\d+):[^\\n]*$pkg").find(result.stdout)?.groupValues?.get(1)
     }
 
+    /** Check if a package has a visible task on the given display. */
+    private fun isAppOnDisplay(pkg: String, targetDisplayId: Int): Boolean {
+        val result = shell.execute("am stack list")
+        if (!result.success) return false
+        var currentDisplayId = -1
+        for (line in result.stdout.lines()) {
+            val sm = Regex("""Stack id=\d+.*displayId=(\d+)""").find(line)
+            if (sm != null) { currentDisplayId = sm.groupValues[1].toIntOrNull() ?: -1; continue }
+            if (currentDisplayId == targetDisplayId && line.contains(pkg) && line.contains("visible=true")) {
+                return true
+            }
+        }
+        return false
+    }
+
     // ─── Density control ──────────────────────────────────────────────────────
 
     /**
@@ -338,6 +498,23 @@ class SimpleCastCoordinator(
                     density = dpi?.toString() ?: "reset"
                 ))
             }
+        }
+    }
+
+    /**
+     * Set density and save per specific package (for split mode DPI buttons).
+     * Unlike [setDensity] which saves for current full-cast app, this targets a named package.
+     */
+    fun setDensityForPkg(dpi: Int?, pkg: String) {
+        executor.execute {
+            if (dpi != null && dpi in 80..640) {
+                shell.execute("wm density $dpi -d $displayId")
+            } else {
+                shell.execute("wm density reset -d $displayId")
+            }
+            // Save per-app
+            val existing = prefs.displayConfigFor(pkg) ?: DisplayConfig.NORMAL_DEFAULT
+            prefs.saveDisplayConfig(pkg, existing.copy(density = dpi?.toString() ?: "reset"))
         }
     }
 
@@ -366,27 +543,35 @@ class SimpleCastCoordinator(
     companion object {
         /**
          * Minimal `am stack list` parser for foreground detection.
-         * Looks for tasks with `visible=true` on the given display and returns the package.
+         *
+         * Actual format on BYD DiLink3 (Android 10):
+         * ```
+         * Stack id=10 bounds=[0,0][1920,1080] displayId=0 userId=0
+         *   ...
+         *   taskId=33: vn.vietmap.live/vn.vietmap.live.MainActivity bounds=[0,0][1920,1080] userId=0 visible=true topActivity=ComponentInfo{vn.vietmap.live/vn.vietmap.live.MainActivity}
+         * ```
+         *
+         * Stack header has displayId. Task line has visible=true and pkg/activity.
          */
         internal fun parseForeground(amOutput: String, displayId: Int, excluded: Set<String>): String? {
-            // Pattern: taskId=N ... displayId=D ... visible=true ... realActivity=pkg/activity
-            val taskPattern = Regex("""taskId=\d+.*?(?=taskId=|\z)""", RegexOption.DOT_MATCHES_ALL)
-            val displayIdPattern = Regex("""displayId=(\d+)""")
-            val visiblePattern = Regex("""visible=(true|false)""")
-            val realActivityPattern = Regex("""realActivity=([^/\s]+)/""")
-
-            val candidates = mutableSetOf<String>()
-            for (match in taskPattern.findAll(amOutput)) {
-                val block = match.value
-                val dId = displayIdPattern.find(block)?.groupValues?.get(1)?.toIntOrNull() ?: continue
-                if (dId != displayId) continue
-                val visible = visiblePattern.find(block)?.groupValues?.get(1) == "true"
-                if (!visible) continue
-                val pkg = realActivityPattern.find(block)?.groupValues?.get(1) ?: continue
-                if (pkg in excluded) continue
-                candidates.add(pkg)
+            var currentDisplayId = -1
+            for (line in amOutput.lines()) {
+                // Stack header: "Stack id=N ... displayId=D ..."
+                val stackMatch = Regex("""Stack id=\d+.*displayId=(\d+)""").find(line)
+                if (stackMatch != null) {
+                    currentDisplayId = stackMatch.groupValues[1].toIntOrNull() ?: -1
+                    continue
+                }
+                // Task line: "taskId=N: pkg/activity ... visible=true ..."
+                if (currentDisplayId == displayId && line.contains("visible=true")) {
+                    // Extract package from "taskId=N: pkg/activity" format
+                    val taskMatch = Regex("""taskId=\d+:\s*([^/\s]+)/""").find(line)
+                    val pkg = taskMatch?.groupValues?.get(1) ?: continue
+                    if (pkg in excluded) continue
+                    return pkg
+                }
             }
-            return candidates.singleOrNull()
+            return null
         }
     }
 }

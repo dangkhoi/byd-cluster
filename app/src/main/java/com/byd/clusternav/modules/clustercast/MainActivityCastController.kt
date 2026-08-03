@@ -62,9 +62,12 @@ internal class MainActivityCastController(private val activity: Activity) {
         activity.findViewById<Button>(R.id.cast_clear_cluster).apply {
             isEnabled = true
             setOnClickListener {
-                SimpleCastRuntime.coordinator(activity.applicationContext).dispatch(SimpleCastIntent.Stop())
-                SimpleCastRuntime.coordinator(activity.applicationContext).closeProjection()
-                Toast.makeText(activity, Lang.t("Đã trả cụm về đồng hồ", "Cluster returned to gauges"), Toast.LENGTH_SHORT).show()
+                val coord = SimpleCastRuntime.coordinator(activity.applicationContext)
+                coord.dispatch(SimpleCastIntent.Stop())
+                coord.closeProjection()
+                Toast.makeText(activity, Lang.t("Đã trả cụm về đồng hồ · đang mở lại…", "Cluster reset · reopening…"), Toast.LENGTH_SHORT).show()
+                // Re-open after brief pause so user sees gauges then ready state
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ coord.openProjection() }, 2000)
             }
         }
 
@@ -138,23 +141,7 @@ internal class MainActivityCastController(private val activity: Activity) {
         }
 
         // Vietmap bubble experiment
-        val vietmapBubbleExperimentCheckbox = activity.findViewById<CheckBox>(R.id.cb_vietmap_bubble_experiment)
-        VietmapBubbleExperiment.bind(vietmapBubbleExperimentCheckbox, activity)
-        activity.findViewById<Button>(R.id.btn_vietmap_bubble_trigger).apply {
-            setOnClickListener {
-                VietmapBubbleExperiment.trigger(
-                    activity,
-                    castTarget = { pkg -> dispatchCast(pkg) },
-                    log = { android.util.Log.i("CastController", it) },
-                )
-            }
-        }
-        // Auto-trigger on app start if checkbox enabled
-        VietmapBubbleExperiment.runOnAppStart(
-            activity,
-            castTarget = { pkg -> dispatchCast(pkg) },
-            log = { android.util.Log.i("CastController", it) },
-        )
+        // VietMap bubble experiment removed — function not implemented
 
         // Initial render
         postUi { refresh() }
@@ -286,15 +273,30 @@ internal class MainActivityCastController(private val activity: Activity) {
             }
         }
 
-        // Hide geometry when casting a protected app; show resize controls for NORMAL apps
-        if (simplifiedState is SimpleCastState.CastingFull && simplifiedState.appType.isProtected) {
-            geometryContainer.visibility = View.GONE
-        } else if (simplifiedState is SimpleCastState.CastingFull && simplifiedState.appType.isResizable) {
-            geometryContainer.visibility = View.VISIBLE
-            setupResizeControls(simplifiedState)
-        } else {
-            geometryContainer.visibility = View.VISIBLE
-            geometryContainer.removeAllViews()
+        // Hide geometry when casting a protected app; show resize controls for NORMAL apps.
+        // During transient states (Opening/Stopping/Closing), keep current visibility to avoid
+        // panel flicker on rapid state transitions (CastingFull → Stopping → Idle → CastingFull).
+        when {
+            simplifiedState is SimpleCastState.CastingFull && simplifiedState.appType.isProtected -> {
+                geometryContainer.visibility = View.GONE
+            }
+            simplifiedState is SimpleCastState.CastingFull && simplifiedState.appType.isResizable -> {
+                geometryContainer.visibility = View.VISIBLE
+                setupResizeControls(simplifiedState)
+            }
+            simplifiedState is SimpleCastState.CastingSplit -> {
+                geometryContainer.visibility = View.VISIBLE
+                setupSplitDpiControls(simplifiedState)
+            }
+            simplifiedState is SimpleCastState.Idle || simplifiedState is SimpleCastState.Off || simplifiedState is SimpleCastState.Error -> {
+                geometryContainer.visibility = View.GONE
+            }
+            simplifiedState is SimpleCastState.Opening || simplifiedState is SimpleCastState.Stopping || simplifiedState is SimpleCastState.Closing -> {
+                // Transient states: keep current visibility — don't change
+            }
+            else -> {
+                geometryContainer.visibility = View.GONE
+            }
         }
     }
 
@@ -361,6 +363,56 @@ internal class MainActivityCastController(private val activity: Activity) {
         outerLayout.addView(btnRow)
 
         geometryContainer.addView(outerLayout)
+    }
+
+    private fun setupSplitDpiControls(state: SimpleCastState.CastingSplit) {
+        val tag = "split_dpi"
+        if (geometryContainer.tag == tag) return
+        geometryContainer.removeAllViews()
+        geometryContainer.tag = tag
+
+        val coordinator = SimpleCastRuntime.coordinator(activity.applicationContext)
+        val castPrefs = coordinator.prefs
+
+        val layout = android.widget.LinearLayout(activity).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+        }
+
+        val leftState = state.left
+        val rightState = state.right
+
+        if (leftState != null) {
+            val savedDpi = castPrefs.displayConfigFor(leftState.pkg)?.density ?: "reset"
+            val btnLeft = Button(activity).apply {
+                text = Lang.t("◧ DPI: $savedDpi", "◧ DPI: $savedDpi")
+                textSize = 12f
+                setOnClickListener {
+                    val current = castPrefs.displayConfigFor(leftState.pkg)?.density?.toIntOrNull() ?: 320
+                    val next = when (current) { 320 -> 240; 240 -> 160; else -> 320 }
+                    coordinator.setDensityForPkg(next, leftState.pkg)
+                    text = Lang.t("◧ DPI: $next", "◧ DPI: $next")
+                }
+            }
+            layout.addView(btnLeft, android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+
+        if (rightState != null) {
+            val savedDpi = castPrefs.displayConfigFor(rightState.pkg)?.density ?: "reset"
+            val btnRight = Button(activity).apply {
+                text = Lang.t("◨ DPI: $savedDpi", "◨ DPI: $savedDpi")
+                textSize = 12f
+                setOnClickListener {
+                    val current = castPrefs.displayConfigFor(rightState.pkg)?.density?.toIntOrNull() ?: 320
+                    val next = when (current) { 320 -> 240; 240 -> 160; else -> 320 }
+                    coordinator.setDensityForPkg(next, rightState.pkg)
+                    text = Lang.t("◨ DPI: $next", "◨ DPI: $next")
+                }
+            }
+            layout.addView(btnRight, android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+
+        geometryContainer.addView(layout)
     }
 
     private fun populateAutoStartSpinner(spinner: Spinner, castPrefs: SimpleCastPrefs) {
