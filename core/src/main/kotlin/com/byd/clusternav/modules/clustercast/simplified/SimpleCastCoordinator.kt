@@ -119,6 +119,20 @@ class SimpleCastCoordinator(
         )
         if (ok) {
             setState(SimpleCastState.CastingFull(intent.pkg, intent.appType, config))
+            // Apply saved bounds + density per-app (if user previously resized/set DPI)
+            if (intent.appType == AppType.NORMAL) {
+                val savedConfig = prefs.displayConfigFor(intent.pkg)
+                if (savedConfig?.bounds != null) {
+                    val b = savedConfig.bounds
+                    val taskId = findTaskIdForPkg(intent.pkg)
+                    if (taskId != null) {
+                        shell.execute("am task resize $taskId ${b.left} ${b.top} ${b.right} ${b.bottom}")
+                    }
+                }
+                if (savedConfig?.density != null && savedConfig.density != "reset") {
+                    shell.execute("wm density ${savedConfig.density} -d $displayId")
+                }
+            }
         } else {
             setState(SimpleCastState.Error("Cast failed"))
         }
@@ -266,10 +280,10 @@ class SimpleCastCoordinator(
             if (current !is SimpleCastState.CastingFull) return@execute
             val taskId = findTaskIdForPkg(current.targetPkg) ?: return@execute
             shell.execute("am task resize $taskId $left $top $right $bottom")
-            // Save to prefs
-            prefs.saveDisplayConfig(current.targetPkg, DisplayConfig(
-                wmSize = "${right - left}x${bottom - top}",
-                overscan = "0,0,0,0"
+            // Save bounds + current density per-app
+            val existing = prefs.displayConfigFor(current.targetPkg) ?: DisplayConfig.NORMAL_DEFAULT
+            prefs.saveDisplayConfig(current.targetPkg, existing.copy(
+                bounds = CastBounds(left, top, right, bottom)
             ))
         }
     }
@@ -288,10 +302,18 @@ class SimpleCastCoordinator(
      */
     fun setDensity(dpi: Int?) {
         executor.execute {
+            val current = state
             if (dpi != null && dpi in 80..640) {
                 shell.execute("wm density $dpi -d $displayId")
             } else {
                 shell.execute("wm density reset -d $displayId")
+            }
+            // Save density per-app
+            if (current is SimpleCastState.CastingFull) {
+                val existing = prefs.displayConfigFor(current.targetPkg) ?: DisplayConfig.NORMAL_DEFAULT
+                prefs.saveDisplayConfig(current.targetPkg, existing.copy(
+                    density = dpi?.toString() ?: "reset"
+                ))
             }
         }
     }

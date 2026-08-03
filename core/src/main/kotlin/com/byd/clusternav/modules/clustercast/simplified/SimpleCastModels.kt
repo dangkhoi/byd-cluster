@@ -22,15 +22,23 @@ enum class AppType {
 
 // ─── Display configuration (measured on vehicle 2026-08-02) ───────────────────
 
+data class CastBounds(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+    val width: Int get() = right - left
+    val height: Int get() = bottom - top
+    override fun toString() = "$left,$top,$right,$bottom"
+}
+
 data class DisplayConfig(
     val wmSize: String,
     val overscan: String,
     val density: String = "reset",
+    /** Task bounds for `am task resize` — null means use default viewport. */
+    val bounds: CastBounds? = null,
 ) {
     companion object {
         val CARPLAY = DisplayConfig(wmSize = "1422x800", overscan = "10,-120,10,50")
         val ANDROID_AUTO = DisplayConfig(wmSize = "1920x1080", overscan = "0,0,0,0")
-        val NORMAL_DEFAULT = DisplayConfig(wmSize = "1920x800", overscan = "0,0,0,0")
+        val NORMAL_DEFAULT = DisplayConfig(wmSize = "1920x800", overscan = "0,0,0,0", bounds = CastBounds(0, 90, 1920, 630))
 
         fun forAppType(type: AppType): DisplayConfig = when (type) {
             AppType.CARPLAY -> CARPLAY
