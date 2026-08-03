@@ -88,14 +88,6 @@
         <!-- SELF-HEAL: tự bind lại nav listener sau khi cài đè / cập nhật / khởi động máy
              → KHÔNG còn phải mở app hay disallow→allow tay để lấy lại nav. -->
         <receiver
-            android:name=".modules.clustercast.CastLifecycleReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.byd.clusternav.action.CAST_V2_REVALIDATE" />
-            </intent-filter>
-        </receiver>
-
-        <receiver
             android:name=".RebindReceiver"
             android:exported="false">
             <intent-filter>

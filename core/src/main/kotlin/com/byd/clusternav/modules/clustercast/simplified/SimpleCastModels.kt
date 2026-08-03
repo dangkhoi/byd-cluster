@@ -126,11 +126,13 @@ interface SimpleCastPrefs {
     fun lastDisplayId(): Int?
     fun saveLastDisplayId(id: Int)
 
-    /**
-     * CLAUDE.md §5 compliance: track whether display config is "dirty" (applied but not cleanly reverted).
-     * Set to true BEFORE applying wm size/overscan/density; clear AFTER clean revert.
-     * On next boot/app-start, if dirty → reset display to defaults.
-     */
-    fun isDisplayDirty(): Boolean
-    fun setDisplayDirty(dirty: Boolean)
+    // Autostart
+    fun autoStartPackage(): String?
+    fun setAutoStartPackage(pkg: String?)
+    fun autoStartEnabled(): Boolean
+    fun setAutoStartEnabled(enabled: Boolean)
+
+    // Split ratio
+    fun splitRatioLeftPercent(): Int
+    fun setSplitRatioLeftPercent(pct: Int)
 }

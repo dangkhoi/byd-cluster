@@ -19,8 +19,8 @@ class SimpleCastCoordinatorTest {
         prefs = FakePrefs()
         val projection = ProjectionManager(shell, sleepMs = {}) // no actual sleep in tests
         val configurator = DisplayConfigurator(shell)
-        val mover = AppMover(shell)
-        coordinator = SimpleCastCoordinator(projection, configurator, mover, prefs, displayId = 1)
+        val mover = AppMover(shell, sleepMs = {})
+        coordinator = SimpleCastCoordinator(projection, configurator, mover, prefs, shell, displayId = 1)
     }
 
     // ─── Projection lifecycle ─────────────────────────────────────────────────
@@ -49,7 +49,7 @@ class SimpleCastCoordinatorTest {
     fun `openProjection issues seal commands 30, 16, 35`() {
         coordinator.openProjection()
         awaitState<SimpleCastState.Idle>()
-        val cmds = shell.history.filter { it.contains("SurfaceFlinger 1035") }
+        val cmds = shell.history.filter { it.contains("AutoContainer") }
         assertEquals(3, cmds.size)
         assertTrue(cmds[0].contains("i32 30"))
         assertTrue(cmds[1].contains("i32 16"))
@@ -72,47 +72,10 @@ class SimpleCastCoordinatorTest {
         shell.history.clear()
         coordinator.closeProjection()
         awaitState<SimpleCastState.Off>()
-        val cmds = shell.history.filter { it.contains("SurfaceFlinger 1035") }
+        val cmds = shell.history.filter { it.contains("AutoContainer") }
         assertEquals(2, cmds.size)
         assertTrue(cmds[0].contains("i32 18"))
         assertTrue(cmds[1].contains("i32 0"))
-    }
-
-    @Test
-    fun `openProjection resets display if dirty flag set - CLAUDE md S5`() {
-        // Simulate: previous session crashed while display was configured (dirty=true)
-        prefs.setDisplayDirty(true)
-        coordinator.openProjection()
-        awaitState<SimpleCastState.Idle>()
-        // Should have issued reset commands (wm size reset, wm overscan reset, wm density reset)
-        assertTrue(shell.history.any { it.contains("wm size reset -d 1") })
-        assertTrue(shell.history.any { it.contains("wm overscan reset -d 1") })
-        assertTrue(shell.history.any { it.contains("wm density reset -d 1") })
-        // Dirty flag should be cleared
-        assertFalse(prefs.isDisplayDirty())
-    }
-
-    @Test
-    fun `openProjection skips reset if not dirty`() {
-        coordinator.openProjection()
-        awaitState<SimpleCastState.Idle>()
-        // No wm reset commands — only SurfaceFlinger calls for projection open
-        assertFalse(shell.history.any { it.contains("wm size reset") })
-        assertFalse(shell.history.any { it.contains("wm overscan reset") })
-    }
-
-    @Test
-    fun `closeProjection clears dirty flag`() {
-        coordinator.openProjection()
-        awaitState<SimpleCastState.Idle>()
-        coordinator.dispatch(SimpleCastIntent.CastFull("com.test.app", AppType.NORMAL))
-        awaitState<SimpleCastState.CastingFull>()
-        // After casting, dirty flag should be set
-        assertTrue(prefs.isDisplayDirty())
-        coordinator.closeProjection()
-        awaitState<SimpleCastState.Off>()
-        // After close, dirty flag should be cleared
-        assertFalse(prefs.isDisplayDirty())
     }
 
     // ─── Cast full (CP/AA) ────────────────────────────────────────────────────
@@ -320,23 +283,61 @@ class SimpleCastCoordinatorTest {
 class FakeShell : SimpleCastShell {
     val history = CopyOnWriteArrayList<String>()
     var shouldFail = false
+    /** Packages to simulate as already running (with taskIds) for am stack list. */
+    val runningTasks = mutableMapOf<String, Int>()
+
+    init {
+        // CP/AA are always already running when user requests cast (they're system apps)
+        runningTasks["com.byd.autolink.carplay"] = 10
+        runningTasks["com.google.android.projection.gearhead"] = 11
+    }
 
     override fun execute(command: String): ShellResult {
         history.add(command)
-        return if (shouldFail) ShellResult(1, "", "fake error")
-        else ShellResult(0, "", "")
+        if (shouldFail) return ShellResult(1, "", "fake error")
+        // Simulate am stack list output for task/stack discovery
+        if (command == "am stack list") {
+            return ShellResult(0, fakeStackListOutput(), "")
+        }
+        return ShellResult(0, "", "")
+    }
+
+    /** Simulates am stack list with tasks on display 0 and a freeform stack on display 1. */
+    private fun fakeStackListOutput(): String {
+        val sb = StringBuilder()
+        // Home stack on display 0
+        sb.appendLine("Stack id=0 bounds=[0,0][1920,720] displayId=0 userId=0")
+        sb.appendLine("  taskId=1: com.android.launcher3/com.android.launcher3.Launcher visible=true")
+        // Running tasks on display 0
+        for ((pkg, taskId) in runningTasks) {
+            sb.appendLine("  taskId=$taskId: $pkg/.MainActivity visible=true")
+        }
+        // If settings was launched to display 1 (for stack creation), show a stack there
+        if (history.any { it.contains("--display 1") }) {
+            sb.appendLine("Stack id=2 bounds=[0,0][1920,720] displayId=1 userId=0")
+            sb.appendLine("  taskId=99: com.android.settings/.Settings visible=true")
+        }
+        return sb.toString()
     }
 }
 
 class FakePrefs : SimpleCastPrefs {
     private val configs = mutableMapOf<String, DisplayConfig>()
     private var lastDisplay: Int? = null
-    private var dirty: Boolean = false
+    private var _autoStartPackage: String? = null
+    private var _autoStartEnabled: Boolean = false
+    private var _splitRatioLeftPercent: Int = 50
 
     override fun displayConfigFor(pkg: String): DisplayConfig? = configs[pkg]
     override fun saveDisplayConfig(pkg: String, config: DisplayConfig) { configs[pkg] = config }
     override fun lastDisplayId(): Int? = lastDisplay
     override fun saveLastDisplayId(id: Int) { lastDisplay = id }
-    override fun isDisplayDirty(): Boolean = dirty
-    override fun setDisplayDirty(dirty: Boolean) { this.dirty = dirty }
+
+    override fun autoStartPackage(): String? = _autoStartPackage
+    override fun setAutoStartPackage(pkg: String?) { _autoStartPackage = pkg }
+    override fun autoStartEnabled(): Boolean = _autoStartEnabled
+    override fun setAutoStartEnabled(enabled: Boolean) { _autoStartEnabled = enabled }
+
+    override fun splitRatioLeftPercent(): Int = _splitRatioLeftPercent
+    override fun setSplitRatioLeftPercent(pct: Int) { _splitRatioLeftPercent = pct }
 }
