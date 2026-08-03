@@ -92,7 +92,11 @@ private class SharedPrefsSimpleCastPrefs(context: Context) : SimpleCastPrefs {
         val size = sp.getString("config_size_$pkg", null) ?: return null
         val overscan = sp.getString("config_overscan_$pkg", "0,0,0,0") ?: "0,0,0,0"
         val density = sp.getString("config_density_$pkg", "reset") ?: "reset"
-        return DisplayConfig(wmSize = size, overscan = overscan, density = density)
+        val boundsStr = sp.getString("config_bounds_$pkg", null)
+        val bounds = boundsStr?.split(",")?.takeIf { it.size == 4 }?.let {
+            CastBounds(it[0].toInt(), it[1].toInt(), it[2].toInt(), it[3].toInt())
+        }
+        return DisplayConfig(wmSize = size, overscan = overscan, density = density, bounds = bounds)
     }
 
     override fun saveDisplayConfig(pkg: String, config: DisplayConfig) {
@@ -100,6 +104,7 @@ private class SharedPrefsSimpleCastPrefs(context: Context) : SimpleCastPrefs {
             .putString("config_size_$pkg", config.wmSize)
             .putString("config_overscan_$pkg", config.overscan)
             .putString("config_density_$pkg", config.density)
+            .putString("config_bounds_$pkg", config.bounds?.toString())
             .apply()
     }
 
