@@ -3,12 +3,6 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- BLE peripheral (VietMap HUD bridge): advertise + GATT server -->
-    <uses-permission android:name="android.permission.BLUETOOTH" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <!-- Tự rebind nav listener sau khi khởi động lại máy (RebindReceiver). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- ADB loopback (socket 127.0.0.1:5555) để rebind listener từ trong app. -->
@@ -95,10 +89,7 @@
                 android:value="cluster_cast_boot_automation" />
         </service>
 
-        <!-- VietMap HUD BLE bridge: fake H50 peripheral to receive nav data from VietMap Live -->
-        <service
-            android:name=".modules.vietmaphud.VietMapHudService"
-            android:exported="false" />
+        <!-- VietMap HUD BLE bridge: removed — same-device BLE self-loopback not viable (2026-08-04) -->
 
         <!-- Lắng nghe notification dẫn đường -->
         <service
