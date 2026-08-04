@@ -522,7 +522,7 @@ class FloatingBubbleService : Service() {
                     // Slot empty → cast foreground app into it (run on background thread)
                     val slotToCast = slotSide!!
                     val started = background("cast-split-slot") {
-                        val excluded = setOfNotNull(packageName, homePackage())
+                        val excluded = setOfNotNull(packageName, homePackage(), "com.byd.clusternav")
                         val foreground = runCatching {
                             SimpleCastRuntime.coordinator(applicationContext).foregroundPackage(0, excluded)
                         }.getOrNull()
@@ -541,7 +541,7 @@ class FloatingBubbleService : Service() {
                 return
             }
             is SimpleCastState.Idle -> {
-                val excluded = setOfNotNull(packageName, homePackage())
+                val excluded = setOfNotNull(packageName, homePackage(), "com.byd.clusternav")
                 // foregroundPackage does shell I/O — must not block main thread.
                 // Use background thread, then dispatch cast intent on coordinator's executor.
                 if (!background("cluster-cast-detect-fg") {

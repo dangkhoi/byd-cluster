@@ -14,10 +14,9 @@ object NavFormat {
     const val ROAD_MAX_UNITS = 7
 
     // ── HUD kính lái: ngân sách ký tự cho tên đường đẩy lên HUD (INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_SET,
-    //    buffer BYTE cố định nhỏ). Đặt = ROAD_MAX_UNITS (7) vì ô HUD CÙNG HỌ buffer với ô cụm.
-    //    ⚠ CHỈ nâng lên 8 SAU KHI trace buffer HUD THẬT trên xe CÓ HUD mới (OQ2 chưa đo). Tràn buffer
-    //      = firmware BỎ luôn tên (chỉ còn mũi tên) = ĐÚNG bug đang chữa (D4/F7). Thà "VNG" còn hơn mất tên.
-    const val HUD_ROAD_MAX_UNITS = 7
+    //    buffer BYTE cố định nhỏ). Test on-car: 7 quá nhỏ → firmware bỏ tên hoàn toàn.
+    //    Nâng lên 20 (40 bytes UTF-16LE). Nếu vẫn bị bỏ → giảm dần cho tới khi firmware hiện.
+    const val HUD_ROAD_MAX_UNITS = 20
 
     // tiền tố động từ rẽ + FILLER vô nghĩa ("về hướng"...) — bỏ để chỉ còn tên đường.
     private val MANEUVER_PREFIX = Regex(

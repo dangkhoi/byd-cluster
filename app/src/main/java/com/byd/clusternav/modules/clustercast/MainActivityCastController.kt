@@ -112,11 +112,33 @@ internal class MainActivityCastController(private val activity: Activity) {
         autoStartCheckbox.isChecked = castPrefs.autoStartEnabled()
         autoStartCheckbox.setOnCheckedChangeListener { _, isChecked ->
             castPrefs.setAutoStartEnabled(isChecked)
+            if (isChecked) {
+                // Mutual exclusive: full vs split
+                castPrefs.setAutoStartSplitEnabled(false)
+                activity.findViewById<CheckBox>(R.id.cb_autostart_split).isChecked = false
+            }
         }
 
         val spinnerAutoApp = activity.findViewById<Spinner>(R.id.spinner_autostart_app)
         spinnerAutoApp.isEnabled = true
         populateAutoStartSpinner(spinnerAutoApp, castPrefs)
+
+        // Autostart split (left + right)
+        val autoStartSplitCheckbox = activity.findViewById<CheckBox>(R.id.cb_autostart_split)
+        autoStartSplitCheckbox.isChecked = castPrefs.autoStartSplitEnabled()
+        autoStartSplitCheckbox.setOnCheckedChangeListener { _, isChecked ->
+            castPrefs.setAutoStartSplitEnabled(isChecked)
+            if (isChecked) {
+                // Mutual exclusive: split vs full
+                castPrefs.setAutoStartEnabled(false)
+                autoStartCheckbox.isChecked = false
+            }
+        }
+
+        val spinnerAutoLeft = activity.findViewById<Spinner>(R.id.spinner_autostart_left)
+        val spinnerAutoRight = activity.findViewById<Spinner>(R.id.spinner_autostart_right)
+        populateAutoStartSpinner(spinnerAutoLeft, castPrefs, "left")
+        populateAutoStartSpinner(spinnerAutoRight, castPrefs, "right")
 
         // Split ratio spinner
         val spinnerRatio = activity.findViewById<Spinner>(R.id.spinner_split_ratio)
@@ -134,6 +156,27 @@ internal class MainActivityCastController(private val activity: Activity) {
                             coordinator.dispatch(
                                 SimpleCastIntent.CastFull(autoStartPkg, AppMover.classifyApp(autoStartPkg))
                             )
+                        }
+                    }
+                })
+            }
+        } else if (castPrefs.autoStartSplitEnabled()) {
+            val leftPkg = castPrefs.autoStartLeftPackage()
+            val rightPkg = castPrefs.autoStartRightPackage()
+            if (!leftPkg.isNullOrBlank() || !rightPkg.isNullOrBlank()) {
+                coordinator.addStateListener(object : (SimpleCastState) -> Unit {
+                    override fun invoke(state: SimpleCastState) {
+                        if (state is SimpleCastState.Idle) {
+                            coordinator.removeStateListener(this)
+                            leftPkg?.takeIf(String::isNotBlank)?.let {
+                                coordinator.dispatch(SimpleCastIntent.CastSlot(it, ClusterSlotSide.LEFT))
+                            }
+                            // Small delay between two casts to let first one land
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                rightPkg?.takeIf(String::isNotBlank)?.let {
+                                    coordinator.dispatch(SimpleCastIntent.CastSlot(it, ClusterSlotSide.RIGHT))
+                                }
+                            }, 2000)
                         }
                     }
                 })
@@ -416,6 +459,10 @@ internal class MainActivityCastController(private val activity: Activity) {
     }
 
     private fun populateAutoStartSpinner(spinner: Spinner, castPrefs: SimpleCastPrefs) {
+        populateAutoStartSpinner(spinner, castPrefs, "full")
+    }
+
+    private fun populateAutoStartSpinner(spinner: Spinner, castPrefs: SimpleCastPrefs, slot: String) {
         val launchIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolveInfos = activity.packageManager.queryIntentActivities(launchIntent, 0)
         val excluded = setOf(activity.packageName, "com.android.launcher", "com.android.launcher3")
@@ -433,7 +480,11 @@ internal class MainActivityCastController(private val activity: Activity) {
         spinner.adapter = adapter
 
         // Select currently saved package
-        val savedPkg = castPrefs.autoStartPackage()
+        val savedPkg = when (slot) {
+            "left" -> castPrefs.autoStartLeftPackage()
+            "right" -> castPrefs.autoStartRightPackage()
+            else -> castPrefs.autoStartPackage()
+        }
         if (savedPkg != null) {
             val idx = apps.indexOfFirst { it.second == savedPkg }
             if (idx >= 0) spinner.setSelection(idx + 1) // +1 for header
@@ -441,10 +492,11 @@ internal class MainActivityCastController(private val activity: Activity) {
 
         spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
-                if (position == 0) {
-                    castPrefs.setAutoStartPackage(null)
-                } else {
-                    castPrefs.setAutoStartPackage(apps[position - 1].second)
+                val pkg = if (position == 0) null else apps[position - 1].second
+                when (slot) {
+                    "left" -> castPrefs.setAutoStartLeftPackage(pkg)
+                    "right" -> castPrefs.setAutoStartRightPackage(pkg)
+                    else -> castPrefs.setAutoStartPackage(pkg)
                 }
             }
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}

@@ -136,4 +136,30 @@ private class SharedPrefsSimpleCastPrefs(context: Context) : SimpleCastPrefs {
     override fun setSplitRatioLeftPercent(pct: Int) {
         sp.edit().putInt("split_ratio_left_pct", pct).apply()
     }
+
+    // One-time setup flags
+    override fun dozeWhitelistApplied(): Boolean = sp.getBoolean("doze_whitelist_applied", false)
+
+    override fun setDozeWhitelistApplied(applied: Boolean) {
+        sp.edit().putBoolean("doze_whitelist_applied", applied).apply()
+    }
+
+    // Autostart split
+    override fun autoStartLeftPackage(): String? = sp.getString("autostart_left_package", null)
+
+    override fun setAutoStartLeftPackage(pkg: String?) {
+        sp.edit().putString("autostart_left_package", pkg).apply()
+    }
+
+    override fun autoStartRightPackage(): String? = sp.getString("autostart_right_package", null)
+
+    override fun setAutoStartRightPackage(pkg: String?) {
+        sp.edit().putString("autostart_right_package", pkg).apply()
+    }
+
+    override fun autoStartSplitEnabled(): Boolean = sp.getBoolean("autostart_split_enabled", false)
+
+    override fun setAutoStartSplitEnabled(enabled: Boolean) {
+        sp.edit().putBoolean("autostart_split_enabled", enabled).apply()
+    }
 }

@@ -9,6 +9,9 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.byd.clusternav.navigation.NavigationPermission
+import com.byd.clusternav.vietmapwidget.VietMapWidgetBridge
+import com.byd.clusternav.vietmapwidget.VietMapWidgetFreshness
+import com.byd.clusternav.vietmapwidget.VietMapWidgetOwner
 
 /**
  * Adapter MỎNG cho notification dẫn đường (Google Maps / ReVanced). Chỉ làm:
@@ -39,6 +42,9 @@ class NavNotificationListener : NotificationListenerService() {
     /** Hệ thống THẢ binding (head-unit hay làm lúc chạy) → yêu cầu bind lại NGAY, không thì nav "câm". */
     override fun onListenerDisconnected() {
         connected = false
+        val bridge = VietMapWidgetBridge.get(applicationContext)
+        bridge.removeListener(speedLimitPusher)
+        bridge.stop(VietMapWidgetOwner.NAVIGATION)
         runCatching { NavRepository.setPermission(applicationContext, NavigationPermission.UNKNOWN) }
             .onFailure { Log.e(TAG, "permission state update failed", it) }
         runCatching {
@@ -49,6 +55,9 @@ class NavNotificationListener : NotificationListenerService() {
     /** Khi (re)cấp quyền / service bind lại: clear cờ kẹt + QUÉT noti đang hiện (nav có thể đã chạy trước). */
     override fun onListenerConnected() {
         connected = true
+        val bridge = VietMapWidgetBridge.get(applicationContext)
+        bridge.start(VietMapWidgetOwner.NAVIGATION)
+        bridge.addListener(speedLimitPusher)
         if (!Prefs.enabled(applicationContext)) return
         SourceArbiter.clear()
         runCatching { NavRepository.setPermission(applicationContext, NavigationPermission.GRANTED) }
@@ -61,6 +70,19 @@ class NavNotificationListener : NotificationListenerService() {
                 if (sbn.packageName in MAPS_PACKAGES) handle(sbn)
             }
         }.onFailure { Log.e(TAG, "scan active notifications failed", it) }
+    }
+
+    override fun onDestroy() {
+        connected = false
+        val bridge = VietMapWidgetBridge.get(applicationContext)
+        bridge.removeListener(speedLimitPusher)
+        bridge.stop(VietMapWidgetOwner.NAVIGATION)
+        super.onDestroy()
+    }
+
+    private val speedLimitPusher: (com.byd.clusternav.vietmapwidget.VietMapWidgetSnapshot) -> Unit = { snapshot ->
+        val limit = if (snapshot.freshness == VietMapWidgetFreshness.FRESH) snapshot.speedLimitKph else null
+        ClusterBroadcaster.pushSpeedLimit(applicationContext, limit)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
