@@ -3,6 +3,12 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- BLE peripheral (VietMap HUD bridge): advertise + GATT server -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <!-- Tự rebind nav listener sau khi khởi động lại máy (RebindReceiver). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- ADB loopback (socket 127.0.0.1:5555) để rebind listener từ trong app. -->
@@ -12,6 +18,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- liệt kê app cho picker "Chiếu app lên cụm". API29 không lọc; thêm để chắc trên API30+ (app sideload cá nhân). -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Official custom AppWidgetHost binding flow; the user still confirms each provider at runtime. -->
+    <uses-permission android:name="android.permission.BIND_APPWIDGET" />
 
     <!-- allowBackup=false: app lưu ADB private key (adb.key/adb.pub) trong filesDir — key này grant shell
          localhost:5555. Bật backup sẽ để `adb backup`/auto-backup rút key ra ngoài → tắt để không lộ. -->
@@ -31,8 +39,15 @@
             android:label="Chẩn đoán ClusterNav" />
 
         <activity
+            android:name=".vietmapwidget.VietMapWidgetDiagActivity"
+            android:exported="false"
+            android:label="Dữ liệu VietMap" />
+
+        <activity
             android:name=".modules.clustercast.ClusterBlackActivity"
             android:exported="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity="com.byd.clusternav.cluster"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:label="ClusterNav Projection" />
 
@@ -79,6 +94,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="cluster_cast_boot_automation" />
         </service>
+
+        <!-- VietMap HUD BLE bridge: fake H50 peripheral to receive nav data from VietMap Live -->
+        <service
+            android:name=".modules.vietmaphud.VietMapHudService"
+            android:exported="false" />
 
         <!-- Lắng nghe notification dẫn đường -->
         <service

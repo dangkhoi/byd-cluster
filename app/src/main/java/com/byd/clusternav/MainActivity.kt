@@ -1,6 +1,7 @@
 package com.byd.clusternav
 
 import com.byd.clusternav.modules.clustercast.MainActivityCastController
+import com.byd.clusternav.vietmapwidget.VietMapWidgetDiagActivity
 import com.byd.clusternav.navigation.NavigationOutputFailureReason
 import com.byd.clusternav.navigation.NavigationSourceReason
 import android.app.Activity
@@ -112,6 +113,9 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.btn_nav_stop).setOnClickListener {
             NavRepository.stop(applicationContext)
             refresh()
+        }
+        findViewById<Button>(R.id.btn_vietmap_widget_diag).setOnClickListener {
+            startActivity(Intent(this, VietMapWidgetDiagActivity::class.java))
         }
 
         NavConnect.ensureConnected(applicationContext)

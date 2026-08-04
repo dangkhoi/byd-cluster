@@ -53,9 +53,13 @@
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="horizontal" android:layout_marginTop="8dp">
                 <Button android:id="@+id/btn_nav_stop" android:layout_width="0dp" android:layout_height="wrap_content"
-                    android:layout_weight="1" android:minHeight="@dimen/touch_min"
+                    android:layout_weight="1" android:layout_marginEnd="4dp" android:minHeight="@dimen/touch_min"
                     android:background="@drawable/btn_warning_outline" android:text="Dừng toàn bộ"
                     android:textAllCaps="false" android:textColor="@color/warn_amber" />
+                <Button android:id="@+id/btn_vietmap_widget_diag" android:layout_width="0dp"
+                    android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="4dp"
+                    android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
+                    android:text="Dữ liệu VietMap" android:textAllCaps="false" android:textColor="@color/brand" />
             </LinearLayout>
         </LinearLayout>
 
@@ -106,9 +110,24 @@
 
             <CheckBox android:id="@+id/cb_autostart" android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:minHeight="@dimen/touch_min" android:textColor="@color/text_secondary"
-                android:text="Tự khởi động: chiếu app này lên cụm khi mở ClusterNav" />
+                android:text="Tự khởi động: chiếu full cụm" />
             <Spinner android:id="@+id/spinner_autostart_app" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:layout_marginTop="6dp" android:minHeight="@dimen/touch_min" />
+
+            <CheckBox android:id="@+id/cb_autostart_split" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:minHeight="@dimen/touch_min" android:textColor="@color/text_secondary"
+                android:text="Tự khởi động: chia đôi (trái + phải)" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:layout_marginTop="6dp">
+                <Spinner android:id="@+id/spinner_autostart_left" android:layout_width="0dp"
+                    android:layout_weight="1" android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp" android:minHeight="@dimen/touch_min"
+                    android:contentDescription="App tự chiếu bên trái" />
+                <Spinner android:id="@+id/spinner_autostart_right" android:layout_width="0dp"
+                    android:layout_weight="1" android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp" android:minHeight="@dimen/touch_min"
+                    android:contentDescription="App tự chiếu bên phải" />
+            </LinearLayout>
 
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="12dp" android:text="Tỉ lệ chia đôi cụm — dùng khi chạm ô nửa trái/nửa phải của nút nổi"
@@ -140,5 +159,38 @@
 
             </LinearLayout>
         </LinearLayout>
+
+        <!-- VietMap HUD BLE Bridge — HIDDEN (hardware not supported, research pending) -->
+        <!--
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/gap" android:orientation="vertical"
+            android:background="@drawable/card_bg" android:padding="@dimen/card_pad">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="VietMap HUD (BLE)" android:textColor="@color/text_primary"
+                android:textSize="@dimen/text_status" android:fontFamily="sans-serif-medium" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="Giả lập HUD để nhận tín hiệu dẫn đường từ VietMap Live"
+                android:textColor="@color/text_secondary" android:textSize="@dimen/text_label" />
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
+                <View android:id="@+id/dot_hud_ble" android:layout_width="12dp" android:layout_height="12dp"
+                    android:layout_marginEnd="10dp" android:background="@drawable/status_dot" />
+                <TextView android:id="@+id/txt_hud_ble_status" android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:text="Tắt" android:textColor="@color/text_secondary" />
+            </LinearLayout>
+
+            <TextView android:id="@+id/txt_hud_ble_data" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:text="—" android:textColor="@color/text_secondary"
+                android:textSize="13sp" android:fontFamily="monospace" />
+
+            <Button android:id="@+id/btn_hud_ble_toggle" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
+                android:text="Bật HUD BLE" android:textAllCaps="false" android:textColor="@color/brand" />
+        </LinearLayout>
+        -->
+
     </LinearLayout>
 </ScrollView>

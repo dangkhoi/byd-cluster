@@ -327,6 +327,10 @@ class FakePrefs : SimpleCastPrefs {
     private var _autoStartPackage: String? = null
     private var _autoStartEnabled: Boolean = false
     private var _splitRatioLeftPercent: Int = 50
+    private var _dozeWhitelistApplied: Boolean = false
+    private var _autoStartLeftPackage: String? = null
+    private var _autoStartRightPackage: String? = null
+    private var _autoStartSplitEnabled: Boolean = false
 
     override fun displayConfigFor(pkg: String): DisplayConfig? = configs[pkg]
     override fun saveDisplayConfig(pkg: String, config: DisplayConfig) { configs[pkg] = config }
@@ -340,4 +344,14 @@ class FakePrefs : SimpleCastPrefs {
 
     override fun splitRatioLeftPercent(): Int = _splitRatioLeftPercent
     override fun setSplitRatioLeftPercent(pct: Int) { _splitRatioLeftPercent = pct }
+
+    override fun dozeWhitelistApplied(): Boolean = _dozeWhitelistApplied
+    override fun setDozeWhitelistApplied(applied: Boolean) { _dozeWhitelistApplied = applied }
+
+    override fun autoStartLeftPackage(): String? = _autoStartLeftPackage
+    override fun setAutoStartLeftPackage(pkg: String?) { _autoStartLeftPackage = pkg }
+    override fun autoStartRightPackage(): String? = _autoStartRightPackage
+    override fun setAutoStartRightPackage(pkg: String?) { _autoStartRightPackage = pkg }
+    override fun autoStartSplitEnabled(): Boolean = _autoStartSplitEnabled
+    override fun setAutoStartSplitEnabled(enabled: Boolean) { _autoStartSplitEnabled = enabled }
 }

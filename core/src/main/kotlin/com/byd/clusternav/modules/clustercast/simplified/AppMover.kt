@@ -12,17 +12,12 @@ package com.byd.clusternav.modules.clustercast.simplified
 class AppMover(
     private val shell: SimpleCastShell,
     private val sleepMs: (Long) -> Unit = { Thread.sleep(it) },
+    private val log: (String) -> Unit = { println("[AppMover] $it") },
 ) {
     /**
      * Moves an app to the cluster display using field-proven commands.
-     *
-     * Normal app recipe (from CastPlacementCommands, proven on vehicle):
-     * 1. Resolve launcher component via `cmd package resolve-activity`
-     * 2. `am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER
-     *        --display <d> --windowingMode 5 --activity-clear-task -n '<component>'`
-     * 3. `am task resize <taskId> <bounds>` to fit cluster viewport
-     *
-     * CP/AA recipe: `am stack move-task <taskId> <stackId> true`
+     * Returns the taskId that was moved (for CP/AA, needed for exact return), or null on failure.
+     * For normal apps, returns -1 on success (taskId not tracked).
      */
     fun castToCluster(
         pkg: String,
@@ -33,27 +28,33 @@ class AppMover(
         stackId: Int? = null,
         slotSide: ClusterSlotSide? = null,
         leftPercent: Int = 50,
-    ): Boolean {
+    ): Int? {
         return when (appType) {
             AppType.CARPLAY, AppType.ANDROID_AUTO -> {
                 // CP/AA uses move-task into an existing stack on the cluster display.
-                // If no stack exists on display 1 yet, create one by launching a dummy freeform task.
+                // Try fullscreen stack first (windowingMode 1) — CP in freeform gets tiny bounds
+                // and causes surfaceflinger crash on return. Fullscreen stack = CP fills display.
                 val clusterStackId = stackId ?: findOrCreateClusterStack(displayId)
-                    ?: return false  // cannot create stack = cannot cast CP/AA
+                    ?: run { log("CP cast FAIL: cannot find/create stack on display $displayId"); return null }
                 val cpTaskId = taskId ?: findTaskId(pkg)
-                    ?: return false  // CP/AA not running = cannot move
-                val result = shell.execute("am stack move-task $cpTaskId $clusterStackId true")
-                if (!result.success) return false
-                // Resize CP to fill cluster with correct dimensions
-                // CP: 1422x800 (field-proven 2026-08-02), AA: 1920x720 (full)
+                    ?: run { log("CP cast FAIL: cannot find taskId for $pkg"); return null }
+                val cmd = "am stack move-task $cpTaskId $clusterStackId true"
+                log("CP cast: $cmd")
+                val result = shell.execute(cmd)
+                log("CP cast result: exit=${result.exitCode}, stdout=${result.stdout.take(200)}, stderr=${result.stderr.take(200)}")
+                if (!result.success) return null
+                // After move-task, CP inherits the stack's windowing mode.
                 sleepMs(500)
                 val (w, h) = when (appType) {
                     AppType.CARPLAY -> 1422 to 800
                     AppType.ANDROID_AUTO -> 1920 to 720
                     else -> 1920 to 720
                 }
-                shell.execute("am task resize $cpTaskId 0 0 $w $h")
-                true
+                val resizeCmd = "am task resize $cpTaskId 0 0 $w $h"
+                log("CP resize (may fail for unresizable): $resizeCmd")
+                val resizeResult = shell.execute(resizeCmd)
+                log("CP resize result: exit=${resizeResult.exitCode}, stderr=${resizeResult.stderr.take(200)}")
+                cpTaskId  // return the exact taskId we moved
             }
             AppType.NORMAL -> {
                 // Resolve launcher activity component (proven pattern from CastPlacementCommands)
@@ -67,31 +68,39 @@ class AppMover(
                     " --display $displayId --windowingMode 5" +
                     " -n '$component'"
                 val result = shell.execute(launchCmd)
-                if (!result.success) return false
+                if (!result.success) return null
                 // Fit to cluster viewport after landing (give 1s for task to land)
                 sleepMs(1000)
                 fitToCluster(pkg, displayId, slotSide, leftPercent)
-                true
+                -1  // success, taskId not tracked for normal apps
             }
         }
     }
 
     /**
-     * Find an existing freeform stack on the cluster display.
-     * If none exists, launch a lightweight activity to create one, then return its stackId.
+     * Find an existing stack on the cluster display (any mode).
+     * If none exists, launch a lightweight activity in FULLSCREEN mode to create one.
+     * CP/AA must be in fullscreen stack — freeform causes tiny bounds + crash on return.
      * The dummy activity gets displaced when CP/AA moves into the stack.
      */
     private fun findOrCreateClusterStack(displayId: Int): Int? {
         // First: check if a stack already exists on the display
-        findStackOnDisplay(displayId)?.let { return it }
-        // None exists — launch a freeform activity to create the stack structure.
+        findStackOnDisplay(displayId)?.let {
+            log("CP: found existing stack $it on display $displayId")
+            return it
+        }
+        // None exists — launch a FULLSCREEN activity to create the stack structure.
+        // windowingMode 1 (fullscreen) so CP inherits fullscreen mode, not freeform.
         // Using settings as it's lightweight and exists on every BYD head unit.
+        log("CP: no stack on display $displayId, creating fullscreen stack via Settings")
         shell.execute(
-            "am start --display $displayId --windowingMode 5 -n 'com.android.settings/.Settings'"
+            "am start --display $displayId --windowingMode 1 -n 'com.android.settings/.Settings'"
         )
         sleepMs(1500)
         // Stack now exists; CP/AA move-task will displace settings automatically.
-        return findStackOnDisplay(displayId)
+        return findStackOnDisplay(displayId).also {
+            log("CP: after create, stack on display $displayId = $it")
+        }
     }
 
     /** Find any freeform stack on the given display. */
@@ -127,12 +136,34 @@ class AppMover(
         return null
     }
 
-    /** Find the taskId for a running package. */
+    /** Find the taskId for a running package (first match). */
     private fun findTaskId(pkg: String): Int? {
         val result = shell.execute("am stack list")
         if (!result.success) return null
         val regex = Regex("taskId=(\\d+):[^\\n]*$pkg")
         return regex.find(result.stdout)?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    /** Find the taskId for a package ON A SPECIFIC DISPLAY. Needed for CP return —
+     *  CP may have multiple tasks, we need the one on the cluster (display 1). */
+    private fun findTaskIdOnDisplay(pkg: String, targetDisplayId: Int): Int? {
+        val result = shell.execute("am stack list")
+        if (!result.success) return null
+        var currentDisplayId = -1
+        for (line in result.stdout.lines()) {
+            val stackMatch = Regex("""Stack id=\d+.*displayId=(\d+)""").find(line)
+            if (stackMatch != null) {
+                currentDisplayId = stackMatch.groupValues[1].toIntOrNull() ?: -1
+                continue
+            }
+            if (currentDisplayId == targetDisplayId) {
+                val taskMatch = Regex("""taskId=(\d+):[^\n]*$pkg""").find(line)
+                if (taskMatch != null) {
+                    return taskMatch.groupValues[1].toIntOrNull()
+                }
+            }
+        }
+        return null
     }
 
     /**
@@ -145,31 +176,54 @@ class AppMover(
      * - RIGHT: [1920*leftPercent/100, 90, 1920, 630]
      */
     private fun fitToCluster(pkg: String, displayId: Int, slotSide: ClusterSlotSide? = null, leftPercent: Int = 50) {
-        // Find taskId on the cluster display
-        val stackList = shell.execute("am stack list")
-        if (!stackList.success) return
-        val taskMatch = Regex("taskId=(\\d+):.*$pkg").find(stackList.stdout) ?: return
-        val taskId = taskMatch.groupValues[1]
-        // Calculate bounds based on slot side
+        // Find taskId ON THE CLUSTER DISPLAY specifically — not the first global match.
+        // Bug fixed 2026-08-04: previous regex matched the first taskId across all displays,
+        // so if the app had a task on display 0 it would resize the wrong one, leaving the
+        // cluster task at full bounds (SL6 split cast failure).
+        val taskId = findTaskIdOnDisplay(pkg, displayId)?.toString()
+        if (taskId == null) {
+            log("fitToCluster: no task for $pkg on display $displayId")
+            return
+        }
+        // Calculate bounds based on slot side.
+        // Use the display's actual wm size rather than hardcoded Seal values (1920×720).
+        // SL6 cluster is 1920×800; other DiLink3 models may differ.
+        val (dispWidth, dispHeight) = queryDisplaySize(displayId) ?: (1920 to 720)
         val left: Int
-        val top = 90
+        val top = 0
         val right: Int
-        val bottom = 630
+        val bottom = dispHeight
         when (slotSide) {
             ClusterSlotSide.LEFT -> {
                 left = 0
-                right = 1920 * leftPercent / 100
+                right = dispWidth * leftPercent / 100
             }
             ClusterSlotSide.RIGHT -> {
-                left = 1920 * leftPercent / 100
-                right = 1920
+                left = dispWidth * leftPercent / 100
+                right = dispWidth
             }
             null -> {
                 left = 0
-                right = 1920
+                right = dispWidth
             }
         }
-        shell.execute("am task resize $taskId $left $top $right $bottom")
+        val resizeResult = shell.execute("am task resize $taskId $left $top $right $bottom")
+        log("fitToCluster: $pkg task=$taskId bounds=[$left,$top,$right,$bottom] ok=${resizeResult.success}")
+    }
+
+    /** Parse the physical or override display size for `am task resize` bounds. */
+    private fun queryDisplaySize(displayId: Int): Pair<Int, Int>? {
+        val result = shell.execute("wm size -d $displayId")
+        if (!result.success) return null
+        // Output: "Physical size: 1920x720" or "Override size: 1920x800\nPhysical size: 1920x720"
+        // Use override if present, else physical.
+        val regex = Regex("(?:Override|Physical) size:\\s*(\\d+)x(\\d+)")
+        val matches = regex.findAll(result.stdout).toList()
+        val match = matches.firstOrNull { it.value.startsWith("Override") } ?: matches.firstOrNull()
+            ?: return null
+        val w = match.groupValues[1].toIntOrNull() ?: return null
+        val h = match.groupValues[2].toIntOrNull() ?: return null
+        return if (w > 0 && h > 0) w to h else null
     }
 
     /**
@@ -208,12 +262,19 @@ class AppMover(
         appType: AppType,
         taskId: Int? = null,
         mainStackId: Int? = null,
+        clusterDisplayId: Int = 1,
     ): Boolean {
         return when (appType) {
             AppType.CARPLAY, AppType.ANDROID_AUTO -> {
-                val cpTaskId = taskId ?: findTaskId(pkg) ?: return false
-                val homeStack = mainStackId ?: findNonHomeStackOnDisplay(0) ?: return false
-                val result = shell.execute("am stack move-task $cpTaskId $homeStack true")
+                // Must find the CP task on the CLUSTER display (not any task on display 0)
+                val cpTaskId = taskId ?: findTaskIdOnDisplay(pkg, clusterDisplayId) ?: findTaskId(pkg)
+                if (cpTaskId == null) { log("CP return FAIL: cannot find taskId for $pkg"); return false }
+                val homeStack = mainStackId ?: findNonHomeStackOnDisplay(0)
+                if (homeStack == null) { log("CP return FAIL: cannot find non-home stack on display 0"); return false }
+                val cmd = "am stack move-task $cpTaskId $homeStack true"
+                log("CP return: $cmd")
+                val result = shell.execute(cmd)
+                log("CP return result: exit=${result.exitCode}, stdout=${result.stdout.take(200)}, stderr=${result.stderr.take(200)}")
                 result.success
             }
             AppType.NORMAL -> {

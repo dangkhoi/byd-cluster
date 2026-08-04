@@ -27,6 +27,10 @@ class SimpleCastCoordinator(
         Thread(r, "SimpleCast").apply { isDaemon = true }
     }
 
+    private fun log(msg: String) {
+        println("[SimpleCast] $msg")
+    }
+
     private val _state = AtomicReference<SimpleCastState>(SimpleCastState.Off)
     val state: SimpleCastState get() = _state.get()
 
@@ -66,6 +70,13 @@ class SimpleCastCoordinator(
         executor.execute {
             if (state is SimpleCastState.CastingFull || state is SimpleCastState.CastingSplit) return@execute
             setState(SimpleCastState.Opening)
+
+            // One-time: whitelist VietMap from Doze (IVI "không hỗ trợ" error).
+            // Persists across reboots — only need to run once ever.
+            if (!prefs.dozeWhitelistApplied()) {
+                shell.execute("cmd deviceidle whitelist +vn.vietmap.live")
+                prefs.setDozeWhitelistApplied(true)
+            }
 
             // Step 0: Clean slate — return any leftover apps from display 1 to display 0.
             // After reboot/crash, previous cast session may leave apps on cluster.
@@ -176,14 +187,15 @@ class SimpleCastCoordinator(
             return
         }
 
-        val ok = mover.castToCluster(
+        val castTaskId = mover.castToCluster(
             pkg = intent.pkg,
             activity = null, // TODO: resolve from catalog at app layer
             displayId = displayId,
             appType = intent.appType,
         )
-        if (ok) {
-            setState(SimpleCastState.CastingFull(intent.pkg, intent.appType, config))
+        if (castTaskId != null) {
+            val savedTaskId = if (castTaskId > 0) castTaskId else null
+            setState(SimpleCastState.CastingFull(intent.pkg, intent.appType, config, savedTaskId))
             // Apply saved bounds + density per-app (if user previously resized/set DPI)
             if (intent.appType == AppType.NORMAL) {
                 val savedConfig = prefs.displayConfigFor(intent.pkg)
@@ -244,7 +256,7 @@ class SimpleCastCoordinator(
             slotSide = intent.side,
             leftPercent = leftPercent,
         )
-        if (!ok) {
+        if (ok == null) {
             setError("Cast to slot failed")
             return
         }
@@ -275,8 +287,16 @@ class SimpleCastCoordinator(
             // Full mode: any stop = return everything
             current is SimpleCastState.CastingFull -> {
                 setState(SimpleCastState.Stopping)
-                returnApp(current.targetPkg, current.appType)
-                refreshCluster() // clear stale frame from display 1
+                log("handleStop: returning ${current.targetPkg} (${current.appType}) taskId=${current.taskId}")
+                returnApp(current.targetPkg, current.appType, current.taskId)
+                if (current.appType.isProtected) {
+                    // CP/AA: only reset density. NO refreshCluster() — suspected crash cause.
+                    // Shell manual recipe: move-task only, no service calls.
+                    log("handleStop: CP/AA path — wm density reset, skip refreshCluster")
+                    shell.execute("wm density reset -d $displayId")
+                } else {
+                    refreshCluster() // normal apps: clear stale frame from display 1
+                }
                 setState(SimpleCastState.Idle)
             }
             // Split mode: stop specific slot
@@ -312,13 +332,17 @@ class SimpleCastCoordinator(
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
-    private fun returnApp(pkg: String, appType: AppType) {
+    private fun returnApp(pkg: String, appType: AppType, taskId: Int? = null) {
         if (pkg == "com.byd.clusternav") return // never return our own black activity
-        mover.returnToMain(
+        log("returnApp: pkg=$pkg, appType=$appType, taskId=$taskId")
+        val ok = mover.returnToMain(
             pkg = pkg,
-            activity = null, // resolved at app layer
+            activity = null,
             appType = appType,
+            taskId = taskId,
+            clusterDisplayId = displayId,
         )
+        log("returnApp result: $ok")
     }
 
     /**
@@ -409,7 +433,16 @@ class SimpleCastCoordinator(
         for ((taskId, component) in tasksOnCluster) {
             if (targetStack != null) {
                 val moveResult = shell.execute("am stack move-task $taskId $targetStack true")
-                if (moveResult.success) { Thread.sleep(300); continue }
+                if (moveResult.success) {
+                    // Also launch on display 0 fullscreen to overwrite Android's "last display" memory.
+                    // Without this, user tapping the app icon later reopens it on display 1.
+                    val activity = component.takeIf { it.contains("/") }
+                    if (activity != null) {
+                        shell.execute("am start --display 0 --windowingMode 1 -n '$activity'")
+                    }
+                    Thread.sleep(300)
+                    continue
+                }
             }
             // Fallback: try am start (works for exported activities)
             val activity = component.takeIf { it.contains("/") }
@@ -457,9 +490,23 @@ class SimpleCastCoordinator(
     }
 
     private fun findTaskIdForPkg(pkg: String): String? {
+        // Prefer the task on the cluster display to avoid resizing the wrong task on display 0.
+        val clusterDid = prefs.lastDisplayId() ?: 1
         val result = shell.execute("am stack list")
         if (!result.success) return null
-        return Regex("taskId=(\\d+):[^\\n]*$pkg").find(result.stdout)?.groupValues?.get(1)
+        var currentDisplayId = -1
+        var fallback: String? = null
+        for (line in result.stdout.lines()) {
+            val sm = Regex("""Stack id=\d+.*displayId=(\d+)""").find(line)
+            if (sm != null) { currentDisplayId = sm.groupValues[1].toIntOrNull() ?: -1; continue }
+            val tm = Regex("""taskId=(\d+):[^\n]*$pkg""").find(line)
+            if (tm != null) {
+                val id = tm.groupValues[1]
+                if (currentDisplayId == clusterDid) return id
+                if (fallback == null) fallback = id
+            }
+        }
+        return fallback
     }
 
     /** Check if a package has a visible task on the given display. */

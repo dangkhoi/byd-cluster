@@ -74,6 +74,7 @@ sealed interface SimpleCastState {
         val targetPkg: String,
         val appType: AppType,
         val displayConfig: DisplayConfig,
+        val taskId: Int? = null,  // saved at cast time for exact return
     ) : SimpleCastState
 
     /** Two normal apps split the cluster left/right. */
@@ -143,4 +144,16 @@ interface SimpleCastPrefs {
     // Split ratio
     fun splitRatioLeftPercent(): Int
     fun setSplitRatioLeftPercent(pct: Int)
+
+    // One-time setup flags
+    fun dozeWhitelistApplied(): Boolean
+    fun setDozeWhitelistApplied(applied: Boolean)
+
+    // Autostart split
+    fun autoStartLeftPackage(): String?
+    fun setAutoStartLeftPackage(pkg: String?)
+    fun autoStartRightPackage(): String?
+    fun setAutoStartRightPackage(pkg: String?)
+    fun autoStartSplitEnabled(): Boolean
+    fun setAutoStartSplitEnabled(enabled: Boolean)
 }

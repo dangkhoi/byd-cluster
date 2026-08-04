@@ -99,7 +99,10 @@ object ClusterBroadcaster {
         // R-1: rawSeg==0 (nội suy CHẠM rẽ) PHẢI forward 0 → buildGuidanceFrame thấy seg==0 → gửi SEG=-1 (trống, đúng ý).
         // Nếu map 0→-1 ở đây, builder RE-PARSE cự ly thô từ noti → nhảy NGƯỢC về số noti cũ (30→15→vọt lại 50) đúng lúc tới rẽ.
         val segOverride = if (rawSeg >= 0) NavParse.quantizeDisplay(rawSeg) else -1
-        val frame = AmapFrameBuilder.buildGuidanceFrame(s, byd, road, segOverride, hasDist) ?: return
+        // v0.72 regression fix: s.arrow is null (NavigationFrameContent roundtrip drops bitmap).
+        // Inject live arrow from NavRepository so ManeuverSignature/ArrowClassifier layers still work.
+        val withArrow = if (s.arrow == null) s.copy(arrow = NavRepository.state.arrow) else s
+        val frame = AmapFrameBuilder.buildGuidanceFrame(withArrow, byd, road, segOverride, hasDist) ?: return
         // LOG cự ly (bắt vụ nhảy số): thô GMaps vs nội suy vs hiển thị
         runCatching {
             NavDistanceLog.record(rawMeters, rawSeg, segOverride,
@@ -232,5 +235,24 @@ object ClusterBroadcaster {
     private fun cancelHeartbeat() {
         heartbeat?.let { handler.removeCallbacks(it) }
         heartbeat = null
+    }
+
+    // ─── Speed limit → cluster instrument (from VietMap widget bridge) ────────────────────────────────
+
+    @Volatile private var lastPushedLimit: Int? = null
+
+    /**
+     * Call from VietMapWidgetBridge snapshot listener. Deduplicates — only writes HAL when value changes.
+     * Pass null to clear the speed limit display (stale / unavailable / no limit).
+     */
+    fun pushSpeedLimit(ctx: Context, limitKph: Int?) {
+        if (limitKph == lastPushedLimit) return
+        lastPushedLimit = limitKph
+        val app = ctx.applicationContext
+        if (limitKph != null && limitKph > 0) {
+            hudExec.execute { Log.i(TAG, "speed limit → cluster: $limitKph → " + runCatching { BydHal.writeSpeedLimit(app, limitKph) }.getOrElse { "EXC ${it.message}" }) }
+        } else {
+            hudExec.execute { Log.i(TAG, "speed limit → cluster: CLEAR → " + runCatching { BydHal.clearSpeedLimit(app) }.getOrElse { "EXC ${it.message}" }) }
+        }
     }
 }
