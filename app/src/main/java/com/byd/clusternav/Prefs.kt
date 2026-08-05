@@ -8,10 +8,13 @@ object Prefs {
     // con số. Giữ alias ở đây nên caller cũ không đổi và dữ liệu đã lưu vẫn đọc đúng.
     const val AUTO = com.byd.clusternav.navigation.NavSourceMode.AUTO
     const val PREFER_GMAPS = com.byd.clusternav.navigation.NavSourceMode.PREFER_GMAPS
+    const val PREFER_WAZE = com.byd.clusternav.navigation.NavSourceMode.PREFER_WAZE
+    const val PREFER_VIETMAP = com.byd.clusternav.navigation.NavSourceMode.PREFER_VIETMAP
 
     private const val FILE = "clusternav_prefs"
     private const val K_ENABLED = "enabled"
     private const val K_SOURCE = "source_mode"
+    private const val K_SPEED_SOURCE = "speed_source"
     private const val K_MARQUEE = "marquee"
 
     private fun sp(ctx: Context) =
@@ -22,6 +25,9 @@ object Prefs {
 
     fun sourceMode(ctx: Context): Int = sp(ctx).getInt(K_SOURCE, AUTO)
     fun setSourceMode(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_SOURCE, v).apply()
+
+    fun speedSource(ctx: Context): Int = sp(ctx).getInt(K_SPEED_SOURCE, com.byd.clusternav.navigation.NavSourceMode.SPEED_VIETMAP)
+    fun setSpeedSource(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_SPEED_SOURCE, v).apply()
 
     fun marquee(ctx: Context): Boolean = sp(ctx).getBoolean(K_MARQUEE, true)   // cuộn tên đường dài
     fun setMarquee(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_MARQUEE, v).apply()

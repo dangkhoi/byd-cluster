@@ -10,7 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import com.byd.clusternav.modules.hal.BydHal
 
 /**
  * FEEDER — vòng đời đẩy nav lên cụm: emit / stop / reset cờ kẹt + nhịp tim giữ làn + self-heal.
@@ -39,14 +38,18 @@ object ClusterBroadcaster {
     // Self-heal: mỗi PHIÊN nav, lần đầu transition inactive->active thì reset cờ kẹt 1 lần.
     @Volatile private var sessionReset = false
 
-    // HUD kính lái (CAN instrument, thử nghiệm) — dedup chỉ ghi khi ĐỔI (khỏi spam HAL mỗi heartbeat 400ms).
-    @Volatile private var lastHudIcon = Int.MIN_VALUE
-    @Volatile private var lastHudSeg = Int.MIN_VALUE
-    @Volatile private var lastHudRoad = ""
-    @Volatile private var hudActive = false
-    // MỌI ghi HAL HUD qua 1 executor DUY NHẤT → write/clear + write liên tiếp chạy FIFO đúng thứ tự gọi
-    // (chống: clear chạy TRƯỚC write cuối → HUD kẹt bật; và 2 write cự-ly đảo → số nhảy ngược trên kính).
-    private val hudExec by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+    // HUD kính lái — delegated to NavigationHudOwner (bounded executor, generation, dedup, typed HAL result).
+    private var hudOwner: NavigationHudOwner? = null
+    // Speed-sign — delegated to NavigationSpeedSignOwner (bounded executor, generation-fence, dedup).
+    private var speedSignOwner: NavigationSpeedSignOwner? = null
+
+    private fun ensureHudOwner(ctx: Context): NavigationHudOwner {
+        return hudOwner ?: NavigationHudOwner(ctx.applicationContext).also { hudOwner = it; it.start() }
+    }
+
+    private fun ensureSpeedSignOwner(ctx: Context): NavigationSpeedSignOwner {
+        return speedSignOwner ?: NavigationSpeedSignOwner(ctx.applicationContext).also { speedSignOwner = it }
+    }
 
     /**
      * RESET cờ kẹt (chống "không lên gì"): mIsBYDMapNaving=true còn sót từ test IS_BYD_MAP=true sẽ
@@ -99,9 +102,10 @@ object ClusterBroadcaster {
         // R-1: rawSeg==0 (nội suy CHẠM rẽ) PHẢI forward 0 → buildGuidanceFrame thấy seg==0 → gửi SEG=-1 (trống, đúng ý).
         // Nếu map 0→-1 ở đây, builder RE-PARSE cự ly thô từ noti → nhảy NGƯỢC về số noti cũ (30→15→vọt lại 50) đúng lúc tới rẽ.
         val segOverride = if (rawSeg >= 0) NavParse.quantizeDisplay(rawSeg) else -1
-        // v0.72 regression fix: s.arrow is null (NavigationFrameContent roundtrip drops bitmap).
-        // Inject live arrow from NavRepository so ManeuverSignature/ArrowClassifier layers still work.
-        val withArrow = if (s.arrow == null) s.copy(arrow = NavRepository.state.arrow) else s
+        // v1.03: arrow classification happens before ingest in NavNotificationListener.
+        // The frame's maneuverIcon is already the final classified code. Do not read
+        // NavRepository.state.arrow here — it may be from a different sequence.
+        val withArrow = s
         val frame = AmapFrameBuilder.buildGuidanceFrame(withArrow, byd, road, segOverride, hasDist) ?: return
         // LOG cự ly (bắt vụ nhảy số): thô GMaps vs nội suy vs hiển thị
         runCatching {
@@ -133,25 +137,16 @@ object ClusterBroadcaster {
         pushHud(ctx, s, meters, cleanRoad)
     }
 
-    /** Ghi 1 frame nav lên HUD qua CAN instrument (BydHal.writeNavFrame) — RAW distance, dedup, chạy FIFO qua hudExec. */
+    /** Ghi 1 frame nav lên HUD qua bounded owner — dedup + FIFO + typed HAL result inside owner. */
     private fun pushHud(ctx: Context, s: NavState, seg: Int, cleanRoad: String) {
         val icon = bydIcon(s)
-        // HUD buffer nhỏ (cùng họ ô cụm) → đẩy tên VIẾT TẮT theo ngân sách HUD, KHÔNG full name:
-        //   full name tràn buffer → firmware BỎ tên (chỉ còn mũi tên) = bug đang chữa (D4/F7/F8).
-        // Dedup + lastHudRoad theo BẢN VIẾT TẮT (đúng cái GHI lên kính) → nhất quán, đỡ spam HAL.
         val hudRoad = NavFormat.fitRoadName(cleanRoad, NavFormat.HUD_ROAD_MAX_UNITS)
-        if (icon == lastHudIcon && seg == lastHudSeg && hudRoad == lastHudRoad) return   // không đổi → thôi (đỡ spam HAL)
-        lastHudIcon = icon; lastHudSeg = seg; lastHudRoad = hudRoad; hudActive = true
-        val app = ctx.applicationContext
-        hudExec.execute { Log.i(TAG, "HUD icon=$icon seg=$seg road='$hudRoad' → " + runCatching { BydHal.writeNavFrame(app, icon, seg, hudRoad) }.getOrElse { "EXC ${it.message}" }) }
+        ensureHudOwner(ctx).push(icon, seg, hudRoad)
     }
 
-    /** Tắt HUD (status=4 + clear) — gọi khi hết nav HOẶC khi tắt toggle HUD giữa phiên. */
+    /** Tắt HUD (clear via bounded owner) — gọi khi hết nav HOẶC khi tắt toggle HUD giữa phiên. */
     private fun clearHud(ctx: Context) {
-        if (!hudActive) return
-        hudActive = false; lastHudIcon = Int.MIN_VALUE; lastHudSeg = Int.MIN_VALUE; lastHudRoad = " "
-        val app = ctx.applicationContext
-        hudExec.execute { Log.i(TAG, "HUD clear → " + runCatching { BydHal.clearNavFrame(app) }.getOrElse { "EXC ${it.message}" }) }
+        hudOwner?.stop()
     }
 
     /** Stop HUD only; Cluster-lane delivery/session state is untouched. */
@@ -239,20 +234,11 @@ object ClusterBroadcaster {
 
     // ─── Speed limit → cluster instrument (from VietMap widget bridge) ────────────────────────────────
 
-    @Volatile private var lastPushedLimit: Int? = null
-
     /**
      * Call from VietMapWidgetBridge snapshot listener. Deduplicates — only writes HAL when value changes.
      * Pass null to clear the speed limit display (stale / unavailable / no limit).
      */
     fun pushSpeedLimit(ctx: Context, limitKph: Int?) {
-        if (limitKph == lastPushedLimit) return
-        lastPushedLimit = limitKph
-        val app = ctx.applicationContext
-        if (limitKph != null && limitKph > 0) {
-            hudExec.execute { Log.i(TAG, "speed limit → cluster: $limitKph → " + runCatching { BydHal.writeSpeedLimit(app, limitKph) }.getOrElse { "EXC ${it.message}" }) }
-        } else {
-            hudExec.execute { Log.i(TAG, "speed limit → cluster: CLEAR → " + runCatching { BydHal.clearSpeedLimit(app) }.getOrElse { "EXC ${it.message}" }) }
-        }
+        ensureSpeedSignOwner(ctx).push(limitKph)
     }
 }

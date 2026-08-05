@@ -12,6 +12,7 @@ import com.byd.clusternav.navigation.NavigationPermission
 import com.byd.clusternav.vietmapwidget.VietMapWidgetBridge
 import com.byd.clusternav.vietmapwidget.VietMapWidgetFreshness
 import com.byd.clusternav.vietmapwidget.VietMapWidgetOwner
+import com.byd.clusternav.modules.wazehud.WazeHudSource
 
 /**
  * Adapter MỎNG cho notification dẫn đường (Google Maps / ReVanced). Chỉ làm:
@@ -36,6 +37,9 @@ class NavNotificationListener : NotificationListenerService() {
             // xem NotificationParser.kt:9) từ trước, nhưng chưa từng được NGHE vì gói không có trong
             // tập này. Gói xác nhận qua dump thật (WmParseTest.kt: "vn.vietmap.live/.MainActivity").
             "vn.vietmap.live",
+            // WazeMod — HUD signal source, dùng song song GMaps
+            "com.chisadin.wazemod",
+            "com.waze",
         )
     }
 
@@ -58,6 +62,8 @@ class NavNotificationListener : NotificationListenerService() {
         val bridge = VietMapWidgetBridge.get(applicationContext)
         bridge.start(VietMapWidgetOwner.NAVIGATION)
         bridge.addListener(speedLimitPusher)
+        // Start WazeMod HUD logcat source (parallel to notification-based nav)
+        startWazeHudSource()
         if (!Prefs.enabled(applicationContext)) return
         SourceArbiter.clear()
         runCatching { NavRepository.setPermission(applicationContext, NavigationPermission.GRANTED) }
@@ -74,6 +80,7 @@ class NavNotificationListener : NotificationListenerService() {
 
     override fun onDestroy() {
         connected = false
+        stopWazeHudSource()
         val bridge = VietMapWidgetBridge.get(applicationContext)
         bridge.removeListener(speedLimitPusher)
         bridge.stop(VietMapWidgetOwner.NAVIGATION)
@@ -81,15 +88,77 @@ class NavNotificationListener : NotificationListenerService() {
     }
 
     private val speedLimitPusher: (com.byd.clusternav.vietmapwidget.VietMapWidgetSnapshot) -> Unit = { snapshot ->
-        val limit = if (snapshot.freshness == VietMapWidgetFreshness.FRESH) snapshot.speedLimitKph else null
-        ClusterBroadcaster.pushSpeedLimit(applicationContext, limit)
+        // Only push VietMap speed if speed source = VIETMAP
+        if (Prefs.speedSource(applicationContext) == com.byd.clusternav.navigation.NavSourceMode.SPEED_VIETMAP) {
+            val limit = if (snapshot.speedFreshness == VietMapWidgetFreshness.FRESH) snapshot.speedLimitKph else null
+            ClusterBroadcaster.pushSpeedLimit(applicationContext, limit)
+        }
+    }
+
+    private var wazeHudSource: WazeHudSource? = null
+
+    private fun startWazeHudSource() {
+        if (wazeHudSource != null) return
+        // Read logcat via the privileged dadb shell (uid 2000). An app-uid `logcat` cannot see
+        // WazeMod's logs without effective READ_LOGS; the shell has full log access (see WazeHudSource).
+        val source = WazeHudSource { cmd ->
+            runCatching {
+                val r = com.byd.clusternav.modules.clustercast.simplified.SimpleCastRuntime
+                    .coordinator(applicationContext).executeShell(cmd)
+                if (r.success) r.stdout else null
+            }.getOrNull()
+        }
+        source.listener = listener@{ state ->
+            if (!Prefs.enabled(applicationContext)) return@listener // master cluster-push switch only
+            val ctx = applicationContext
+            val now = System.currentTimeMillis()
+
+            // NAV (turn/distance/road/eta) needs an ACTIVE route + a nav source that allows Waze.
+            if (state.navigating) {
+                val navMode = Prefs.sourceMode(ctx)
+                if ((navMode == Prefs.PREFER_WAZE || navMode == Prefs.AUTO) &&
+                    SourceArbiter.shouldFeed("com.chisadin.wazemod", navMode, now)) {
+                    val navState = source.toNavState(state)
+                    ClusterBroadcaster.emitLane(ctx, navState)
+                    ClusterBroadcaster.emitHud(ctx, navState)
+                }
+            }
+
+            // SPEED LIMIT is present even WITHOUT a route (just driving) — must NOT be gated on
+            // `navigating`. Only requires the speed source = WAZE and a real limit value.
+            if (Prefs.speedSource(ctx) == com.byd.clusternav.navigation.NavSourceMode.SPEED_WAZE &&
+                state.speedLimitKmh > 0) {
+                ClusterBroadcaster.pushSpeedLimit(ctx, state.speedLimitKmh)
+                // TODO: push alerts (alr/alrD/alrV) to speed-sign output when alert rendering is added
+            }
+        }
+        source.start()
+        wazeHudSource = source
+        Log.i(TAG, "WazeHUD logcat source started (dadb-shell poll)")
+    }
+
+    private fun stopWazeHudSource() {
+        wazeHudSource?.stop()
+        wazeHudSource = null
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
         if (sbn.packageName !in MAPS_PACKAGES) return
         if (!Prefs.enabled(applicationContext)) return        // công tắc tổng TẮT -> không đẩy cụm
+        // Safety net: ensure bridge is started even if onListenerConnected was not re-fired after process restart
+        ensureBridgeStarted()
         runCatching { handle(sbn) }.onFailure { Log.e(TAG, "handle failed", it) }
+    }
+
+    private fun ensureBridgeStarted() {
+        if (connected) return
+        connected = true
+        val bridge = VietMapWidgetBridge.get(applicationContext)
+        bridge.start(VietMapWidgetOwner.NAVIGATION)
+        bridge.addListener(speedLimitPusher)
+        startWazeHudSource()
+        Log.i(TAG, "listener connected (safety net from onNotificationPosted)")
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
@@ -163,7 +232,16 @@ class NavNotificationListener : NotificationListenerService() {
         val manIcon = IconResource.resolve(applicationContext, sbn.packageName, n.smallIcon)
         // Large-icon = nguồn hướng rẽ THẬT cho GMaps này -> LUÔN dựng (54×54, rẻ).
         val arrow = loadIconBitmap(n)
-        val state = NotificationParser.parse(sbn.packageName, title, text, sub, big, arrow, manIcon) ?: return
+
+        // v1.03: classify maneuver BEFORE creating the immutable frame so it carries the
+        // final code through the typed boundary. No global arrow lookup needed later.
+        val classifiedIcon = manIcon.takeIf { it in 0..28 }
+            ?: com.byd.clusternav.navigation.ManeuverSignature.classify(arrow?.asPixelFrame())
+            ?: com.byd.clusternav.navigation.NavFormat.maneuverVerbIcon(title.ifBlank { text })
+            ?: com.byd.clusternav.navigation.ArrowClassifier.classify(arrow?.asPixelFrame())
+            ?: -1
+
+        val state = NotificationParser.parse(sbn.packageName, title, text, sub, big, arrow, classifiedIcon) ?: return
 
         NavRepository.ingest(applicationContext, sbn.packageName, null, state)
         Log.i(TAG, "nav dist='${state.distance}' road='${state.road}' eta='${state.eta}'")

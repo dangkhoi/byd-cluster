@@ -38,7 +38,7 @@ data class DisplayConfig(
     companion object {
         val CARPLAY = DisplayConfig(wmSize = "1422x800", overscan = "10,-120,10,50")
         val ANDROID_AUTO = DisplayConfig(wmSize = "1920x1080", overscan = "0,0,0,0")
-        val NORMAL_DEFAULT = DisplayConfig(wmSize = "1920x800", overscan = "0,0,0,0", bounds = CastBounds(0, 90, 1920, 630))
+        val NORMAL_DEFAULT = DisplayConfig(wmSize = "1920x720", overscan = "0,0,0,0", bounds = CastBounds(0, 0, 1920, 720))
 
         fun forAppType(type: AppType): DisplayConfig = when (type) {
             AppType.CARPLAY -> CARPLAY
@@ -56,6 +56,30 @@ data class SlotState(
 )
 
 enum class ClusterSlotSide { LEFT, RIGHT }
+
+/**
+ * Per-app geometry profile key (R4).
+ *
+ * Each NORMAL app may persist up to 7 geometry profiles:
+ * - [FULL] — full-cluster placement (stored under the legacy no-suffix prefs keys).
+ * - Split placements: side (L/R) × leftPercent ∈ {50, 30, 70} → 6 keys.
+ *
+ * Pure Kotlin (no Android import) so it lives in :core (LayeringRulesTest Q1).
+ */
+enum class CastProfile {
+    FULL, L50, R50, L30, R30, L70, R70;
+
+    companion object {
+        /**
+         * Map a split (side, leftPercent) to its profile. A [leftPercent] outside {30, 70}
+         * (the 50/50 case or any backfilled value) maps to the L50 / R50 variant.
+         */
+        fun of(side: ClusterSlotSide, leftPercent: Int): CastProfile = when (side) {
+            ClusterSlotSide.LEFT -> when (leftPercent) { 30 -> L30; 70 -> L70; else -> L50 }
+            ClusterSlotSide.RIGHT -> when (leftPercent) { 30 -> R30; 70 -> R70; else -> R50 }
+        }
+    }
+}
 
 // ─── Cast state (immutable, UI observes this) ─────────────────────────────────
 
@@ -113,6 +137,69 @@ sealed interface SimpleCastIntent {
     object Close : SimpleCastIntent { override fun toString() = "Close" }
 }
 
+// ─── Slot validation (R4 safety: CP/AA must never enter split/freeform) ───────
+
+/**
+ * Pre-condition validator for cast operations.
+ *
+ * AppType classification is CLOSED — callers cannot override or extend it.
+ * CP/AA packages are identified by [AppMover.classifyApp] which is authoritative.
+ *
+ * Rules:
+ * - Protected apps (CP/AA) → CastFull ONLY (fullscreen on standard stack).
+ * - Protected apps CANNOT enter CastSlot (split/freeform → crash path on DiLink3).
+ * - CastSlot rejects if the target slot is already occupied.
+ * - Package must be non-blank and not contain shell-injection characters.
+ */
+object CastSlotValidator {
+
+    /** Validate a CastFull intent. Returns null if valid, or a reject reason. */
+    fun validateCastFull(pkg: String, appType: AppType, projectionOpen: Boolean): CastRejectReason? {
+        if (!projectionOpen) return CastRejectReason.DISPLAY_UNAVAILABLE
+        if (!isValidPackage(pkg)) return CastRejectReason.INVALID_PACKAGE
+        // CP/AA full is allowed — that's the only mode they support
+        return null
+    }
+
+    /**
+     * Validate a CastSlot intent. Returns null if valid, or a reject reason.
+     *
+     * CRITICAL: Protected apps (CP/AA) MUST be rejected from slot mode.
+     * On DiLink3, freeform windowing of CP causes surfaceflinger crash and
+     * leaves the cluster in an unrecoverable state requiring power-cycle.
+     */
+    fun validateCastSlot(
+        pkg: String,
+        side: ClusterSlotSide,
+        currentState: SimpleCastState,
+        projectionOpen: Boolean,
+    ): CastRejectReason? {
+        if (!projectionOpen) return CastRejectReason.DISPLAY_UNAVAILABLE
+        if (!isValidPackage(pkg)) return CastRejectReason.INVALID_PACKAGE
+
+        // R4: Protected apps CANNOT enter split/freeform mode
+        val appType = AppMover.classifyApp(pkg)
+        if (appType.isProtected) return CastRejectReason.PROTECTED_FULLSCREEN_STACK_UNPROVEN
+
+        // Slot occupancy check
+        if (currentState is SimpleCastState.CastingSplit) {
+            val occupied = when (side) {
+                ClusterSlotSide.LEFT -> currentState.left
+                ClusterSlotSide.RIGHT -> currentState.right
+            }
+            if (occupied != null) return CastRejectReason.SLOT_OCCUPIED
+        }
+        return null
+    }
+
+    /** Minimal package name validation — reject empty, blank, or shell-injection attempts. */
+    private fun isValidPackage(pkg: String): Boolean {
+        if (pkg.isBlank()) return false
+        // Package names: [a-zA-Z0-9_.] only. Reject anything else.
+        return pkg.all { it.isLetterOrDigit() || it == '.' || it == '_' }
+    }
+}
+
 // ─── Shell interface (dependency inversion — core cannot import dadb) ─────────
 
 interface SimpleCastShell {
@@ -132,6 +219,13 @@ data class ShellResult(
 interface SimpleCastPrefs {
     fun displayConfigFor(pkg: String): DisplayConfig?
     fun saveDisplayConfig(pkg: String, config: DisplayConfig)
+
+    /**
+     * Profile-scoped geometry (R4). The no-arg overloads above are equivalent to
+     * [CastProfile.FULL] and remain the backward-compatible legacy keys.
+     */
+    fun displayConfigFor(pkg: String, profile: CastProfile): DisplayConfig?
+    fun saveDisplayConfig(pkg: String, profile: CastProfile, config: DisplayConfig)
     fun lastDisplayId(): Int?
     fun saveLastDisplayId(id: Int)
 

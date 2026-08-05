@@ -21,7 +21,7 @@ class NavigationWedgedWorkerTest {
 
     private fun frame(sequence: Long) = NavigationFrame(
         "s-1", NavigationSourceIdentity("com.example.maps"), sequence, 1_000L,
-        NavigationFrameContent(1, "Rẽ phải", 100, "Đường Ví Dụ", null),
+        NavigationFrameContent(1, "Rẽ phải", 100, "Đường Ví Dụ", null, null, null, null),
     )
 
     @Test

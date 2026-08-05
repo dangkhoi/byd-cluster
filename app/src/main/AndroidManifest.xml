@@ -3,6 +3,8 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- READ_LOGS: required to read WazeMod HLP/1 data from logcat tag WazeHUD -->
+    <uses-permission android:name="android.permission.READ_LOGS" />
     <!-- Tự rebind nav listener sau khi khởi động lại máy (RebindReceiver). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- ADB loopback (socket 127.0.0.1:5555) để rebind listener từ trong app. -->
@@ -106,12 +108,17 @@
              → KHÔNG còn phải mở app hay disallow→allow tay để lấy lại nav. -->
         <receiver
             android:name=".RebindReceiver"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="com.byd.clusternav.REBIND_WATCHDOG" />
+                <action android:name="com.byd.clusternav.TEST_SPEED_LIMIT" />
+                <action android:name="com.byd.clusternav.TEST_ADAS_PROBE" />
+                <action android:name="com.byd.clusternav.TEST_ADAS_WRITE" />
+                <action android:name="com.byd.clusternav.TEST_ADAS_READ" />
+                <action android:name="com.byd.clusternav.TEST_ADAS_MASS" />
             </intent-filter>
         </receiver>
 

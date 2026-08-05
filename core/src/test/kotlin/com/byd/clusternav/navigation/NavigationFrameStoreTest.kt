@@ -35,7 +35,7 @@ class NavigationFrameStoreTest {
         at: Long,
         sessionId: String = "s-1",
         source: NavigationSourceIdentity = gmaps,
-    ) = NavigationFrame(sessionId, source, sequence, at, NavigationFrameContent(1, "Rẽ phải", 120, "Lê Duẩn", null))
+    ) = NavigationFrame(sessionId, source, sequence, at, NavigationFrameContent(1, "Rẽ phải", 120, "Lê Duẩn", null, null, null, null))
 
     @Test
     fun `phien moi khong duoc bat dau bang mot khung nhap san`() {

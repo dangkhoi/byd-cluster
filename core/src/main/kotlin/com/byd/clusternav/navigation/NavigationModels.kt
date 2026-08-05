@@ -57,7 +57,7 @@ data class NavigationSourceState(
     }
 }
 
-enum class NavigationOutputTarget { CLUSTER_LANE, HUD }
+enum class NavigationOutputTarget { CLUSTER_LANE, HUD, SPEED_SIGN }
 
 enum class NavigationOutputFailureReason {
     DELIVERY_THROWN,
@@ -129,12 +129,18 @@ data class NavigationFrameContent(
     val maneuverText: String?,
     val distanceMeters: Int?,
     val roadName: String?,
-    val etaEpochMs: Long?
+    val etaEpochMs: Long?,
+    val routeRemainingMeters: Int?,
+    val routeRemainingSeconds: Int?,
+    val arrivalClock: String?,
 ) {
     init {
         require(distanceMeters == null || distanceMeters >= 0) { "distanceMeters must be null or non-negative" }
         require(maneuverText == null || maneuverText.isNotBlank()) { "maneuverText must be null or non-blank" }
         require(roadName == null || roadName.isNotBlank()) { "roadName must be null or non-blank" }
+        require(routeRemainingMeters == null || routeRemainingMeters >= 0) { "routeRemainingMeters must be null or non-negative" }
+        require(routeRemainingSeconds == null || routeRemainingSeconds >= 0) { "routeRemainingSeconds must be null or non-negative" }
+        require(arrivalClock == null || arrivalClock.matches(Regex("\\d{1,2}:\\d{2}"))) { "arrivalClock must be null or HH:mm" }
     }
 }
 

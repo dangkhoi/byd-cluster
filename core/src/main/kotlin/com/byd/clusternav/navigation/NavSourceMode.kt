@@ -10,4 +10,10 @@ package com.byd.clusternav.navigation
 object NavSourceMode {
     const val AUTO = 0
     const val PREFER_GMAPS = 2
+    const val PREFER_WAZE = 3
+    const val PREFER_VIETMAP = 4
+
+    // Speed + Alert source (independent of navigation source)
+    const val SPEED_VIETMAP = 0   // default: VietMap widget
+    const val SPEED_WAZE = 1      // WazeMod HLP/1 lim + alr fields
 }

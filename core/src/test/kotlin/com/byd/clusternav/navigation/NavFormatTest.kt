@@ -129,11 +129,10 @@ class NavFormatTest {
         }
     }
 
-    @Test fun `HUD_ROAD_MAX_UNITS = 7 = ROAD_MAX_UNITS (F7 — an toàn theo đo xe, KHÔNG 8)`() {
-        // F7 BINDING: buffer HUD chưa trace → giữ = ngân sách cụm đã đo (7). Test này khoá lại
-        // để ai nâng lên 8 mà chưa trace xe sẽ bị đỏ (tràn = firmware bỏ tên = bug đang chữa).
-        assertEquals(7, NavFormat.HUD_ROAD_MAX_UNITS)
-        assertEquals(NavFormat.ROAD_MAX_UNITS, NavFormat.HUD_ROAD_MAX_UNITS)
+    @Test fun `HUD_ROAD_MAX_UNITS = 20 (v1_00 raised from 7 after SL6 evidence)`() {
+        // v1.00: raised from 7 to 20 UTF-16 units after SL6 showed firmware accepts longer names.
+        // Seal-05 vehicle gate will confirm 20 visually on Seal. If rejected, lower once from evidence.
+        assertEquals(20, NavFormat.HUD_ROAD_MAX_UNITS)
     }
 
     @Test fun `roadWindow tên ngắn trả nguyên, tên dài đúng bề rộng`() {

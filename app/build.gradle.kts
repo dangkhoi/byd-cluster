@@ -15,7 +15,7 @@ import java.util.UUID
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // AGP 9.3.1 built-in Kotlin — org.jetbrains.kotlin.android is no longer needed.
 }
 
 // Authorized candidate builds never overwrite historical app/build APK bytes.
@@ -28,25 +28,25 @@ if (authorizedBuildSourceId.isPresent) {
 }
 
 // Khoá ký release nạp từ keystore.properties (KHÔNG commit — maintainer giữ local cùng release.keystore).
-// Người clone không có file này -> release tự fallback ký bằng debug key để build/cài thử được ngay.
+// Người clone không có file này -> release/vehicleTest build sẽ FAIL (signingConfig = null → unsigned APK rejected by Android).
 val keystorePropsFile = rootProject.file("keystore.properties")
 val hasKeystore = keystorePropsFile.exists()
 val keystoreProps = Properties().apply { if (hasKeystore) keystorePropsFile.inputStream().use { load(it) } }
 
 android {
     namespace = "com.byd.clusternav"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.byd.clusternav"
         minSdk = 29
-        targetSdk = 34
-        versionCode = 100
-        versionName = "1.00"
+        targetSdk = 37
+        versionCode = 103
+        versionName = "1.03"
     }
 
     signingConfigs {
-        // Ký release bằng keystore.properties (gitignored). Người clone không có -> bỏ qua, dùng debug fallback.
+        // Ký release bằng keystore.properties (gitignored). Người clone không có -> release build fails (intentional).
         if (hasKeystore) create("release") {
             storeFile = file(keystoreProps.getProperty("storeFile", "release.keystore"))
             storePassword = keystoreProps.getProperty("storePassword")
@@ -58,13 +58,16 @@ android {
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false   // tắt minify: experiment dùng reflection HAL, tránh proguard phá
-            // maintainer có keystore.properties -> ký release (chữ ký cố định); người clone -> fallback debug
-            signingConfig = if (hasKeystore) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
-            // 2026-07-29: bật tạm để chẩn đoán sự cố kẹt transaction trên xe thật — cùng chữ ký nên
-            // `adb install -r` đè lên bản đang chạy KHÔNG xoá dữ liệu (khác gỡ cài rồi cài lại), cho phép
-            // `adb shell run-as` đọc thẳng cast-v2/session.env đang kẹt mà không mất bằng chứng. Tắt lại
-            // (xoá dòng này) sau khi xong chẩn đoán — không phải trạng thái bình thường của bản release.
+            isDebuggable = false
+            // Release MUST use the real signing key. No debug fallback — fail loudly if keystore.properties is missing.
+            signingConfig = if (hasKeystore) signingConfigs.getByName("release") else null
+        }
+        create("vehicleTest") {
+            // Same as release but debuggable — for on-car diagnostics with `adb shell run-as`.
+            initWith(getByName("release"))
             isDebuggable = true
+            // Still requires release signing key (no debug fallback).
+            signingConfig = if (hasKeystore) signingConfigs.getByName("release") else null
         }
         getByName("debug") {
             isMinifyEnabled = false
@@ -72,18 +75,17 @@ android {
     }
 
     lint {
-        // App hobby: không để lint chặn build release (lint-vital hay kén môi trường offline).
-        checkReleaseBuilds = false
-        abortOnError = false
+        // Release builds must pass lint — abort on error to prevent shipping broken APKs.
+        checkReleaseBuilds = true
+        abortOnError = true
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // AGP built-in Kotlin: jvmTarget automatically follows targetCompatibility (17).
+    // No kotlinOptions{} block needed.
 
     testOptions {
         // Chạy JUnit 5 off-device qua ./gradlew testDebugUnitTest.
@@ -99,12 +101,16 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":car-integration"))
     testImplementation(testFixtures(project(":core")))
-    implementation("dev.mobile:dadb:1.2.10")
+    implementation("dev.mobile:dadb:2.0.0")
 
     // — JVM unit + property tests (off-device, chạy bằng ./gradlew testDebugUnitTest) —
-    // JUnit 5 (Jupiter) làm test engine.
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testImplementation(platform("org.junit:junit-bom:6.1.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    // Real org.json on the unit-test classpath: android.jar ships a stub that throws "Stub!",
+    // so WazeMod HLP/1 parse tests need the reference implementation. Pinned. Test-only
+    // (no prod classpath impact — production uses the platform org.json on-device).
+    testImplementation("org.json:json:20260719")
 }
 
 // ─── EXACT-SOURCE IDENTITY (producer-matching derivation) ───────────────────────
@@ -449,6 +455,11 @@ abstract class CollectAuthorizedApk : org.gradle.api.DefaultTask() {
             Files.deleteIfExists(temporary)
         }
         val collectedSha = ExactSourceIdentity.sha256(destination.readBytes())
+
+        // ─── APK content verification ────────────────────────────────────────────────
+        // Use aapt2 to verify the APK's embedded metadata matches the build config.
+        verifyApkContent(destination, variant)
+
         val repositoryRoot = project.rootProject.projectDir
         val relativeApk = destination.relativeTo(repositoryRoot).path.replace(File.separatorChar, '/')
         val candidateManifest = File(repositoryRoot, "docs/_handoff/vehicle-candidate.json")
@@ -478,6 +489,72 @@ abstract class CollectAuthorizedApk : org.gradle.api.DefaultTask() {
         logger.lifecycle("Collected authorized APK: ${destination.absolutePath}")
         logger.lifecycle("Candidate SHA-256: $collectedSha")
         logger.lifecycle("Recorded candidate manifest: ${candidateManifest.absolutePath}")
+    }
+
+    /**
+     * Verify the APK's embedded metadata matches expectations for the given variant.
+     * Uses `aapt2 dump badging` to extract package name, versionCode, and debuggable flag.
+     */
+    private fun verifyApkContent(apk: File, variant: String) {
+        val androidHome = System.getenv("ANDROID_HOME")
+            ?: System.getenv("ANDROID_SDK_ROOT")
+            ?: throw org.gradle.api.GradleException(
+                "ANDROID_HOME or ANDROID_SDK_ROOT must be set for APK verification"
+            )
+        // Find aapt2 — prefer build-tools matching compileSdk, fall back to any available.
+        val buildToolsDir = File(androidHome, "build-tools")
+        val aapt2 = buildToolsDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.sortedDescending()
+            ?.map { File(it, "aapt2") }
+            ?.firstOrNull { it.canExecute() }
+            ?: throw org.gradle.api.GradleException(
+                "Cannot find aapt2 in $buildToolsDir — install Android build-tools"
+            )
+
+        val process = ProcessBuilder(listOf(aapt2.absolutePath, "dump", "badging", apk.absolutePath))
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+        if (!process.waitFor(30, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            throw org.gradle.api.GradleException("aapt2 dump badging timed out")
+        }
+        if (process.exitValue() != 0) {
+            throw org.gradle.api.GradleException("aapt2 dump badging failed: $output")
+        }
+
+        // Verify package name
+        val pkgMatch = Regex("package: name='([^']+)'").find(output)
+            ?: throw org.gradle.api.GradleException("APK verification: cannot extract package name from aapt2 output")
+        val actualPkg = pkgMatch.groupValues[1]
+        val expectedPkg = "com.byd.clusternav"
+        if (actualPkg != expectedPkg) {
+            throw org.gradle.api.GradleException(
+                "APK verification FAILED: package='$actualPkg', expected='$expectedPkg'"
+            )
+        }
+
+        // Verify versionCode
+        val vcMatch = Regex("versionCode='(\\d+)'").find(output)
+        val actualVc = vcMatch?.groupValues?.get(1)?.toIntOrNull()
+        val expectedVc = artifactVersionCode.get()
+        if (actualVc != expectedVc) {
+            throw org.gradle.api.GradleException(
+                "APK verification FAILED: versionCode=$actualVc, expected=$expectedVc"
+            )
+        }
+
+        // Verify debuggable flag matches variant expectations
+        val isDebuggable = output.contains("application-debuggable")
+        val expectDebuggable = variant != "release"  // vehicleTest=debuggable, release=not
+        if (isDebuggable != expectDebuggable) {
+            throw org.gradle.api.GradleException(
+                "APK verification FAILED: debuggable=$isDebuggable, expected=$expectDebuggable for variant '$variant'"
+            )
+        }
+
+        logger.lifecycle("APK verification PASSED: pkg=$actualPkg versionCode=$actualVc debuggable=$isDebuggable")
     }
 }
 
