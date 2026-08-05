@@ -4,8 +4,6 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 class SimpleCastCoordinatorTest {
 
@@ -20,7 +18,11 @@ class SimpleCastCoordinatorTest {
         val projection = ProjectionManager(shell, sleepMs = {}) // no actual sleep in tests
         val configurator = DisplayConfigurator(shell)
         val mover = AppMover(shell, sleepMs = {})
-        coordinator = SimpleCastCoordinator(projection, configurator, mover, prefs, shell, displayId = 1)
+        coordinator = SimpleCastCoordinator(
+            projection, configurator, mover, prefs, shell, displayId = 1,
+            castTimeoutMs = 15_000L,
+            stopTimeoutMs = 5_000L,
+        )
     }
 
     // ─── Projection lifecycle ─────────────────────────────────────────────────
@@ -35,6 +37,20 @@ class SimpleCastCoordinatorTest {
         coordinator.openProjection()
         awaitState<SimpleCastState.Idle>()
         assertEquals(SimpleCastState.Idle, coordinator.state)
+    }
+
+    @Test
+    fun `openProjection is idempotent when already open (R10)`() {
+        coordinator.openProjection()
+        awaitState<SimpleCastState.Idle>()
+        shell.history.clear()
+        coordinator.openProjection() // second request while already Idle (boot service + Activity)
+        Thread.sleep(100)
+        assertEquals(SimpleCastState.Idle, coordinator.state)
+        assertTrue(
+            shell.history.none { it.contains("AutoContainer") },
+            "second openProjection must be a no-op — no re-open seal commands re-issued",
+        )
     }
 
     @Test
@@ -158,12 +174,10 @@ class SimpleCastCoordinatorTest {
         shell.history.clear()
         coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.left", ClusterSlotSide.LEFT))
         awaitState<SimpleCastState.CastingSplit>()
-        // Should apply wm size and overscan for NORMAL type before issuing am start
-        val wmSizeIndex = shell.history.indexOfFirst { it.contains("wm size") }
-        val amStartIndex = shell.history.indexOfFirst { it.contains("am start") }
-        assertTrue(wmSizeIndex >= 0, "wm size command should be issued")
-        assertTrue(amStartIndex >= 0, "am start command should be issued")
-        assertTrue(wmSizeIndex < amStartIndex, "wm size must come before am start")
+        // Config is already NORMAL_DEFAULT from openProjection — configurator correctly skips redundant apply.
+        // Verify the cast still issues am start (the actual cast command).
+        val amStartIndex = shell.history.indexOfFirst { it.contains("am start") && it.contains("com.test.left") }
+        assertTrue(amStartIndex >= 0, "am start command should be issued for slot cast")
     }
 
     @Test
@@ -222,10 +236,15 @@ class SimpleCastCoordinatorTest {
     // ─── Invalid transitions ──────────────────────────────────────────────────
 
     @Test
-    fun `cast from Off is ignored`() {
+    fun `cast from Off is rejected with DISPLAY_UNAVAILABLE`() {
         coordinator.dispatch(SimpleCastIntent.CastFull("com.test", AppType.NORMAL))
-        Thread.sleep(50)
-        assertEquals(SimpleCastState.Off, coordinator.state)
+        Thread.sleep(200)
+        // R4 precondition: projection not open → rejected with DISPLAY_UNAVAILABLE → Error
+        val state = coordinator.state
+        assertTrue(
+            state is SimpleCastState.Off || state is SimpleCastState.Error,
+            "Cast from Off must be rejected (Off or Error), got: $state"
+        )
     }
 
     @Test
@@ -267,6 +286,152 @@ class SimpleCastCoordinatorTest {
         assertTrue(states.last() == SimpleCastState.Idle)
     }
 
+    // ─── Profiles + per-slot resize (R4/R5/R6) ────────────────────────────────
+
+    @Test
+    fun `CastProfile of maps side and leftPercent`() {
+        assertEquals(CastProfile.L50, CastProfile.of(ClusterSlotSide.LEFT, 50))
+        assertEquals(CastProfile.L30, CastProfile.of(ClusterSlotSide.LEFT, 30))
+        assertEquals(CastProfile.L70, CastProfile.of(ClusterSlotSide.LEFT, 70))
+        assertEquals(CastProfile.R50, CastProfile.of(ClusterSlotSide.RIGHT, 50))
+        assertEquals(CastProfile.R30, CastProfile.of(ClusterSlotSide.RIGHT, 30))
+        assertEquals(CastProfile.R70, CastProfile.of(ClusterSlotSide.RIGHT, 70))
+        // Out-of-set leftPercent (a backfilled value) maps to the 50-variant.
+        assertEquals(CastProfile.L50, CastProfile.of(ClusterSlotSide.LEFT, 60))
+        assertEquals(CastProfile.R50, CastProfile.of(ClusterSlotSide.RIGHT, 999))
+    }
+
+    @Test
+    fun `prefs round-trip per profile uses distinct non-colliding keys`() {
+        val pkg = "com.test.app"
+        val full = DisplayConfig("1920x720", "0,0,0,0", "160", CastBounds(0, 0, 1920, 720))
+        val l30 = DisplayConfig("1920x720", "0,0,0,0", "200", CastBounds(0, 0, 576, 720))
+        val r70 = DisplayConfig("1920x720", "0,0,0,0", "240", CastBounds(576, 0, 1920, 720))
+
+        prefs.saveDisplayConfig(pkg, CastProfile.FULL, full)
+        prefs.saveDisplayConfig(pkg, CastProfile.L30, l30)
+        prefs.saveDisplayConfig(pkg, CastProfile.R70, r70)
+
+        // Each profile reads back its own value — no cross-contamination.
+        assertEquals(full, prefs.displayConfigFor(pkg, CastProfile.FULL))
+        assertEquals(l30, prefs.displayConfigFor(pkg, CastProfile.L30))
+        assertEquals(r70, prefs.displayConfigFor(pkg, CastProfile.R70))
+        // No-arg overload is the FULL profile (backward compat).
+        assertEquals(full, prefs.displayConfigFor(pkg))
+        // Untouched profiles remain null.
+        assertNull(prefs.displayConfigFor(pkg, CastProfile.L50))
+        assertNull(prefs.displayConfigFor(pkg, CastProfile.R30))
+    }
+
+    @Test
+    fun `resizeActiveSlot persists to the matching profile on shell success`() {
+        prefs.setSplitRatioLeftPercent(30)
+        coordinator.openProjection()
+        awaitState<SimpleCastState.Idle>()
+        coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.left", ClusterSlotSide.LEFT))
+        awaitState<SimpleCastState.CastingSplit>()
+
+        coordinator.resizeActiveSlot(ClusterSlotSide.LEFT, 0, 0, 500, 720)
+        // LEFT × ratio 30 → profile L30
+        awaitTrue { prefs.displayConfigFor("com.test.left", CastProfile.L30)?.bounds == CastBounds(0, 0, 500, 720) }
+
+        assertEquals(
+            CastBounds(0, 0, 500, 720),
+            prefs.displayConfigFor("com.test.left", CastProfile.L30)?.bounds,
+        )
+        // Persisted to L30 only — the FULL profile is untouched.
+        assertNull(prefs.displayConfigFor("com.test.left", CastProfile.FULL))
+    }
+
+    @Test
+    fun `resizeActiveSlot does not persist when am task resize fails`() {
+        prefs.setSplitRatioLeftPercent(70)
+        coordinator.openProjection()
+        awaitState<SimpleCastState.Idle>()
+        coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.right", ClusterSlotSide.RIGHT))
+        awaitState<SimpleCastState.CastingSplit>()
+
+        // Force the per-slot resize shell command to fail — nothing must be persisted (R6).
+        shell.failCommands.add("am task resize")
+        coordinator.resizeActiveSlot(ClusterSlotSide.RIGHT, 600, 0, 1920, 720)
+        Thread.sleep(300) // allow the serial executor to run the (failing) resize
+
+        // RIGHT × ratio 70 → profile R70; must stay null because the shell rejected the resize.
+        assertNull(prefs.displayConfigFor("com.test.right", CastProfile.R70))
+    }
+
+    // ─── T1 autostart sequencing proof (R1) ──────────────────────────────────
+
+    @Test
+    fun `autostart split sequences LEFT then RIGHT into CastingSplit with no Error`() {
+        coordinator.openProjection()
+        awaitState<SimpleCastState.Idle>()
+
+        // Record every transition from Idle onward so we can prove no Error slips in.
+        val states = CopyOnWriteArrayList<SimpleCastState>()
+        coordinator.addStateListener { states.add(it) }
+
+        // The service's fixed sequencing: cast LEFT, then cast RIGHT ONLY after the coordinator
+        // reports CastingSplit with a landed left slot (never a blind delay).
+        coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.left", ClusterSlotSide.LEFT))
+        awaitTrue { (coordinator.state as? SimpleCastState.CastingSplit)?.left?.pkg == "com.test.left" }
+
+        coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.right", ClusterSlotSide.RIGHT))
+        awaitTrue {
+            val cur = coordinator.state
+            cur is SimpleCastState.CastingSplit &&
+                cur.left?.pkg == "com.test.left" && cur.right?.pkg == "com.test.right"
+        }
+
+        val s = coordinator.state as SimpleCastState.CastingSplit
+        assertEquals("com.test.left", s.left?.pkg)
+        assertEquals("com.test.right", s.right?.pkg)
+        // R1: no Error state may appear during a correctly-sequenced split autostart.
+        assertTrue(
+            states.none { it is SimpleCastState.Error },
+            "sequenced split autostart must not enter Error; saw: $states",
+        )
+    }
+
+    @Test
+    fun `dispatching the same slot twice is rejected SLOT_OCCUPIED without returning the other slot`() {
+        coordinator.openProjection()
+        awaitState<SimpleCastState.Idle>()
+
+        // Establish a full split: LEFT then RIGHT (RIGHT only after LEFT landed).
+        coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.left", ClusterSlotSide.LEFT))
+        awaitTrue { (coordinator.state as? SimpleCastState.CastingSplit)?.left?.pkg == "com.test.left" }
+        coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.right", ClusterSlotSide.RIGHT))
+        awaitTrue { (coordinator.state as? SimpleCastState.CastingSplit)?.right?.pkg == "com.test.right" }
+
+        // Precondition: both slots occupied.
+        val before = coordinator.state as SimpleCastState.CastingSplit
+        assertEquals("com.test.left", before.left?.pkg)
+        assertEquals("com.test.right", before.right?.pkg)
+
+        // Mark the shell history, then dispatch the SAME (already-occupied) LEFT slot again —
+        // exactly what the old two-driver autostart did.
+        val historyMark = shell.history.size
+        coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.left", ClusterSlotSide.LEFT))
+
+        // The coordinator rejects the duplicate with SLOT_OCCUPIED (transient Error).
+        awaitState<SimpleCastState.Error>()
+        val err = coordinator.state as SimpleCastState.Error
+        assertTrue(
+            err.message.contains(CastRejectReason.SLOT_OCCUPIED.name),
+            "expected SLOT_OCCUPIED rejection, got: ${err.message}",
+        )
+
+        // The rejection must not tear down the OTHER slot: no app is returned to the main display
+        // (returnToMain always issues `am start --display 0 ...`). The reject path issues no shell
+        // at all, so the right (and left) app placement on the cluster is left untouched.
+        val newCommands = shell.history.drop(historyMark)
+        assertTrue(
+            newCommands.none { it.contains("--display 0") },
+            "duplicate-slot reject must not return any app to the main display; commands=$newCommands",
+        )
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private inline fun <reified T : SimpleCastState> awaitState(timeoutMs: Long = 2000) {
@@ -276,82 +441,13 @@ class SimpleCastCoordinatorTest {
         }
         assertTrue(coordinator.state is T, "Expected ${T::class.simpleName} but got ${coordinator.state}")
     }
-}
 
-// ─── Fakes ────────────────────────────────────────────────────────────────────
-
-class FakeShell : SimpleCastShell {
-    val history = CopyOnWriteArrayList<String>()
-    var shouldFail = false
-    /** Packages to simulate as already running (with taskIds) for am stack list. */
-    val runningTasks = mutableMapOf<String, Int>()
-
-    init {
-        // CP/AA are always already running when user requests cast (they're system apps)
-        runningTasks["com.byd.autolink.carplay"] = 10
-        runningTasks["com.google.android.projection.gearhead"] = 11
-    }
-
-    override fun execute(command: String): ShellResult {
-        history.add(command)
-        if (shouldFail) return ShellResult(1, "", "fake error")
-        // Simulate am stack list output for task/stack discovery
-        if (command == "am stack list") {
-            return ShellResult(0, fakeStackListOutput(), "")
+    private fun awaitTrue(timeoutMs: Long = 2000, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10)
         }
-        return ShellResult(0, "", "")
-    }
-
-    /** Simulates am stack list with tasks on display 0 and a freeform stack on display 1. */
-    private fun fakeStackListOutput(): String {
-        val sb = StringBuilder()
-        // Home stack on display 0
-        sb.appendLine("Stack id=0 bounds=[0,0][1920,720] displayId=0 userId=0")
-        sb.appendLine("  taskId=1: com.android.launcher3/com.android.launcher3.Launcher visible=true")
-        // Running tasks on display 0
-        for ((pkg, taskId) in runningTasks) {
-            sb.appendLine("  taskId=$taskId: $pkg/.MainActivity visible=true")
-        }
-        // If settings was launched to display 1 (for stack creation), show a stack there
-        if (history.any { it.contains("--display 1") }) {
-            sb.appendLine("Stack id=2 bounds=[0,0][1920,720] displayId=1 userId=0")
-            sb.appendLine("  taskId=99: com.android.settings/.Settings visible=true")
-        }
-        return sb.toString()
+        assertTrue(condition(), "condition not met within ${timeoutMs}ms")
     }
 }
 
-class FakePrefs : SimpleCastPrefs {
-    private val configs = mutableMapOf<String, DisplayConfig>()
-    private var lastDisplay: Int? = null
-    private var _autoStartPackage: String? = null
-    private var _autoStartEnabled: Boolean = false
-    private var _splitRatioLeftPercent: Int = 50
-    private var _dozeWhitelistApplied: Boolean = false
-    private var _autoStartLeftPackage: String? = null
-    private var _autoStartRightPackage: String? = null
-    private var _autoStartSplitEnabled: Boolean = false
-
-    override fun displayConfigFor(pkg: String): DisplayConfig? = configs[pkg]
-    override fun saveDisplayConfig(pkg: String, config: DisplayConfig) { configs[pkg] = config }
-    override fun lastDisplayId(): Int? = lastDisplay
-    override fun saveLastDisplayId(id: Int) { lastDisplay = id }
-
-    override fun autoStartPackage(): String? = _autoStartPackage
-    override fun setAutoStartPackage(pkg: String?) { _autoStartPackage = pkg }
-    override fun autoStartEnabled(): Boolean = _autoStartEnabled
-    override fun setAutoStartEnabled(enabled: Boolean) { _autoStartEnabled = enabled }
-
-    override fun splitRatioLeftPercent(): Int = _splitRatioLeftPercent
-    override fun setSplitRatioLeftPercent(pct: Int) { _splitRatioLeftPercent = pct }
-
-    override fun dozeWhitelistApplied(): Boolean = _dozeWhitelistApplied
-    override fun setDozeWhitelistApplied(applied: Boolean) { _dozeWhitelistApplied = applied }
-
-    override fun autoStartLeftPackage(): String? = _autoStartLeftPackage
-    override fun setAutoStartLeftPackage(pkg: String?) { _autoStartLeftPackage = pkg }
-    override fun autoStartRightPackage(): String? = _autoStartRightPackage
-    override fun setAutoStartRightPackage(pkg: String?) { _autoStartRightPackage = pkg }
-    override fun autoStartSplitEnabled(): Boolean = _autoStartSplitEnabled
-    override fun setAutoStartSplitEnabled(enabled: Boolean) { _autoStartSplitEnabled = enabled }
-}

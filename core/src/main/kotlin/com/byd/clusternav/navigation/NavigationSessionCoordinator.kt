@@ -208,6 +208,7 @@ class NavigationSessionCoordinator(
     private fun output(target: NavigationOutputTarget): NavigationOutputPort = when (target) {
         NavigationOutputTarget.CLUSTER_LANE -> clusterLane
         NavigationOutputTarget.HUD -> hud
+        NavigationOutputTarget.SPEED_SIGN -> throw IllegalArgumentException("SPEED_SIGN has no NavigationOutputPort in coordinator")
     }
 
     /**

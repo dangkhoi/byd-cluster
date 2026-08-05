@@ -14,6 +14,8 @@ import java.util.concurrent.ConcurrentHashMap
 object SourceArbiter {
     const val STALE_MS = 6000L
     private val GMAPS_PKGS = setOf("com.google.android.apps.maps", "app.revanced.android.apps.maps")
+    private val WAZE_PKGS = setOf("com.chisadin.wazemod", "com.waze")
+    private val VIETMAP_PKGS = setOf("vn.vietmap.live")
 
     @Volatile var activeSource: String? = null; private set
     @Volatile private var activeSeen: Long = 0L
@@ -23,6 +25,8 @@ object SourceArbiter {
         lastSeenByPkg[pkg] = now
         val allow = when (mode) {
             NavSourceMode.PREFER_GMAPS -> pkg in GMAPS_PKGS || !isGroupFresh(GMAPS_PKGS, now)
+            NavSourceMode.PREFER_WAZE -> pkg in WAZE_PKGS || !isGroupFresh(WAZE_PKGS, now)
+            NavSourceMode.PREFER_VIETMAP -> pkg in VIETMAP_PKGS || !isGroupFresh(VIETMAP_PKGS, now)
             else -> {
                 val h = activeSource
                 h == null || h == pkg || now - activeSeen > STALE_MS

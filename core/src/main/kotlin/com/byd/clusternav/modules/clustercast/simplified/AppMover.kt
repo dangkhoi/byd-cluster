@@ -209,13 +209,21 @@ class AppMover(
         }
         val resizeResult = shell.execute("am task resize $taskId $left $top $right $bottom")
         log("fitToCluster: $pkg task=$taskId bounds=[$left,$top,$right,$bottom] ok=${resizeResult.success}")
+        if (!resizeResult.success && slotSide != null) {
+            // Split REQUIRES per-app bounds via am task resize, which needs freeform alive.
+            // wm size/overscan are display-global and cannot place two apps in two halves.
+            // If rejected here, freeform is not alive → needs one-time vehicle power-cycle
+            // (enable_freeform_support flag is set on projection open, read only at boot).
+            log("fitToCluster: SPLIT needs freeform — am task resize rejected. " +
+                "Power-cycle vehicle once after flags set. stderr=${resizeResult.stderr.take(120)}")
+        }
     }
 
     /** Parse the physical or override display size for `am task resize` bounds. */
     private fun queryDisplaySize(displayId: Int): Pair<Int, Int>? {
         val result = shell.execute("wm size -d $displayId")
         if (!result.success) return null
-        // Output: "Physical size: 1920x720" or "Override size: 1920x800\nPhysical size: 1920x720"
+        // Output: "Physical size: 1920x720" or "Override size: 1920x720\nPhysical size: 1920x720"
         // Use override if present, else physical.
         val regex = Regex("(?:Override|Physical) size:\\s*(\\d+)x(\\d+)")
         val matches = regex.findAll(result.stdout).toList()

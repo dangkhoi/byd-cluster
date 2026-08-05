@@ -37,7 +37,6 @@ class MainActivity : Activity() {
     private lateinit var hudStatus: TextView
     private lateinit var laneEnabled: CheckBox
     private lateinit var hudEnabled: CheckBox
-    private lateinit var distanceAssist: CheckBox
     private val cast = MainActivityCastController(this)
 
     private val ui = Handler(Looper.getMainLooper())
@@ -60,7 +59,6 @@ class MainActivity : Activity() {
         hudStatus = findViewById(R.id.txt_hud_status)
         laneEnabled = findViewById(R.id.cb_lane)
         hudEnabled = findViewById(R.id.cb_hud)
-        distanceAssist = findViewById(R.id.cb_distance_assist)
         cast.onCreate()
 
         navEnabled.isChecked = Prefs.enabled(this)
@@ -95,16 +93,40 @@ class MainActivity : Activity() {
         //
         // Bộ đọc màn còn cần quyền trợ năng do HỆ THỐNG cấp. Bật công tắc mà chưa cấp thì nó im lặng không
         // làm gì, nên đưa người dùng sang đúng trang đó — giống cách nút nổi xử lý quyền overlay.
-        distanceAssist.isChecked = Prefs.interpolate(this)
-        distanceAssist.setOnCheckedChangeListener { _, enabled ->
-            Prefs.setInterpolate(this, enabled)
-            Prefs.setAccBooster(this, enabled)
-            if (enabled && !accessibilityBoosterGranted()) {
-                Toast.makeText(this, Lang.t("Cần bật ClusterNav trong Trợ năng để đọc cự ly từ màn Maps", "ClusterNav needs to be enabled in Accessibility to read distance from Maps"), Toast.LENGTH_LONG).show()
-                runCatching {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                }
+        // Distance assist removed — firmware handles count-down natively; app interpolation causes jumpy numbers.
+        // Force-disable any previously saved preference.
+        Prefs.setInterpolate(this, false)
+        Prefs.setAccBooster(this, false)
+
+        // Navigation source selector (turn-by-turn direction)
+        val navSourceSpinner = findViewById<android.widget.Spinner>(R.id.spinner_nav_source)
+        val navSources = arrayOf("Tự động (app dẫn trước)", "Google Maps", "Waze Mod")
+        val navSourceModes = intArrayOf(Prefs.AUTO, Prefs.PREFER_GMAPS, Prefs.PREFER_WAZE)
+        navSourceSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, navSources)
+        val currentNavMode = Prefs.sourceMode(this)
+        navSourceSpinner.setSelection(navSourceModes.indexOf(currentNavMode).coerceAtLeast(0))
+        navSourceSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                Prefs.setSourceMode(this@MainActivity, navSourceModes[pos])
             }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        // Speed + Alert source selector
+        val speedSourceSpinner = findViewById<android.widget.Spinner>(R.id.spinner_speed_source)
+        val speedSources = arrayOf("VietMap (widget)", "Waze Mod (HLP)")
+        val speedSourceModes = intArrayOf(
+            com.byd.clusternav.navigation.NavSourceMode.SPEED_VIETMAP,
+            com.byd.clusternav.navigation.NavSourceMode.SPEED_WAZE,
+        )
+        speedSourceSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, speedSources)
+        val currentSpeedMode = Prefs.speedSource(this)
+        speedSourceSpinner.setSelection(speedSourceModes.indexOf(currentSpeedMode).coerceAtLeast(0))
+        speedSourceSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                Prefs.setSpeedSource(this@MainActivity, speedSourceModes[pos])
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
         findViewById<Button>(R.id.btn_reconnect_nav).setOnClickListener {

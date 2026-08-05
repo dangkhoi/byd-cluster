@@ -58,6 +58,9 @@ object NavRepository {
                 distanceMeters = NavParse.parseMeters(value.distance).takeIf { it >= 0 },
                 roadName = value.road.takeIf(String::isNotBlank),
                 etaEpochMs = null,
+                routeRemainingMeters = NavParse.parseEta(value.eta).first.takeIf { it >= 0 },
+                routeRemainingSeconds = NavParse.parseEta(value.eta).second.takeIf { it >= 0 },
+                arrivalClock = NavParse.extractArrivalClock(value.eta),
             ),
         )
         publish(value)
@@ -100,7 +103,11 @@ object NavRepository {
         road = content.roadName.orEmpty(),
         maneuverText = content.maneuverText.orEmpty(),
         maneuverIcon = content.maneuverCode ?: -1,
-        eta = content.etaEpochMs?.toString().orEmpty(),
+        eta = buildString {
+            content.arrivalClock?.let { append(it) }
+            content.routeRemainingMeters?.let { m -> if (isNotEmpty()) append(" · "); append(NavParse.formatMeters(m)) }
+            content.routeRemainingSeconds?.let { s -> if (isNotEmpty()) append(" · "); append(NavParse.formatSeconds(s)) }
+        },
         updatedAt = receivedAtEpochMs,
     )
 
@@ -115,21 +122,31 @@ object NavRepository {
     private class PreferencesPersistence(context: Context) : NavigationFramePersistence {
         private val prefs = context.getSharedPreferences("navigation_session_v2", Context.MODE_PRIVATE)
         override fun load(): StoredNavigationSession? {
-            val id = prefs.getString("sessionId", null) ?: return null
-            val pkg = prefs.getString("sourcePackage", null) ?: return null
-            val source = NavigationSourceIdentity(pkg, prefs.getString("sourceDisplay", null))
-            val sequence = prefs.getLong("sequence", 0L)
-            val frame = if (sequence > 0) NavigationFrame(
-                id, source, sequence, prefs.getLong("receivedAt", 0L),
-                NavigationFrameContent(
-                    prefs.getInt("maneuverCode", Int.MIN_VALUE).takeUnless { it == Int.MIN_VALUE },
-                    prefs.getString("maneuverText", null),
-                    prefs.getInt("distanceMeters", Int.MIN_VALUE).takeUnless { it == Int.MIN_VALUE },
-                    prefs.getString("roadName", null),
-                    prefs.getLong("eta", Long.MIN_VALUE).takeUnless { it == Long.MIN_VALUE },
-                ),
-            ) else null
-            return StoredNavigationSession(id, source, prefs.getLong("startedAt", 0L), frame)
+            return try {
+                val id = prefs.getString("sessionId", null) ?: return null
+                val pkg = prefs.getString("sourcePackage", null) ?: return null
+                val source = NavigationSourceIdentity(pkg, prefs.getString("sourceDisplay", null))
+                val sequence = prefs.getLong("sequence", 0L)
+                val frame = if (sequence > 0) NavigationFrame(
+                    id, source, sequence, prefs.getLong("receivedAt", 0L),
+                    NavigationFrameContent(
+                        prefs.getInt("maneuverCode", Int.MIN_VALUE).takeUnless { it == Int.MIN_VALUE },
+                        prefs.getString("maneuverText", null),
+                        prefs.getInt("distanceMeters", Int.MIN_VALUE).takeUnless { it == Int.MIN_VALUE },
+                        prefs.getString("roadName", null),
+                        prefs.getLong("eta", Long.MIN_VALUE).takeUnless { it == Long.MIN_VALUE },
+                        prefs.getInt("routeRemainingMeters", Int.MIN_VALUE).takeUnless { it == Int.MIN_VALUE },
+                        prefs.getInt("routeRemainingSeconds", Int.MIN_VALUE).takeUnless { it == Int.MIN_VALUE },
+                        prefs.getString("arrivalClock", null),
+                    ),
+                ) else null
+                StoredNavigationSession(id, source, prefs.getLong("startedAt", 0L), frame)
+            } catch (e: Exception) {
+                // Fail closed: corrupted persistence must not crash Home. Clear and return empty.
+                android.util.Log.e("NavPersistence", "load corruption — clearing", e)
+                runCatching { prefs.edit().clear().commit() }
+                null
+            }
         }
 
         override fun save(session: StoredNavigationSession) {
@@ -146,6 +163,9 @@ object NavRepository {
                 .putInt("distanceMeters", frame?.content?.distanceMeters ?: Int.MIN_VALUE)
                 .putString("roadName", frame?.content?.roadName)
                 .putLong("eta", frame?.content?.etaEpochMs ?: Long.MIN_VALUE)
+                .putInt("routeRemainingMeters", frame?.content?.routeRemainingMeters ?: Int.MIN_VALUE)
+                .putInt("routeRemainingSeconds", frame?.content?.routeRemainingSeconds ?: Int.MIN_VALUE)
+                .putString("arrivalClock", frame?.content?.arrivalClock)
                 .commit()) { "failed to persist Navigation session" }
         }
 

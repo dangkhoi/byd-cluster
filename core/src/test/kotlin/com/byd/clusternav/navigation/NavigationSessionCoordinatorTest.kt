@@ -10,14 +10,14 @@ import org.junit.jupiter.api.Test
 
 class NavigationSessionCoordinatorTest {
     private val source = NavigationSourceIdentity("com.example.maps", "Example Maps")
-    private val content = NavigationFrameContent(2, "Turn right", 250, "Example Road", null)
+    private val content = NavigationFrameContent(2, "Turn right", 250, "Example Road", null, null, null, null)
 
     @Test fun `closed model fields preserve typed nullability and exact enums`() {
-        val minimal = NavigationFrameContent(null, null, null, null, null)
+        val minimal = NavigationFrameContent(null, null, null, null, null, null, null, null)
         assertNull(minimal.maneuverCode)
         assertNull(minimal.roadName)
         assertThrows(IllegalArgumentException::class.java) {
-            NavigationFrameContent(null, "", -1, "", null)
+            NavigationFrameContent(null, "", -1, "", null, null, null, null)
         }
         assertThrows(IllegalArgumentException::class.java) {
             NavigationSourceState(
@@ -63,7 +63,7 @@ class NavigationSessionCoordinatorTest {
         assertEquals(3, NavigationPermission.entries.size)
         assertEquals(10, NavigationAction.entries.size)
         assertEquals(8, NavigationSourceReason.entries.size)
-        assertEquals(2, NavigationOutputTarget.entries.size)
+        assertEquals(3, NavigationOutputTarget.entries.size)
         assertOutputStatusExhaustive(NavigationOutputStatus.FAULT(NavigationOutputFailureReason.DELIVERY_THROWN))
         assertFreshnessExhaustive(NavigationFreshness.Fresh(0))
     }

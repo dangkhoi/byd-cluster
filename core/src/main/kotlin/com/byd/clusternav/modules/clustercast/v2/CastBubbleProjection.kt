@@ -483,7 +483,7 @@ object CastBubbleProjection {
      * Ở đây chứ không ở tầng view: một bộ chữ, một chỗ sửa. Tầng view chỉ vẽ nó ra.
      */
     fun zoneShortLabel(zone: BubbleZone): String = when (zone) {
-        BubbleZone.FULL -> "Cả cụm"
+        BubbleZone.FULL -> "Full"
         BubbleZone.LEFT -> "Trái"
         BubbleZone.RIGHT -> "Phải"
     }

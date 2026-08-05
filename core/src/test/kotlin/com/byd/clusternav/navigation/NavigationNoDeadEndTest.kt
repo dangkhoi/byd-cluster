@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test
 class NavigationNoDeadEndTest {
 
     private val source = NavigationSourceIdentity("com.example.maps", "Example Maps")
-    private val content = NavigationFrameContent(2, "Rẽ phải", 250, "Đường Ví Dụ", null)
+    private val content = NavigationFrameContent(2, "Rẽ phải", 250, "Đường Ví Dụ", null, null, null, null)
 
     private class MemoryPersistence : NavigationFramePersistence {
         var stored: StoredNavigationSession? = null

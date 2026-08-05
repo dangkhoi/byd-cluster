@@ -86,5 +86,5 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@17
 
 ## ADB
 ```
-~/Library/Android/sdk/platform-tools/adb connect 10.49.0.106:5555
+~/Library/Android/sdk/platform-tools/adb connect <vehicle-ip>:5555
 ```

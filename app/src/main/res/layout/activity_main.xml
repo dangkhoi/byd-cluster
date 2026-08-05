@@ -43,10 +43,18 @@
             trừ dần cự ly theo tốc độ xe giữa hai lần notification, còn bộ đọc màn Maps kéo mốc về đúng
             số thật. Tách làm hai checkbox là bày ra cơ chế thay vì ý định — và tệ hơn: tắt nội suy thì
             bộ đọc màn CHẠY MÀ VÔ NGHĨA, vì `refine()` bỏ qua khi chưa có mốc. -->
-            <CheckBox android:id="@+id/cb_distance_assist" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
-            android:textColor="@color/text_secondary"
-            android:text="Hỗ trợ cự ly" />
+            <!-- Distance assist removed: firmware handles count-down animation natively.
+                 App-side interpolation conflicts with firmware → jumpy numbers. -->
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:text="Nguồn dẫn đường (hướng rẽ · khoảng cách · đường)"
+                android:textColor="@color/text_secondary" android:textSize="13sp" />
+            <Spinner android:id="@+id/spinner_nav_source" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:text="Nguồn tốc độ + cảnh báo (biển báo · camera)"
+                android:textColor="@color/text_secondary" android:textSize="13sp" />
+            <Spinner android:id="@+id/spinner_speed_source" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
             <Button android:id="@+id/btn_reconnect_nav" android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
                 android:text="Cấp quyền / kết nối lại" android:textAllCaps="false" android:textColor="@color/brand" />

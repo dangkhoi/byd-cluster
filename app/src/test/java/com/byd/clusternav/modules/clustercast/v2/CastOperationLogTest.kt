@@ -65,9 +65,10 @@ class CastOperationLogTest {
     @Test
     fun `diagnostics surfaces the log read-only`() {
         val diag = source("main/java/com/byd/clusternav/modules/clustercast/DiagActivity.kt")
-        assertTrue(diag.contains("facade.operationLog()"))
-        assertTrue(diag.contains("nhật ký thao tác"))
-        assertTrue(diag.contains("mode=READ_ONLY"))
+        // DiagActivity now uses SimpleCastRuntime directly (V2 facade removed)
+        assertTrue(diag.contains("SimpleCastRuntime"))
         assertFalse(diag.contains("CastOperationLog.clear"))
+        // CastFacade may appear in comments but must not be imported/instantiated
+        assertFalse(diag.lines().any { it.trimStart().startsWith("import") && "CastFacade" in it })
     }
 }

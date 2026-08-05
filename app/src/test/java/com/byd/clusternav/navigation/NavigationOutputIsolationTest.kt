@@ -156,7 +156,7 @@ class NavigationOutputIsolationTest {
 
     private fun frame(sequence: Long) = NavigationFrame(
         "session", source, sequence, sequence,
-        NavigationFrameContent(1, "Continue", 100, "Example Road", null)
+        NavigationFrameContent(1, "Continue", 100, "Example Road", null, null, null, null)
     )
 
     private fun await(timeoutMs: Long = 1_000, condition: () -> Boolean) {

@@ -1,7 +1,6 @@
 package com.byd.clusternav.navigation
 
 import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.FutureTask
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledFuture
@@ -41,8 +40,16 @@ class ClusterLaneAdapter(
     override fun close() = worker.close()
 }
 
-/** Shared implementation code, but every adapter owns a distinct instance and therefore distinct live resources. */
-internal class BoundedNavigationOutputWorker(
+/**
+ * Shared implementation code, but every adapter owns a distinct instance and therefore distinct live resources.
+ *
+ * Fixed contracts (v1.03 T2):
+ * - Generation fencing: clear/stopSession increments generation, invalidating all queued positive writes.
+ * - Dedup tracks APPLIED state (last successfully delivered sequence), not enqueued intent.
+ * - FutureTask lifecycle: tasks removed from tracking on both completion AND cancellation-before-start.
+ * - Worker timeout uses interrupt + cleanup; cancelled deadline does not retain references.
+ */
+class BoundedNavigationOutputWorker(
     private val target: NavigationOutputTarget,
     threadName: String,
     private val delivery: NavigationFrameDelivery,
@@ -52,7 +59,6 @@ internal class BoundedNavigationOutputWorker(
 ) : AutoCloseable {
     private val lock = Any()
     private val generation = AtomicLong(0L)
-    private val activeTasks = ConcurrentHashMap.newKeySet<FutureTask<Unit>>()
     private val executor = ThreadPoolExecutor(
         1, 1, 0L, TimeUnit.MILLISECONDS,
         ArrayBlockingQueue(config.queueCapacity),
@@ -65,10 +71,13 @@ internal class BoundedNavigationOutputWorker(
 
     private var enabled = initiallyEnabled
     private var status: NavigationOutputStatus = NavigationOutputStatus.OFF
+    /** Tracks the last APPLIED (successfully delivered) sequence — dedup by result, not intent. */
+    private var appliedSequence: Long? = null
     private var cachedSequence: Long? = null
     private var lastAttemptAt: Long? = null
     private var lastCompletedAt: Long? = null
     private var lastVerifiedAt: Long? = null
+    private var activeTask: FutureTask<Unit>? = null
 
     fun setEnabled(value: Boolean) = synchronized(lock) {
         enabled = value
@@ -86,8 +95,8 @@ internal class BoundedNavigationOutputWorker(
 
         val timedOut = AtomicBoolean(false)
         val deadlineRef = AtomicReference<ScheduledFuture<*>?>()
-        lateinit var task: FutureTask<Unit>
-        task = FutureTask {
+        val taskRef = AtomicReference<FutureTask<Unit>?>()
+        val task = FutureTask<Unit> {
             if (!isCurrent(acceptedGeneration)) return@FutureTask
             updateIfCurrent(acceptedGeneration) {
                 status = NavigationOutputStatus.EMITTING
@@ -98,6 +107,7 @@ internal class BoundedNavigationOutputWorker(
                 if (!timedOut.get()) updateIfCurrent(acceptedGeneration) {
                     status = NavigationOutputStatus.EMITTING
                     lastCompletedAt = nowEpochMs()
+                    appliedSequence = frame.sequence
                 }
             } catch (interrupted: InterruptedException) {
                 Thread.currentThread().interrupt()
@@ -116,19 +126,21 @@ internal class BoundedNavigationOutputWorker(
                 }
             } finally {
                 deadlineRef.get()?.cancel(false)
-                activeTasks.remove(task)
+                val self = taskRef.get()
+                synchronized(lock) { if (activeTask === self) activeTask = null }
             }
         }
+        taskRef.set(task)
 
         try {
-            activeTasks += task
+            synchronized(lock) { activeTask = task }
             executor.execute(task)
             synchronized(lock) {
                 if (isCurrent(acceptedGeneration)) cachedSequence = frame.sequence
             }
         } catch (_: RejectedExecutionException) {
-            activeTasks.remove(task)
             synchronized(lock) {
+                if (activeTask === task) activeTask = null
                 generation.incrementAndGet()
                 status = NavigationOutputStatus.FAULT(
                     if (executor.isShutdown) NavigationOutputFailureReason.EXECUTOR_REJECTED
@@ -149,6 +161,9 @@ internal class BoundedNavigationOutputWorker(
         }, config.deliveryDeadlineMs, TimeUnit.MILLISECONDS))
         return OutputSubmission.ACCEPTED
     }
+
+    /** The last successfully delivered (applied) sequence, or null if nothing delivered yet. */
+    fun lastAppliedSequence(): Long? = synchronized(lock) { appliedSequence }
 
     fun markDisplayVerified(sequence: Long, observedAtEpochMs: Long): Boolean = synchronized(lock) {
         if (!enabled || cachedSequence != sequence || observedAtEpochMs < 0 || status is NavigationOutputStatus.FAULT) {
@@ -198,10 +213,13 @@ internal class BoundedNavigationOutputWorker(
 
     private fun resetLiveWorkLocked(clearCache: Boolean) {
         generation.incrementAndGet()
-        activeTasks.forEach { it.cancel(true) }
-        activeTasks.clear()
+        activeTask?.cancel(true)
+        activeTask = null
         executor.queue.clear()
-        if (clearCache) cachedSequence = null
+        if (clearCache) {
+            cachedSequence = null
+            appliedSequence = null
+        }
         lastAttemptAt = null
         lastCompletedAt = null
         lastVerifiedAt = null
