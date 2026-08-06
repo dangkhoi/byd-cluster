@@ -11,7 +11,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.byd.clusternav.AdbKeys
+import com.byd.clusternav.Lang
 import com.byd.clusternav.R
+import com.byd.clusternav.carexec.LocalDeviceShell
 
 class VietMapWidgetDiagActivity : Activity() {
     private lateinit var bridge: VietMapWidgetBridge
@@ -121,7 +124,7 @@ class VietMapWidgetDiagActivity : Activity() {
         return ScrollView(this).apply { addView(column) }
     }
 
-    private fun bindNextMissing() {
+    private fun bindNextMissing(allowGrantRetry: Boolean = true) {
         val next = bridge.bindingStatuses().firstOrNull { !it.bound }
         if (next == null) {
             toast("Hai nguồn VietMap đã được bind")
@@ -137,8 +140,29 @@ class VietMapWidgetDiagActivity : Activity() {
                 startActivityForResult(result.intent, REQUEST_BIND_WIDGET)
             }
             is VietMapWidgetBindResult.Failed -> {
-                toast(result.detail)
-                render(bridge.snapshot())
+                // No consent UI on the head unit → self-grant the bind permission over the adb
+                // loopback (this app is already an adb-mode tool) and retry ONCE, instead of asking
+                // the driver to type `appwidget grantbind` by hand. The manual message stays as the
+                // last-resort fallback (grant only helps the missing-permission case).
+                if (allowGrantRetry && result.reason == VietMapWidgetUnavailableReason.BIND_UI_UNAVAILABLE) {
+                    toast(Lang.t("Đang tự cấp quyền bind…", "Granting bind permission…"))
+                    Thread({
+                        val granted = LocalDeviceShell.grantAppWidgetBind(
+                            AdbKeys.ensure(applicationContext), packageName,
+                        )
+                        runOnUiThread {
+                            if (granted) {
+                                bindNextMissing(allowGrantRetry = false)
+                            } else {
+                                toast(result.detail)
+                                render(bridge.snapshot())
+                            }
+                        }
+                    }, "widget-grantbind").start()
+                } else {
+                    toast(result.detail)
+                    render(bridge.snapshot())
+                }
             }
         }
     }
