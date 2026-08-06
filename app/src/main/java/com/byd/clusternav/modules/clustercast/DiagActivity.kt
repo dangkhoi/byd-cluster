@@ -10,7 +10,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.byd.clusternav.Lang
-import com.byd.clusternav.UpdateChecker
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastRuntime
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastState
 
@@ -54,7 +53,7 @@ class DiagActivity : Activity() {
             text = Lang.t("⬇ Kiểm tra cập nhật", "⬇ Check update")
             isAllCaps = false
             minimumHeight = dp(48)
-            setOnClickListener { checkUpdate() }
+            setOnClickListener { com.byd.clusternav.UpdateFlow.start(this@DiagActivity) { t, warn -> setStatus(t, warn) } }
         })
         status = TextView(this).apply {
             textSize = 13f
@@ -129,59 +128,11 @@ class DiagActivity : Activity() {
         android.widget.Toast.makeText(this, "Đã sao chép", android.widget.Toast.LENGTH_SHORT).show()
     }
 
-    // ─── Check-for-update from GitHub (restored) ─────────────────────────────
-    // Queries the public repo's apk/ folder via GitHub Contents API, compares versions, then
-    // downloads + installs the newest release APK over the dadb loopback (uid shell). All I/O off
-    // the main thread; UI updates via runOnUiThread. Logic lives in UpdateChecker (unit-tested).
-
+    // ─── Check-for-update status sink ────────────────────────────────────────
+    // The interactive check → confirm → download → install flow lives in the shared [UpdateFlow]
+    // helper (invoked by the button above and by MainActivity). This screen only renders status.
     private fun setStatus(text: String, warn: Boolean = false) {
         status.text = text
         status.setTextColor(if (warn) Color.rgb(176, 0, 32) else Color.rgb(0, 105, 92))
-    }
-
-    /** Kiểm tra GitHub có bản mới không → hỏi → tải → cài qua dadb. Toàn bộ I/O chạy nền. */
-    private fun checkUpdate() {
-        setStatus(Lang.t("đang kiểm tra…", "checking…"))
-        Thread({
-            val r = UpdateChecker.check(applicationContext)
-            runOnUiThread {
-                when {
-                    r.error != null -> setStatus(Lang.t("lỗi: ${r.error}", "error: ${r.error}"), warn = true)
-                    !r.hasUpdate -> setStatus(Lang.t("đang ở bản mới nhất (v${r.current})", "up to date (v${r.current})"))
-                    else -> confirmUpdate(r.current, r.latest!!, r.downloadUrl!!)
-                }
-            }
-        }, "update-check").start()
-    }
-
-    private fun confirmUpdate(cur: String, latest: String, url: String) {
-        if (isFinishing || isDestroyed) return
-        android.app.AlertDialog.Builder(this)
-            .setTitle(Lang.t("Có bản mới: v$latest", "New version: v$latest"))
-            .setMessage(Lang.t(
-                "Đang dùng v$cur. Tải v$latest và cài đè? App sẽ tự khởi động lại.",
-                "You have v$cur. Download v$latest and install? The app will restart.",
-            ))
-            .setPositiveButton(Lang.t("Tải & cài", "Download & install")) { _, _ -> doUpdate(url) }
-            .setNegativeButton(Lang.t("Để sau", "Later"), null)
-            .show()
-    }
-
-    private fun doUpdate(url: String) {
-        setStatus(Lang.t("đang tải… 0%", "downloading… 0%"))
-        Thread({
-            val f = UpdateChecker.download(applicationContext, url) { pct ->
-                runOnUiThread {
-                    setStatus(if (pct < 0) Lang.t("đang tải…", "downloading…") else Lang.t("đang tải… $pct%", "downloading… $pct%"))
-                }
-            }
-            if (f == null) {
-                runOnUiThread { setStatus(Lang.t("tải thất bại", "download failed"), warn = true) }
-                return@Thread
-            }
-            runOnUiThread { setStatus(Lang.t("đang cài…", "installing…")) }
-            val msg = UpdateChecker.install(applicationContext, f)
-            runOnUiThread { setStatus(msg) }
-        }, "update-download").start()
     }
 }

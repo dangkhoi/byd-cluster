@@ -1,7 +1,9 @@
 package com.byd.clusternav.modules.wazehud
 
+import com.byd.clusternav.navigation.Maneuver
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -72,14 +74,39 @@ class WazeHudSourceTest {
     // ─── turn enum mapping ───────────────────────────────────────────────────
 
     @Test
-    fun `hlpTurnToManeuverCode maps the documented turn enum`() {
-        assertEquals(0, WazeHudSource.hlpTurnToManeuverCode(0))    // none
-        assertEquals(2, WazeHudSource.hlpTurnToManeuverCode(2))    // left
-        assertEquals(3, WazeHudSource.hlpTurnToManeuverCode(3))    // right
-        assertEquals(17, WazeHudSource.hlpTurnToManeuverCode(8))   // u-turn
-        assertEquals(15, WazeHudSource.hlpTurnToManeuverCode(10))  // roundabout
-        assertEquals(19, WazeHudSource.hlpTurnToManeuverCode(17))  // arrived
-        assertEquals(0, WazeHudSource.hlpTurnToManeuverCode(99))   // unknown → none
+    fun `hlpTurnToManeuver maps the documented turn enum to neutral Maneuver`() {
+        assertNull(WazeHudSource.hlpTurnToManeuver(0))                            // none
+        assertEquals(Maneuver.STRAIGHT, WazeHudSource.hlpTurnToManeuver(1))       // straight
+        assertEquals(Maneuver.TURN_LEFT, WazeHudSource.hlpTurnToManeuver(2))      // left
+        assertEquals(Maneuver.TURN_RIGHT, WazeHudSource.hlpTurnToManeuver(3))     // right
+        assertEquals(Maneuver.SLIGHT_LEFT, WazeHudSource.hlpTurnToManeuver(4))    // slight left
+        assertEquals(Maneuver.SLIGHT_RIGHT, WazeHudSource.hlpTurnToManeuver(5))   // slight right
+        assertEquals(Maneuver.SHARP_LEFT, WazeHudSource.hlpTurnToManeuver(6))     // sharp left
+        assertEquals(Maneuver.SHARP_RIGHT, WazeHudSource.hlpTurnToManeuver(7))    // sharp right
+        assertEquals(Maneuver.UTURN, WazeHudSource.hlpTurnToManeuver(8))          // u-turn
+        assertEquals(Maneuver.ROUNDABOUT, WazeHudSource.hlpTurnToManeuver(10))    // roundabout
+        assertEquals(Maneuver.DESTINATION, WazeHudSource.hlpTurnToManeuver(17))   // arrived
+        assertNull(WazeHudSource.hlpTurnToManeuver(99))                           // unknown → none
+    }
+
+    @Test
+    fun `Waze roundabout is not confused with destination (magic-int class killed)`() {
+        // Bug cũ: roundabout phát "15", HUD đọc "15" = destination. Enum tách bạch hai maneuver.
+        val rab = WazeHudSource.hlpTurnToManeuver(10)!!
+        val dst = WazeHudSource.hlpTurnToManeuver(17)!!
+        assertEquals(Maneuver.ROUNDABOUT, rab)
+        assertEquals(Maneuver.DESTINATION, dst)
+        assertFalse(rab.toHudIcon() == dst.toHudIcon(), "roundabout và destination KHÔNG được cùng mã HUD")
+    }
+
+    @Test
+    fun `Waze turns encode to non-straight HUD icons`() {
+        // Cua thật KHÔNG được ra "đi thẳng" (11) trên HUD — đúng lớp lỗi đã sửa.
+        for (trn in listOf(2, 3, 4, 5, 6, 7, 8)) {
+            val m = WazeHudSource.hlpTurnToManeuver(trn)
+            assertNotNull(m, "Waze turn $trn phải ra Maneuver")
+            assertFalse(m!!.toHudIcon() == 11, "Waze turn $trn (cua) KHÔNG được ra 11/đi-thẳng trên HUD")
+        }
     }
 
     // ─── pollOnce: newest-wins + de-dup by ts ────────────────────────────────
@@ -146,6 +173,7 @@ class WazeHudSourceTest {
         assertTrue(nav.active)
         assertEquals("1.2 km", nav.distance)
         assertEquals("B", nav.road)   // next street preferred over current
-        assertEquals(3, nav.maneuverIcon)
+        assertEquals(Maneuver.TURN_RIGHT, nav.maneuver)   // neutral truth
+        assertEquals(3, nav.maneuverIcon)                 // AMAP suy từ maneuver cho làn cụm
     }
 }

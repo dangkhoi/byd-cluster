@@ -8,6 +8,7 @@ import android.os.Looper
 import com.byd.clusternav.navigation.ClusterLaneAdapter
 import com.byd.clusternav.navigation.HudAdapter
 import com.byd.clusternav.navigation.InteractionContext
+import com.byd.clusternav.navigation.Maneuver
 import com.byd.clusternav.navigation.NavigationFrame
 import com.byd.clusternav.navigation.NavigationFrameContent
 import com.byd.clusternav.navigation.NavigationFrameDelivery
@@ -61,6 +62,9 @@ object NavRepository {
                 routeRemainingMeters = NavParse.parseEta(value.eta).first.takeIf { it >= 0 },
                 routeRemainingSeconds = NavParse.parseEta(value.eta).second.takeIf { it >= 0 },
                 arrivalClock = NavParse.extractArrivalClock(value.eta),
+                // Chốt maneuver TRUNG LẬP MỘT LẦN tại đây (biên đầu vào): ưu tiên maneuver đã có sẵn
+                // (nguồn trực tiếp), nếu không thì bắc cầu từ mã AMAP đã phân loại. Cả hai đầu ra encode từ đây.
+                maneuver = value.maneuver ?: Maneuver.fromAmapIcon(value.maneuverIcon),
             ),
         )
         publish(value)
@@ -102,7 +106,9 @@ object NavRepository {
         distance = content.distanceMeters?.let { "$it m" }.orEmpty(),
         road = content.roadName.orEmpty(),
         maneuverText = content.maneuverText.orEmpty(),
-        maneuverIcon = content.maneuverCode ?: -1,
+        // maneuver TRUNG LẬP là nguồn sự thật; maneuverIcon (AMAP) suy ra cho làn cụm (khứ hồi chính xác).
+        maneuverIcon = content.maneuver?.toAmapIcon() ?: content.maneuverCode ?: -1,
+        maneuver = content.maneuver,
         eta = buildString {
             content.arrivalClock?.let { append(it) }
             content.routeRemainingMeters?.let { m -> if (isNotEmpty()) append(" · "); append(NavParse.formatMeters(m)) }
@@ -138,6 +144,10 @@ object NavRepository {
                         prefs.getInt("routeRemainingMeters", Int.MIN_VALUE).takeUnless { it == Int.MIN_VALUE },
                         prefs.getInt("routeRemainingSeconds", Int.MIN_VALUE).takeUnless { it == Int.MIN_VALUE },
                         prefs.getString("arrivalClock", null),
+                        maneuver = prefs.getString("maneuver", null)
+                            ?.let { name -> runCatching { Maneuver.valueOf(name) }.getOrNull() }
+                            ?: prefs.getInt("maneuverCode", Int.MIN_VALUE)
+                                .takeUnless { it == Int.MIN_VALUE }?.let { Maneuver.fromAmapIcon(it) },
                     ),
                 ) else null
                 StoredNavigationSession(id, source, prefs.getLong("startedAt", 0L), frame)
@@ -159,6 +169,7 @@ object NavRepository {
                 .putLong("sequence", frame?.sequence ?: 0L)
                 .putLong("receivedAt", frame?.receivedAtEpochMs ?: 0L)
                 .putInt("maneuverCode", frame?.content?.maneuverCode ?: Int.MIN_VALUE)
+                .putString("maneuver", frame?.content?.maneuver?.name)
                 .putString("maneuverText", frame?.content?.maneuverText)
                 .putInt("distanceMeters", frame?.content?.distanceMeters ?: Int.MIN_VALUE)
                 .putString("roadName", frame?.content?.roadName)

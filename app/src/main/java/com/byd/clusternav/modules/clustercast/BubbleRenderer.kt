@@ -42,7 +42,7 @@ internal class BubbleRenderer(private val context: Context) {
         isFocusable = true
         minimumWidth = dp(ZONE_MIN_DP)
         minimumHeight = dp(ZONE_MIN_DP)
-        setPadding(dp(8), dp(5), dp(8), dp(5))
+        setPadding(dp(2), dp(2), dp(2), dp(2))
         layoutParams = LinearLayout.LayoutParams(widthPx, heightPx).apply { leftMargin = leftMarginPx }
         contentDescription = CastBubbleProjection.zoneShortLabel(zone)
         paintEmpty(this)
@@ -55,15 +55,16 @@ internal class BubbleRenderer(private val context: Context) {
 
     /**
      * Build the bubble layout: ONE horizontal row of three equal-size zones,
-     * order **Trái · Phải · Full**. All three zones use the same size
-     * ([HALF_ZONE_WIDTH_DP] × [ZONE_MIN_DP]); [createZoneView] still enforces the
-     * ≥48dp automotive minimum via `minimumWidth`/`minimumHeight`. Small [ZONE_GAP_DP]
-     * gaps separate the zones. Tap wiring and the [zoneViews] map are registered by
-     * [createZoneView], so ordering here does not affect painting/state lookups.
+     * order **Trái · Phải · Full**. All three zones are SQUARE, sized
+     * [ZONE_MIN_DP] × [ZONE_MIN_DP] (also enforced as `minimumWidth`/`minimumHeight`
+     * in [createZoneView]). Small [ZONE_GAP_DP] gaps separate the zones. Tap wiring and
+     * the [zoneViews] map are registered by [createZoneView], so ordering here does not
+     * affect painting/state lookups.
      */
     fun buildBubbleLayout(onTap: (BubbleZone) -> Unit): LinearLayout {
+        // 2026-08-06 on-car: nút cao quá thừa (35×48). Làm VUÔNG: rộng = cao = ZONE_MIN_DP (38dp, owner-chosen).
         val zoneHeight = dp(ZONE_MIN_DP)
-        val zoneWidth = dp(HALF_ZONE_WIDTH_DP)
+        val zoneWidth = dp(ZONE_MIN_DP)
         val gap = dp(ZONE_GAP_DP)
 
         val leftZone = createZoneView(BubbleZone.LEFT, zoneWidth, zoneHeight, 0, onTap)
@@ -135,6 +136,7 @@ internal class BubbleRenderer(private val context: Context) {
         }
         view.alpha = 1f
         view.isEnabled = true
+        view.tag = false
         view.contentDescription = "$label · chạm để trả về"
     }
 
@@ -148,6 +150,7 @@ internal class BubbleRenderer(private val context: Context) {
         }
         view.alpha = 1f
         view.isEnabled = true
+        view.tag = false
         view.contentDescription = "${view.text} · chạm để chiếu"
     }
 
@@ -164,12 +167,17 @@ internal class BubbleRenderer(private val context: Context) {
             setStroke(dp(ZONE_STROKE_DP), BRAND)
         }
         view.alpha = DISABLED_ZONE_ALPHA
-        view.isEnabled = false
+        // 2026-08-06 fix drag "lúc được lúc không": Android CHỈ gọi OnTouchListener khi view ENABLED.
+        // Trước đây disabled zone (isEnabled=false) nuốt touch nhưng không phát drag → không kéo được.
+        // GIỮ enabled=true để luôn kéo được; đánh dấu disabled qua tag cho tap-gate (isZoneDisabled).
+        view.isEnabled = true
+        view.tag = true
         view.contentDescription = if (reason.isNotBlank()) "${view.text} · không khả dụng: $reason" else "${view.text} · không khả dụng"
     }
 
-    /** Check if a zone view is disabled (tap should be no-op). */
-    fun isZoneDisabled(zone: BubbleZone): Boolean = zoneViews[zone]?.isEnabled == false
+    /** Check if a zone view is disabled (tap should be no-op). Reads the tag, NOT isEnabled —
+     *  zones stay isEnabled=true so the drag OnTouchListener always fires (see [paintDisabled]). */
+    fun isZoneDisabled(zone: BubbleZone): Boolean = zoneViews[zone]?.tag == true
 
     fun clearViews() { zoneViews.clear() }
 
@@ -177,17 +185,17 @@ internal class BubbleRenderer(private val context: Context) {
 
     companion object {
         /**
-         * Minimum touch target per zone (dp). Held at the 48dp automotive touch-target
-         * guideline — the smallest size that still honours it (owner wanted compact zones).
-         * Enforced via `minimumWidth`/`minimumHeight` in [createZoneView] even when the
-         * layout params request a smaller width.
+         * Rendered square side per zone (dp), also the enforced min touch target (used for BOTH axes
+         * in [buildBubbleLayout] → square, and as minimumWidth/Height in [createZoneView]).
+         * 2026-08-06 owner (on-car): shrunk to 38dp (~80% of the prior 48dp) for a more compact bubble.
+         * Intentionally BELOW the 48dp automotive guideline per explicit owner request.
          */
-        internal const val ZONE_MIN_DP = 48
-        internal const val HALF_ZONE_WIDTH_DP = 35
+        internal const val ZONE_MIN_DP = 38
         internal const val ZONE_GAP_DP = 2
         internal const val ZONE_CORNER_DP = 5
         internal const val ZONE_STROKE_DP = 1
-        internal const val ZONE_TEXT_SP = 7f
+        // 2026-08-06 on-car: 7sp quá bé không đọc được → nâng lên 13sp (vẫn vừa ô vuông 38dp với padding 2).
+        internal const val ZONE_TEXT_SP = 13f
         internal const val DISABLED_ZONE_ALPHA = 0.35f
 
         /** Opaque brand blue — used for zone strokes and empty-zone text so labels stay legible. */

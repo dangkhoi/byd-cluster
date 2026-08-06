@@ -155,9 +155,14 @@ object ClusterBroadcaster {
     @Deprecated("Use stopHud")
     fun onHudOff(ctx: Context) = stopHud(ctx)
 
-    /** BYD turn-icon (1-49, CanBusController enum) từ maneuver text — map đơn giản; đủ cho HUD (cự ly là chính). */
+    /** BYD turn-icon (1-49, CanBusController enum) cho HUD — ENCODER THUẦN từ maneuver TRUNG LẬP.
+     *  Đọc `s.maneuver` (quyết định hướng rẽ duy nhất, CHUNG với làn cụm) qua [Maneuver.toHudIcon].
+     *  CHỈ khi maneuver = null (chưa phân loại) mới suy từ CHỮ. Trước đây HUD suy lại từ chữ nên với
+     *  GMaps/Waze — hướng rẽ nằm ở ẢNH/turn-enum chứ không ở chữ — mọi cua rớt về "đi thẳng" (11). */
     private fun bydIcon(s: NavState): Int {
-        if (s.maneuverIcon == 15) return 48                       // cờ điểm đến tường minh (NavNotificationListener cắm)
+        s.maneuver?.toHudIcon()?.let { return it }   // (1) encoder thuần: maneuver -> mã CAN
+        // (2) FALLBACK khi maneuver = null: suy từ chữ + glyph HUD-riêng (hầm 49, vòng-xuyến-có-số-nhánh).
+        //     Lớp cuối, hiếm khi tới (GMaps/Waze đã chốt maneuver ở biên đầu vào).
         val src = s.maneuverText.ifBlank { s.road }
         val t = src.lowercase()
         if (NavFormat.roundaboutExit(src) in 1..10 || t.contains("vòng xuyến") || t.contains("roundabout") || t.contains("bùng binh")) return 15   // vòng xuyến (glyph chung)

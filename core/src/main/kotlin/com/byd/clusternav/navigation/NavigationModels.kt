@@ -133,6 +133,12 @@ data class NavigationFrameContent(
     val routeRemainingMeters: Int?,
     val routeRemainingSeconds: Int?,
     val arrivalClock: String?,
+    /**
+     * Maneuver TRUNG LẬP — quyết định hướng rẽ duy nhất của khung, độc lập nguồn/đầu ra. ĐÂY là contract
+     * ngữ nghĩa mà cả hai encoder (làn cụm [Maneuver.toAmapIcon], HUD [Maneuver.toHudIcon]) đọc. Trường
+     * [maneuverCode] (mã AMAP thô) giữ lại cho tương thích ngược + transport của các owner ghi-thẳng-HAL.
+     */
+    val maneuver: Maneuver? = null,
 ) {
     init {
         require(distanceMeters == null || distanceMeters >= 0) { "distanceMeters must be null or non-negative" }

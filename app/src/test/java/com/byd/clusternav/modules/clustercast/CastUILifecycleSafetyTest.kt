@@ -203,7 +203,7 @@ class CastUILifecycleSafetyTest {
     fun `disabled zone does not dispatch action`() {
         // Simulates: FloatingBubbleService.onZoneTap checks renderer.isZoneDisabled
         var dispatched = false
-        val zoneEnabled = false // paintDisabled sets view.isEnabled = false
+        val zoneEnabled = false // isZoneDisabled(zone)==true: paintDisabled TAGS disabled; isEnabled stays true (for drag)
 
         // Pattern from FloatingBubbleService.onZoneTap:
         if (!zoneEnabled) {
@@ -217,7 +217,7 @@ class CastUILifecycleSafetyTest {
     @Test
     fun `enabled occupied zone dispatches stop action`() {
         var dispatched = false
-        val zoneEnabled = true // paintOccupied sets view.isEnabled = true
+        val zoneEnabled = true // isZoneDisabled(zone)==false: paintOccupied tags not-disabled
 
         if (!zoneEnabled) {
             // no-op
@@ -230,7 +230,7 @@ class CastUILifecycleSafetyTest {
     @Test
     fun `enabled empty zone dispatches cast action`() {
         var dispatched = false
-        val zoneEnabled = true // paintEmpty sets view.isEnabled = true
+        val zoneEnabled = true // isZoneDisabled(zone)==false: paintEmpty tags not-disabled
 
         if (!zoneEnabled) {
             // no-op
@@ -243,19 +243,13 @@ class CastUILifecycleSafetyTest {
     // ─── Touch target size constant tests ─────────────────────────────────────
 
     @Test
-    fun `zone minimum dp exceeds 48dp automotive guideline`() {
+    fun `zone size is owner-chosen 38dp compact below 48dp guideline per owner 2026-08-06`() {
+        // Owner shrank the 3 zones to ~80% (48dp → 38dp) on-car 2026-08-06 for a more compact bubble.
+        // Intentionally below the 48dp automotive guideline; this test locks the owner decision.
+        assertEquals(38, BubbleRenderer.ZONE_MIN_DP)
         assertTrue(
-            BubbleRenderer.ZONE_MIN_DP >= 48,
-            "Zone minimum (${BubbleRenderer.ZONE_MIN_DP}dp) must be >= 48dp for automotive"
-        )
-    }
-
-    @Test
-    fun `zone minimum dp is 48`() {
-        assertEquals(48, BubbleRenderer.ZONE_MIN_DP)
-        assertTrue(
-            BubbleRenderer.ZONE_MIN_DP >= 48,
-            "Zone minimum (${BubbleRenderer.ZONE_MIN_DP}dp) must stay >= 48dp automotive guideline"
+            BubbleRenderer.ZONE_MIN_DP in 32..48,
+            "zone size (${BubbleRenderer.ZONE_MIN_DP}dp) must stay in a sane 32–48dp range"
         )
     }
 
