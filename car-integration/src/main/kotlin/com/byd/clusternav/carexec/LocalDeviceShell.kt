@@ -59,4 +59,22 @@ object LocalDeviceShell {
         Dadb.create(HOST, PORT, keys).use { adb -> adb.install(apk, *options) }
         true
     }.getOrDefault(false)
+
+    /**
+     * Tự cấp quyền bind AppWidget cho [pkg] trên user 0 qua shell (uid 2000).
+     *
+     * `appwidget grantbind` cần shell/root; phiên adb loopback CHÍNH LÀ shell, nên app tự cho phép
+     * mình bind widget mà không cần người dùng gõ tay `adb shell appwidget grantbind`. Grant chỉ
+     * mở đúng cho [pkg] (không đụng app khác). Thử cả `appwidget` (binary rời) lẫn `cmd appwidget`
+     * (tùy build). Trả true nếu phiên nối được (đã phát lệnh) — dấu hiệu thành công thật là lần
+     * `bindAppWidgetIdIfAllowed()` thử lại sau đó, vì grantbind không in gì khi thành công.
+     */
+    fun grantAppWidgetBind(keys: AdbKeyPair, pkg: String): Boolean =
+        runAll(
+            keys,
+            listOf(
+                "appwidget grantbind --package $pkg --user 0",
+                "cmd appwidget grantbind --package $pkg --user 0",
+            ),
+        ) != null
 }
