@@ -2,6 +2,7 @@ package com.byd.clusternav.modules.wazehud
 
 import android.util.Log
 import com.byd.clusternav.NavState
+import com.byd.clusternav.navigation.Maneuver
 import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -38,26 +39,26 @@ class WazeHudSource(private val shell: (command: String) -> String?) {
         // uid-2000 shell may grant it (READ_LOGS has the `development` protection flag). Harmless if it fails.
         private const val GRANT_CMD = "pm grant com.byd.clusternav android.permission.READ_LOGS"
 
-        /** Map HLP/1 turn enum to amap-compatible maneuver code used by ClusterNav. */
-        fun hlpTurnToManeuverCode(trn: Int): Int = when (trn) {
-            0 -> 0    // none
-            1 -> 9    // straight (depart/continue)
-            2 -> 2    // turn left
-            3 -> 3    // turn right
-            4 -> 12   // slight left
-            5 -> 13   // slight right
-            6 -> 10   // sharp left
-            7 -> 11   // sharp right
-            8 -> 17   // u-turn
-            10 -> 15  // roundabout (generic)
-            11 -> 15  // roundabout left
-            12 -> 15  // roundabout right
-            13 -> 12  // keep left (same as slight left)
-            14 -> 13  // keep right (same as slight right)
-            15 -> 12  // exit left
-            16 -> 13  // exit right
-            17 -> 19  // arrived
-            else -> 0
+        /**
+         * Map HLP/1 turn enum -> [Maneuver] TRUNG LẬP, đi THẲNG tới enum (KHÔNG qua magic-int).
+         * Đây chính là chỗ bug cũ: giá trị "15" vừa là roundabout (hệ Waze cũ) vừa là destination (AMAP),
+         * đọc nhầm hệ → HUD hiện điểm-đến khi thực ra là vòng xuyến. Enum khử luôn lớp lỗi đó.
+         * null = không có cua (none). Ý nghĩa enum HLP đã xác minh 2026-08-05 theo spec chính thức.
+         */
+        fun hlpTurnToManeuver(trn: Int): Maneuver? = when (trn) {
+            1 -> Maneuver.STRAIGHT              // straight (depart/continue)
+            2 -> Maneuver.TURN_LEFT
+            3 -> Maneuver.TURN_RIGHT
+            4 -> Maneuver.SLIGHT_LEFT
+            5 -> Maneuver.SLIGHT_RIGHT
+            6 -> Maneuver.SHARP_LEFT
+            7 -> Maneuver.SHARP_RIGHT
+            8 -> Maneuver.UTURN
+            10, 11, 12 -> Maneuver.ROUNDABOUT  // generic / left / right (làn cụm + HUD không tách nhánh)
+            13, 15 -> Maneuver.SLIGHT_LEFT      // keep left / exit left ≈ chếch trái
+            14, 16 -> Maneuver.SLIGHT_RIGHT     // keep right / exit right ≈ chếch phải
+            17 -> Maneuver.DESTINATION          // arrived
+            else -> null                        // 0 = none, hoặc mã lạ
         }
     }
 
@@ -190,11 +191,13 @@ class WazeHudSource(private val shell: (command: String) -> String?) {
                 append("${state.remainingMinutes} min")
             }
         }
+        val maneuver = hlpTurnToManeuver(state.turnCode)
         return NavState(
             active = state.navigating,
             distance = distanceText,
             road = state.nextStreet.ifBlank { state.currentStreet },
-            maneuverIcon = hlpTurnToManeuverCode(state.turnCode),
+            maneuver = maneuver,
+            maneuverIcon = maneuver?.toAmapIcon() ?: -1,   // AMAP cho làn cụm (Waze gọi emitLane trực tiếp)
             eta = etaText,
             updatedAt = System.currentTimeMillis(),
         )

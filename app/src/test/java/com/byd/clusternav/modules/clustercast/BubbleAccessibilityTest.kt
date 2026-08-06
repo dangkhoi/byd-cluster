@@ -91,17 +91,12 @@ class BubbleAccessibilityTest {
     // ─── 3. Touch target size ────────────────────────────────────────────────
 
     @Test
-    fun `ZONE_MIN_DP is 48 meeting the 48dp automotive guideline`() {
-        assertEquals(48, BubbleRenderer.ZONE_MIN_DP)
-        assertTrue(BubbleRenderer.ZONE_MIN_DP >= 48,
-            "Zone size must meet the 48dp automotive touch guideline")
-    }
-
-    @Test
-    fun `ZONE_MIN_DP never drops below the 48dp guideline`() {
-        val margin = (BubbleRenderer.ZONE_MIN_DP - 48.0) / 48.0
-        assertTrue(margin >= 0.0,
-            "${BubbleRenderer.ZONE_MIN_DP}dp must be >= 48dp guideline (margin ${(margin * 100).toInt()}%)")
+    fun `ZONE_MIN_DP is owner-chosen 38dp compact below 48dp guideline per owner 2026-08-06`() {
+        // Owner shrank the 3 zones to ~80% (48dp → 38dp) on-car 2026-08-06 for a more compact bubble.
+        // Intentionally below the 48dp automotive guideline; this test locks the owner decision.
+        assertEquals(38, BubbleRenderer.ZONE_MIN_DP)
+        assertTrue(BubbleRenderer.ZONE_MIN_DP in 32..48,
+            "zone size (${BubbleRenderer.ZONE_MIN_DP}dp) must stay in a sane 32–48dp range")
     }
 
     // ─── 4. Disabled alpha is visually distinct ──────────────────────────────

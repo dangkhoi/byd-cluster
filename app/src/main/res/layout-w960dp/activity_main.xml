@@ -209,7 +209,9 @@
                     android:layout_height="wrap_content" android:layout_marginTop="6dp" android:minHeight="@dimen/touch_min"
                     android:contentDescription="Tỉ lệ chia đôi cụm khi chiếu hai app" />
 
-                    android:textAllCaps="false" android:textSize="14sp" android:textColor="@color/btn_text" />
+                <Button android:id="@+id/btn_check_update" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp" android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
+                    android:text="⬇ Kiểm tra cập nhật" android:textAllCaps="false" android:textColor="@color/brand" />
 
                 <TextView android:id="@+id/cast_recovery_toggle" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical"

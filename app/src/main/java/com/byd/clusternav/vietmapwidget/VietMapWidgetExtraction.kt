@@ -57,30 +57,26 @@ internal class VietMapWidgetExtraction(context: Context) {
     }
 
     fun extractAlerts(root: AppWidgetHostView): VietMapWidgetRawValues? {
-        val names = VietMapWidgetViewNames.alertsRequired
-        if (!VietMapWidgetTextParser.supportsAlertsShape(resolvedNames(names))) return null
-        val required = names.associateWith { name -> view(root, name) ?: return null }
-        val textNames = names - setOf(
-            VietMapWidgetViewNames.FIRST_ALERT_IMAGE,
-            VietMapWidgetViewNames.SECOND_ALERT_IMAGE,
-        )
-        if (textNames.any { required[it] !is TextView }) return null
-        fun visibleText(name: String): String? {
-            val tv = required.getValue(name) as TextView
+        // The sticky-alert widget's STABLE anchor = the two alert images (present even in the no-alert
+        // placeholder state, e.g. `place_holder_textView`='--'). The per-alert TEXT views
+        // (limit/distance) exist only WHILE an alert is active, so they are OPTIONAL — their absence
+        // means "no active alert", NOT an unsupported shape. Requiring them (old behaviour) made the
+        // idle placeholder report UNSUPPORTED_SHAPE, which dragged the whole VietMap snapshot to
+        // UNAVAILABLE and masked a perfectly working speed slot (proven by on-car widget dump 2026-08-06).
+        val firstImage = view(root, VietMapWidgetViewNames.FIRST_ALERT_IMAGE) as? ImageView ?: return null
+        val secondImage = view(root, VietMapWidgetViewNames.SECOND_ALERT_IMAGE) as? ImageView ?: return null
+        fun optText(name: String): String? {
+            val tv = view(root, name) as? TextView ?: return null
             return tv.text.toString().takeIf { effectivelyVisible(tv, root) }
         }
-        val firstImage = required.getValue(VietMapWidgetViewNames.FIRST_ALERT_IMAGE) as? ImageView ?: return null
-        val secondImage = required.getValue(VietMapWidgetViewNames.SECOND_ALERT_IMAGE) as? ImageView ?: return null
-        val firstVisible = effectivelyVisible(firstImage, root)
-        val secondVisible = effectivelyVisible(secondImage, root)
         return VietMapWidgetRawValues(
-            firstAlertSpeedLimitText = visibleText(VietMapWidgetViewNames.FIRST_ALERT_LIMIT),
-            firstAlertDistanceText = visibleText(VietMapWidgetViewNames.FIRST_ALERT_DISTANCE),
-            firstAlertImageVisible = firstVisible,
+            firstAlertSpeedLimitText = optText(VietMapWidgetViewNames.FIRST_ALERT_LIMIT),
+            firstAlertDistanceText = optText(VietMapWidgetViewNames.FIRST_ALERT_DISTANCE),
+            firstAlertImageVisible = effectivelyVisible(firstImage, root),
             firstAlertImageHash = null, // hash computed asynchronously
-            secondAlertSpeedLimitText = visibleText(VietMapWidgetViewNames.SECOND_ALERT_LIMIT),
-            secondAlertDistanceText = visibleText(VietMapWidgetViewNames.SECOND_ALERT_DISTANCE),
-            secondAlertImageVisible = secondVisible,
+            secondAlertSpeedLimitText = optText(VietMapWidgetViewNames.SECOND_ALERT_LIMIT),
+            secondAlertDistanceText = optText(VietMapWidgetViewNames.SECOND_ALERT_DISTANCE),
+            secondAlertImageVisible = effectivelyVisible(secondImage, root),
             secondAlertImageHash = null, // hash computed asynchronously
         )
     }

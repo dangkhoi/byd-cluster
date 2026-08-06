@@ -139,6 +139,10 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.btn_vietmap_widget_diag).setOnClickListener {
             startActivity(Intent(this, VietMapWidgetDiagActivity::class.java))
         }
+        findViewById<Button?>(R.id.btn_check_update)?.setOnClickListener {
+            val btn = it as Button
+            UpdateFlow.start(this) { text, _ -> btn.text = text }
+        }
 
         NavConnect.ensureConnected(applicationContext)
         runCatching { RebindReceiver.scheduleWatchdog(applicationContext) }
