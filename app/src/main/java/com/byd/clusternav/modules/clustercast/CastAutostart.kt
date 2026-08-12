@@ -8,7 +8,6 @@ import android.widget.Spinner
 import com.byd.clusternav.Lang
 import com.byd.clusternav.R
 import com.byd.clusternav.modules.clustercast.simplified.AppMover
-import com.byd.clusternav.modules.clustercast.simplified.CastProfile
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastCoordinator
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastPrefs
 
@@ -61,10 +60,8 @@ internal class CastAutostart(
         populateAutoStartSpinner(spinnerAutoLeft, "left")
         populateAutoStartSpinner(spinnerAutoRight, "right")
 
-        // Split ratio spinner
-        val spinnerRatio = activity.findViewById<Spinner>(R.id.spinner_split_ratio)
-        spinnerRatio.isEnabled = true
-        populateSplitRatioSpinner(spinnerRatio)
+        // NOTE: the split-ratio selector moved to CastSplitRatioButtons (Feature 2 · 9 visual buttons
+        // wired to the SIMPLIFIED live prefs). It is bound by MainActivityCastController, not here.
 
         // NOTE: autostart is intentionally NOT dispatched here. FloatingBubbleService is the sole
         // driver (R1) — a second Activity-side dispatcher caused the SLOT_OCCUPIED race (T1).
@@ -118,32 +115,6 @@ internal class CastAutostart(
                     "right" -> castPrefs.setAutoStartRightPackage(pkg)
                     else -> castPrefs.setAutoStartPackage(pkg)
                 }
-            }
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        }
-    }
-
-    private fun populateSplitRatioSpinner(spinner: Spinner) {
-        // R3 (#4): all 9 split ratios, data-driven from CastProfile.SPLIT_PERCENTS ({10,20,…,90}).
-        // Value = leftPercent; label = "left/right" (10/90 … 90/10). One spinner covers both
-        // directions because leftPercent alone determines the whole split.
-        val percentValues = CastProfile.SPLIT_PERCENTS
-        val options = percentValues.map { "$it/${100 - it}" }
-
-        val adapter = android.widget.ArrayAdapter(activity, android.R.layout.simple_spinner_item, options)
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        spinner.adapter = adapter
-
-        // R3 backfill: any previously-stored ratio outside SPLIT_PERCENTS (e.g. legacy 55, 0) falls
-        // back to the default (50) and is re-persisted so the coordinator reads a valid ratio.
-        val savedPct = castPrefs.splitRatioLeftPercent()
-        val effectivePct = CastProfile.normalizePercent(savedPct)
-        if (effectivePct != savedPct) castPrefs.setSplitRatioLeftPercent(effectivePct)
-        spinner.setSelection(percentValues.indexOf(effectivePct))
-
-        spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
-                castPrefs.setSplitRatioLeftPercent(percentValues[position])
             }
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }

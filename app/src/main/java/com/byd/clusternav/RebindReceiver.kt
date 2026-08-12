@@ -41,6 +41,13 @@ class RebindReceiver : BroadcastReceiver() {
             }
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
                 castBootWork(context, automation = false)
+                // OTA auto-reopen (owner 2026-08-12): the installer kills us on update and does NOT
+                // relaunch. Bring the app back to the foreground so the user lands on Home after an
+                // update instead of a blank screen. Manifest-declared receiver ⇒ delivered even though
+                // our process was replaced. Background-activity-start is allowed here because the app
+                // holds SYSTEM_ALERT_WINDOW (the overlay/bubble permission) — the standard A10
+                // exemption; best-effort (runCatching) if the grant is missing.
+                relaunchAfterUpdate(context)
             }
         }
     }
@@ -85,6 +92,23 @@ class RebindReceiver : BroadcastReceiver() {
                 Intent(app, com.byd.clusternav.modules.clustercast.FloatingBubbleService::class.java),
             )
         }.onFailure { Log.e(TAG, "auto-start bubble failed", it) }
+    }
+
+    /**
+     * Bring the app back to the foreground after a self-update (MY_PACKAGE_REPLACED). Uses the
+     * package's own launcher intent (Home / MainActivity) with NEW_TASK; CLEAR_TOP so a stale task
+     * isn't stacked. Best-effort: background activity-start needs the SYSTEM_ALERT_WINDOW exemption,
+     * so this may be a no-op if the overlay grant is absent — it never throws.
+     */
+    private fun relaunchAfterUpdate(context: Context) {
+        runCatching {
+            val app = context.applicationContext
+            val launch = app.packageManager.getLaunchIntentForPackage(app.packageName)
+                ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                ?: Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            app.startActivity(launch)
+            Log.i(TAG, "relaunch after update requested")
+        }.onFailure { Log.e(TAG, "relaunch after update failed", it) }
     }
     companion object {
         private const val TAG = "NavRebind"

@@ -19,6 +19,7 @@ import com.byd.clusternav.vietmapwidget.VietMapWidgetFreshness
 import com.byd.clusternav.vietmapwidget.VietMapWidgetOwner
 import com.byd.clusternav.modules.wazehud.WazeHudSource
 import com.byd.clusternav.modules.wazehud.WazeHudAvailability
+import com.byd.clusternav.modules.clustercast.ClusterNavLaneWidget
 
 /**
  * Adapter MỎNG cho notification dẫn đường (Google Maps / ReVanced). Chỉ làm:
@@ -156,6 +157,7 @@ class NavNotificationListener : NotificationListenerService() {
                     val navState = source.toNavState(state)
                     ClusterBroadcaster.emitLane(ctx, navState)
                     ClusterBroadcaster.emitHud(ctx, navState)
+                    ClusterNavLaneWidget.onNavActive(ctx)
                 }
             }
 
@@ -221,6 +223,7 @@ class NavNotificationListener : NotificationListenerService() {
         if (SourceArbiter.release(sbn.packageName)) {
             arrivalGuard.reset()
             NavRepository.stop(applicationContext)
+            ClusterNavLaneWidget.onNavIdle()
             Log.i(TAG, "nguồn ${sbn.packageName} dừng -> stop authoritative session")
         }
     }
@@ -244,6 +247,7 @@ class NavNotificationListener : NotificationListenerService() {
             runCatching { TurnDistanceInterpolator.reset() }
             runCatching { NavRepository.stop(applicationContext) }
                 .onFailure { Log.e(TAG, "arrival stop failed", it) }
+            ClusterNavLaneWidget.onNavIdle()
             Log.i(TAG, "đã đến nơi (${sbn.packageName}) → clear cụm (stop)")
             return
         }
@@ -264,6 +268,7 @@ class NavNotificationListener : NotificationListenerService() {
             return
         }
         ClusterBroadcaster.selectSource(sbn.packageName)
+        ClusterNavLaneWidget.onNavActive(applicationContext)
 
         // HƯỚNG RẼ: thử tên small-icon (ReVanced GMaps luôn logo -> trượt) rồi tới đọc ẢNH large-icon.
         val manIcon = IconResource.resolve(applicationContext, sbn.packageName, n.smallIcon)
@@ -286,6 +291,7 @@ class NavNotificationListener : NotificationListenerService() {
             arrivalGuard.reset()
             runCatching { TurnDistanceInterpolator.reset() }
             runCatching { NavRepository.stop(applicationContext) }.onFailure { Log.e(TAG, "route-end stop failed", it) }
+            ClusterNavLaneWidget.onNavIdle()
             Log.i(TAG, "route-remaining ~0 (${sbn.packageName}) → clear cụm (stop)")
             return
         }

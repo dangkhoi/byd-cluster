@@ -360,6 +360,70 @@ class SimpleCastCoordinatorTest {
         assertNull(prefs.displayConfigFor("com.test.right", CastProfile.of(ClusterSlotSide.RIGHT, 70)))
     }
 
+    // ─── Live split-ratio change (Feature 2) ──────────────────────────────────
+
+    @Test
+    fun `applySplitRatioLive re-resizes both slots in place when casting split`() {
+        coordinator.openProjection()
+        awaitState<SimpleCastState.Idle>()
+        coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.left", ClusterSlotSide.LEFT))
+        awaitTrue { (coordinator.state as? SimpleCastState.CastingSplit)?.left?.pkg == "com.test.left" }
+        coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.right", ClusterSlotSide.RIGHT))
+        awaitTrue { (coordinator.state as? SimpleCastState.CastingSplit)?.right?.pkg == "com.test.right" }
+
+        // Mark history rather than clearing it: FakeShell reconstructs the display-1 stack from the
+        // recorded `am start --display 1` commands, so clearing would make both apps "disappear" and
+        // the resize would find no task. The ratio-30 bounds below are unique to applySplitRatioLive
+        // (the initial cast used the default ratio 50 → boundary 960), so scoping to new commands is
+        // enough to prove the live re-resize happened.
+        val mark = shell.history.size
+        coordinator.applySplitRatioLive(30)
+
+        // (a) new ratio persisted for the next cast.
+        awaitTrue { prefs.splitRatioLeftPercent() == 30 }
+        // (b) BOTH slots re-resized to the ratio-30 split. FakeShell returns no `wm size`, so the
+        // coordinator falls back to 1920×720 → boundary = 1920·30/100 = 576.
+        awaitTrue { shell.history.drop(mark).any { it.contains("am task resize") && it.endsWith(" 0 0 576 720") } }
+        awaitTrue { shell.history.drop(mark).any { it.contains("am task resize") && it.endsWith(" 576 0 1920 720") } }
+        // In-place resize: nothing is returned to the main display (no return+recast).
+        assertTrue(
+            shell.history.drop(mark).none { it.contains("--display 0") },
+            "live ratio change must not return apps to main; commands=${shell.history.drop(mark)}",
+        )
+        // Per-ratio profiles updated on success (R6).
+        awaitTrue { prefs.displayConfigFor("com.test.left", CastProfile.of(ClusterSlotSide.LEFT, 30))?.bounds == CastBounds(0, 0, 576, 720) }
+        awaitTrue { prefs.displayConfigFor("com.test.right", CastProfile.of(ClusterSlotSide.RIGHT, 30))?.bounds == CastBounds(576, 0, 1920, 720) }
+    }
+
+    @Test
+    fun `applySplitRatioLive only persists the ratio when not casting split`() {
+        // Off (never cast). Must persist the ratio but issue NO slot resize.
+        coordinator.applySplitRatioLive(70)
+        awaitTrue { prefs.splitRatioLeftPercent() == 70 }
+        Thread.sleep(100)
+        assertTrue(
+            shell.history.none { it.contains("am task resize") },
+            "no split → no slot resize; commands=${shell.history}",
+        )
+    }
+
+    @Test
+    fun `applySplitRatioLive normalizes an out-of-set percent to the default 50`() {
+        // Public entry-point hardening: a percent outside the 9 supported buckets (10..90 step 10)
+        // must NOT persist verbatim — it would corrupt the next split cast's fitToCluster geometry,
+        // drive a degenerate `am task resize`, and file bounds under a mismatched profile key.
+        // It clamps to the R3 default (50), matching CastProfile.of/normalizePercent everywhere else.
+        coordinator.applySplitRatioLive(55) // 55 is not one of SPLIT_PERCENTS
+        awaitTrue { prefs.splitRatioLeftPercent() == 50 }
+        coordinator.applySplitRatioLive(0) // degenerate — would make a zero-width slot
+        awaitTrue { prefs.splitRatioLeftPercent() == 50 }
+        coordinator.applySplitRatioLive(1000) // out of range high
+        awaitTrue { prefs.splitRatioLeftPercent() == 50 }
+        // A valid bucket still round-trips unchanged.
+        coordinator.applySplitRatioLive(30)
+        awaitTrue { prefs.splitRatioLeftPercent() == 30 }
+    }
+
     // ─── T1 autostart sequencing proof (R1) ──────────────────────────────────
 
     @Test

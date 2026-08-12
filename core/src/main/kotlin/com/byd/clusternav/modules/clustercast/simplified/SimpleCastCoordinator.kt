@@ -424,6 +424,38 @@ class SimpleCastCoordinator(
             geometry.resizeSlot(pkg, CastProfile.of(side, prefs.splitRatioLeftPercent()), left, top, right, bottom)
         }
 
+    /**
+     * Apply a new split ratio ([leftPercent]) live (Feature 2 · split-ratio buttons).
+     *
+     * (a) ALWAYS persists [SimpleCastPrefs.setSplitRatioLeftPercent] so the next split cast uses it.
+     * (b) If currently [SimpleCastState.CastingSplit], re-resizes BOTH occupied slots to the new ratio
+     *     IN PLACE (no return+recast): left = [0,0, W·pct/100, H], right = [W·pct/100, 0, W, H], where
+     *     W×H is the cluster display's measured size ([AppMover.queryDisplaySize], fallback 1920×720).
+     *     Reuses the same [CastGeometryController.resizeSlot] path as [resizeActiveSlot], so per-slot
+     *     bounds persist to the matching per-ratio profile ONLY on shell success (R6).
+     *
+     * Thread-safe — queued on the serial executor.
+     */
+    fun applySplitRatioLive(leftPercent: Int) = executor.submit("split-ratio-live") {
+        // Validate the incoming ratio to one of the 9 supported buckets (10..90). The UI only ever
+        // sends CastProfile.SPLIT_PERCENTS values, but this is a public entry point: an out-of-set
+        // percent would (a) persist a bad ratio that corrupts the NEXT split cast's fitToCluster
+        // bounds, (b) drive a degenerate `am task resize` (resizeSlot has no bounds guard), and
+        // (c) file per-slot bounds under a normalized profile key (CastProfile.of below) that no
+        // longer matches the geometry. Clamp to the R3 default (50) so all three stay consistent.
+        val pct = CastProfile.normalizePercent(leftPercent)
+        prefs.setSplitRatioLeftPercent(pct)
+        val current = state as? SimpleCastState.CastingSplit ?: return@submit
+        val (width, height) = mover.queryDisplaySize(displayId) ?: (1920 to 720)
+        val boundary = width * pct / 100
+        current.left?.let {
+            geometry.resizeSlot(it.pkg, CastProfile.of(ClusterSlotSide.LEFT, pct), 0, 0, boundary, height)
+        }
+        current.right?.let {
+            geometry.resizeSlot(it.pkg, CastProfile.of(ClusterSlotSide.RIGHT, pct), boundary, 0, width, height)
+        }
+    }
+
     /** @see CastGeometryController.isFreeformAlive */
     fun isFreeformAlive(): Boolean = geometry.isFreeformAlive()
 

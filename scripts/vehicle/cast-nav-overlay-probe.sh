@@ -27,6 +27,10 @@ CAP="${CAP:-12}"                 # per-adb-call hard timeout (s) — macOS has n
 OUT="${OUT:-.}"                  # where to pull screencaps
 SVC="${SVC:-AutoContainer}"      # DiLink 2/3/4 = AutoContainer · DiLink 5 = auto_container
 PAUSE="${PAUSE:-3}"              # seconds to let the cluster settle before each screencap
+DISP="${DISP:-1}"                # fission_screencap display index for the CLUSTER.
+                                 # NOTE: tool help says 0:ivi 1:cluster, but on some DiLink3.0 trims
+                                 # this is INVERTED (verified 2026-08-12: -d 0 = cluster, -d 1 = ivi).
+                                 # If cnp_00_baseline shows the IVI home, re-run with DISP=0.
 
 command -v "$ADB" >/dev/null 2>&1 || ADB="$HOME/Library/Android/sdk/platform-tools/adb"
 command -v "$ADB" >/dev/null 2>&1 || [ -x "$ADB" ] || { echo "FATAL: adb not found (set ADB=...)"; exit 1; }
@@ -50,8 +54,8 @@ navbcast(){ # re-assert a nav frame so AMapService (re)draws the overlay
     --es ROUTE_REMAIN_TIME_AUTO '5 min' --es ROUTE_REMAIN_TIME_STRING '5 min'" >/dev/null 2>&1 && echo "   nav frame broadcast"
 }
 shot(){ # $1 = tag
-  cap shell "fission_screencap -d 1 -p /data/local/tmp/cnp_$1.png" >/dev/null 2>&1
-  cap pull "/data/local/tmp/cnp_$1.png" "$OUT/cnp_$1.png" >/dev/null 2>&1 && echo "   cluster screencap -> $OUT/cnp_$1.png"
+  cap shell "fission_screencap -d $DISP -p /data/local/tmp/cnp_$1.png" >/dev/null 2>&1
+  cap pull "/data/local/tmp/cnp_$1.png" "$OUT/cnp_$1.png" >/dev/null 2>&1 && echo "   cluster screencap (-d $DISP) -> $OUT/cnp_$1.png"
 }
 
 echo "== PRECONDITION check: an app must already be CAST on the cluster + a nav source navigating. =="

@@ -84,3 +84,9 @@ docs/_handoff/*-committed-exact-source.json
 docs/_handoff/*-check.json
 oncar-emulator-*/oncar-q1-*/
 oncar-carexec-*/ui-review-*/
+# ─── Session on-car / emulator artifacts (screenshots + CAN/config dumps) ──
+# PII / vehicle telemetry (GPS-derived nav, road names, CAN frames) — NEVER commit.
+/emu_*.png
+scripts/vehicle/*.png
+scripts/vehicle/doorA_*.txt
+scripts/vehicle/doorB_*.txt
