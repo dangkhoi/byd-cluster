@@ -143,6 +143,11 @@ class MainActivity : Activity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
+        // Kiểu hiển thị nav trên cụm — 2 nút phân đoạn (Nhỏ/ở trên · Giữa + ETA). File riêng để giữ
+        // MainActivity/CastController dưới ngưỡng LOC; nó chỉ ghi Prefs.navClusterMode mà
+        // ClusterNavLaneWidget đọc để quyết định assert op 39 hay không.
+        com.byd.clusternav.modules.clustercast.NavClusterModeButtons(this).bind()
+
         findViewById<Button>(R.id.btn_reconnect_nav).setOnClickListener {
             if (notificationAccessGranted()) {
                 NavConnect.reconnect(applicationContext)
@@ -191,6 +196,19 @@ class MainActivity : Activity() {
             NavConnect.ensureConnected(applicationContext)
         }
         cast.onResume()
+        // Nút nổi hiện NGAY sau khi bật Cast + cấp quyền overlay, không cần mở lại app. onCreate() chỉ
+        // start service khi overlay ĐÃ có; nếu user vừa cấp quyền ở màn hệ thống rồi quay lại, luồng về
+        // đây qua onResume — start lại service để onStartCommand → showBubble() (idempotent, no-op nếu
+        // bubble đã hiện). Service tự đứng xuống nếu Cast tắt hoặc overlay vẫn thiếu. runCatching để một
+        // ROM thiếu Settings.canDrawOverlays không làm văng Home.
+        runCatching {
+            if (com.byd.clusternav.modules.clustercast.simplified.SimpleCastRuntime
+                    .coordinator(applicationContext).prefs.castEnabled() &&
+                Settings.canDrawOverlays(this)
+            ) {
+                startForegroundService(Intent(this, com.byd.clusternav.modules.clustercast.FloatingBubbleService::class.java))
+            }
+        }
         ui.post(refresher)
     }
 

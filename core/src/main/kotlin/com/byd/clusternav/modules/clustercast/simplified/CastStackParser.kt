@@ -159,12 +159,29 @@ object CastStackParser {
     }
 
     /**
+     * The ONE ClusterNav activity allowed to remain on the cluster: the black projection
+     * placeholder ([com.byd.clusternav.modules.clustercast.ClusterBlackActivity]). It is launched on
+     * display 1 to keep the OEM projection alive, so cleanup must never evict it.
+     *
+     * Matched by simple class-name substring so it is independent of the leading-dot vs
+     * fully-qualified component spelling that `am stack list` may print.
+     */
+    const val CLUSTER_PLACEHOLDER_ACTIVITY = "ClusterBlackActivity"
+
+    /**
      * Find all non-system tasks on [displayId] that should be cleaned (moved back to display 0).
-     * Excludes: own package, launcher, system UI, system framework, CarPlay (auto-relaunches).
+     * Excludes: launcher, system UI, system framework, CarPlay (auto-relaunches), and the
+     * ClusterNav projection PLACEHOLDER ([CLUSTER_PLACEHOLDER_ACTIVITY]).
+     *
+     * Bug (b) fix (owner 2026-08-12): the previous version skipped the WHOLE `com.byd.clusternav`
+     * package, so a ClusterNav non-placeholder activity that got stuck on the cluster (observed:
+     * `MainActivity` surfacing on display 1 after a CarPlay cast→return→cast cycle) was NEVER
+     * evicted — it stayed "forever until manually cleaned". We now keep ONLY the black placeholder
+     * and evict every other ClusterNav activity (MainActivity, ClusterNavActivity, …) so the cluster
+     * can return to the cast app or native gauges.
      */
     fun tasksToClean(amOutput: String, displayId: Int): List<ParsedTask> {
-        val skipPrefixes = setOf(
-            "com.byd.clusternav",
+        val skipExactPkgs = setOf(
             "com.android.launcher3",
             "com.android.systemui",
             "com.byd.carplay.ui",
@@ -172,8 +189,10 @@ object CastStackParser {
         return parseTasks(amOutput).filter { task ->
             task.displayId == displayId &&
                 !task.pkg.startsWith("com.android.") &&
-                task.pkg !in skipPrefixes &&
-                skipPrefixes.none { task.pkg == it }
+                task.pkg !in skipExactPkgs &&
+                // Keep ONLY the black placeholder; every other ClusterNav activity on the cluster is
+                // a leak and must be evicted (bug b). Non-ClusterNav apps are unaffected.
+                !task.component.contains(CLUSTER_PLACEHOLDER_ACTIVITY)
         }
     }
 

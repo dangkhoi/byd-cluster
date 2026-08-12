@@ -34,6 +34,19 @@ object Prefs {
         else -> SpeedLimitSource.VIETMAP
     }
 
+    // Kiểu hiển thị dẫn đường trên CỤM (nav-only mode). Hai giá trị:
+    //   CENTER_ETA ("center_eta", MẶC ĐỊNH) — overlay "simple navigation" ở giữa cụm kèm ETA sống, bật bằng op 39.
+    //   SMALL_TOP  ("small_top")            — chỉ để broadcast mặc định vẽ (KHÔNG assert op 39). Xem
+    //                                          ClusterNavLaneWidget: opcode cho biến thể "nhỏ/ở trên" chưa
+    //                                          dò được trên xe nên tạm để broadcast tự lo (provisional).
+    const val NAV_MODE_CENTER_ETA = "center_eta"
+    const val NAV_MODE_SMALL_TOP = "small_top"
+    private const val K_NAV_CLUSTER_MODE = "nav_cluster_mode"
+    fun navClusterMode(ctx: Context): String =
+        sp(ctx).getString(K_NAV_CLUSTER_MODE, NAV_MODE_CENTER_ETA) ?: NAV_MODE_CENTER_ETA
+    fun setNavClusterMode(ctx: Context, mode: String) =
+        sp(ctx).edit().putString(K_NAV_CLUSTER_MODE, mode).apply()
+
     fun marquee(ctx: Context): Boolean = sp(ctx).getBoolean(K_MARQUEE, true)   // cuộn tên đường dài
     fun setMarquee(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_MARQUEE, v).apply()
 

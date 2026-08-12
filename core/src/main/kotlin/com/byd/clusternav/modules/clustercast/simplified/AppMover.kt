@@ -219,8 +219,10 @@ class AppMover(
         }
     }
 
-    /** Parse the physical or override display size for `am task resize` bounds. */
-    private fun queryDisplaySize(displayId: Int): Pair<Int, Int>? {
+    /** Parse the physical or override display size for `am task resize` bounds.
+     *  Internal so [SimpleCastCoordinator.applySplitRatioLive] can reuse the same query instead of
+     *  opening a second display-size probe path. */
+    internal fun queryDisplaySize(displayId: Int): Pair<Int, Int>? {
         val result = shell.execute("wm size -d $displayId")
         if (!result.success) return null
         // Output: "Physical size: 1920x720" or "Override size: 1920x720\nPhysical size: 1920x720"

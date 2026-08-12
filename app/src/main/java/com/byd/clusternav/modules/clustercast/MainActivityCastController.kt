@@ -36,6 +36,7 @@ internal class MainActivityCastController(private val activity: Activity) {
 
     private lateinit var autostart: CastAutostart
     private lateinit var geometryEditor: CastGeometryEditor
+    private lateinit var splitRatioButtons: CastSplitRatioButtons
 
     /** Named state listener for cleanup. */
     private val stateListener: (SimpleCastState) -> Unit = { state ->
@@ -102,6 +103,11 @@ internal class MainActivityCastController(private val activity: Activity) {
         autostart = CastAutostart(activity, coordinator)
         autostart.setup()
 
+        // Split-ratio visual buttons (Feature 2) — replaces the old spinner_split_ratio; wires to the
+        // LIVE simplified prefs via coordinator.applySplitRatioLive (persist + in-place re-resize).
+        splitRatioButtons = CastSplitRatioButtons(activity, coordinator)
+        splitRatioButtons.bind()
+
         geometryEditor = CastGeometryEditor(activity, coordinator)
 
         // Master Cast enable switch — reveals/hides the Cast body and drives projection + bubble.
@@ -125,6 +131,7 @@ internal class MainActivityCastController(private val activity: Activity) {
         // Remove state listener
         // (no coordinator listener registered directly here; autostart handles its own)
         autostart.destroy()
+        if (::splitRatioButtons.isInitialized) splitRatioButtons.destroy()
         // Projection ownership (R10): when autostart is enabled, FloatingBubbleService owns the
         // projection (opened on boot, kept alive so the auto-cast survives closing this Home screen).
         // Only tear down here when autostart is OFF — the classic Activity-scoped projection.

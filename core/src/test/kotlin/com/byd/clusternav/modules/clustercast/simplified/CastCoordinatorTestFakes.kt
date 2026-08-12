@@ -80,6 +80,11 @@ class FakeShell : SimpleCastShell {
             sb.appendLine("  taskId=99: com.byd.clusternav/.modules.clustercast.ClusterBlackActivity visible=true")
             var tid = 100
             for (pkg in allOnD1) {
+                // The ClusterNav projection placeholder is already emitted above as taskId=99
+                // (ClusterBlackActivity). Launching it does NOT create a second MainActivity task on
+                // the cluster, so don't fabricate one — that stray would (correctly) be evicted by
+                // CastStackParser.tasksToClean and skew close/clean sequences (bug-b fix, 2026-08-12).
+                if (pkg == "com.byd.clusternav") continue
                 sb.appendLine("  taskId=${tid++}: $pkg/.MainActivity visible=true")
             }
         }
