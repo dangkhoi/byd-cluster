@@ -107,4 +107,38 @@ class BubbleGesturePlannerTest {
     fun `Cau hinh maps to no slot — it opens the app instead of casting`() {
         assertNull(BubbleGesturePlanner.slotFor(BubbleMenuAction.OPEN_CONFIG))
     }
+
+    // ─── 4. Submenu slot TOGGLE: return-if-occupied, else cast (owner 2026-08-12) ──
+
+    @Test
+    fun `slot outcome RETURNs an occupied side and CASTs an empty side`() {
+        val leftOnly = SimpleCastState.CastingSplit(
+            left = SlotState("com.left", DisplayConfig.NORMAL_DEFAULT), right = null,
+        )
+        // Left is cast → pressing Trái returns it; right is empty → pressing Phải casts into it.
+        assertEquals(BubbleGesturePlanner.BubbleSlotOutcome.RETURN, BubbleGesturePlanner.slotOutcome(leftOnly, ClusterSlotSide.LEFT))
+        assertEquals(BubbleGesturePlanner.BubbleSlotOutcome.CAST, BubbleGesturePlanner.slotOutcome(leftOnly, ClusterSlotSide.RIGHT))
+
+        val both = SimpleCastState.CastingSplit(
+            left = SlotState("com.left", DisplayConfig.NORMAL_DEFAULT),
+            right = SlotState("com.right", DisplayConfig.NORMAL_DEFAULT),
+        )
+        assertEquals(BubbleGesturePlanner.BubbleSlotOutcome.RETURN, BubbleGesturePlanner.slotOutcome(both, ClusterSlotSide.LEFT))
+        assertEquals(BubbleGesturePlanner.BubbleSlotOutcome.RETURN, BubbleGesturePlanner.slotOutcome(both, ClusterSlotSide.RIGHT))
+    }
+
+    @Test
+    fun `slot outcome CASTs on any non-split state (idle, full, transient) for both sides`() {
+        listOf(
+            SimpleCastState.Idle,
+            SimpleCastState.CastingFull("com.a", AppType.NORMAL, DisplayConfig.NORMAL_DEFAULT),
+            SimpleCastState.Off,
+            SimpleCastState.Opening,
+            SimpleCastState.Stopping,
+            SimpleCastState.Error("x"),
+        ).forEach { state ->
+            assertEquals(BubbleGesturePlanner.BubbleSlotOutcome.CAST, BubbleGesturePlanner.slotOutcome(state, ClusterSlotSide.LEFT), "$state LEFT")
+            assertEquals(BubbleGesturePlanner.BubbleSlotOutcome.CAST, BubbleGesturePlanner.slotOutcome(state, ClusterSlotSide.RIGHT), "$state RIGHT")
+        }
+    }
 }

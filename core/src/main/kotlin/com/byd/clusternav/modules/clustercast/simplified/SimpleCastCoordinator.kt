@@ -192,9 +192,16 @@ class SimpleCastCoordinator(
             returnApp(afterWait.targetPkg, afterWait.appType)
         }
 
-        // If app is ALREADY on display 1, just adopt state — don't re-cast (prevents infinite loop)
+        // If app is ALREADY on display 1, just adopt state — don't re-cast (prevents infinite loop).
+        // BUT still restore the saved size + DPI: previously this branch used a fresh NORMAL_DEFAULT
+        // config and returned BEFORE applySavedProfile, so a resized app lost its size on every
+        // re-cast where it happened to already be on the cluster (owner bug #1, 2026-08-12).
         if (geometry.isAppOnDisplay(intent.pkg, displayId)) {
-            setState(SimpleCastState.CastingFull(intent.pkg, intent.appType, DisplayConfig.forAppType(intent.appType)))
+            val adoptConfig = configurator.resolveConfig(intent.pkg, intent.appType, prefs)
+            setState(SimpleCastState.CastingFull(intent.pkg, intent.appType, adoptConfig))
+            if (intent.appType == AppType.NORMAL) {
+                geometry.applySavedProfile(intent.pkg, CastProfile.FULL)
+            }
             return
         }
 

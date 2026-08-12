@@ -36,6 +36,7 @@ class MainActivity : Activity() {
     private lateinit var laneStatus: TextView
     private lateinit var hudStatus: TextView
     private val cast = MainActivityCastController(this)
+    private val navClusterStatus = com.byd.clusternav.modules.clustercast.NavClusterOp39Status(this)
     private val speedSign by lazy { NavigationSpeedSignOwner.get(applicationContext) }
 
     private val ui = Handler(Looper.getMainLooper())
@@ -97,19 +98,14 @@ class MainActivity : Activity() {
         NavRepository.setOutputEnabled(this, NavigationOutputTarget.HUD, false)
         speedSign.onOutputEnabled(SpeedSignOutput.HUD, false)
 
-        // MỘT công tắc cho một mục đích: "Hỗ trợ cự ly" bật cả hai nửa của cùng cơ chế — nội suy trừ dần cự
-        // ly theo tốc độ xe giữa hai lần notification, và bộ đọc màn Maps kéo mốc về đúng số thật.
-        //
-        // Không tách hai checkbox nữa: tắt nội suy thì bộ đọc màn vẫn chạy nhưng VÔ NGHĨA (`refine()` bỏ qua
-        // khi chưa có mốc, mà mốc chỉ do nội suy đặt). Hai công tắc độc lập cho một cơ chế là cách chắc chắn
-        // để người dùng bật một nửa rồi tưởng đã bật cả.
-        //
-        // Bộ đọc màn còn cần quyền trợ năng do HỆ THỐNG cấp. Bật công tắc mà chưa cấp thì nó im lặng không
-        // làm gì, nên đưa người dùng sang đúng trang đó — giống cách nút nổi xử lý quyền overlay.
-        // Distance assist removed — firmware handles count-down natively; app interpolation causes jumpy numbers.
-        // Force-disable any previously saved preference.
-        Prefs.setInterpolate(this, false)
-        Prefs.setAccBooster(this, false)
+        // ★ 2026-08-12 (owner "1B"): BẬT lại "tự bù theo tốc độ" cho mượt. MỘT cơ chế 2 nửa:
+        //   (1) nội suy trừ dần cự ly theo TỐC ĐỘ XE thật giữa 2 notification (TurnDistanceInterpolator + SpeedProvider),
+        //   (2) bộ đọc màn Maps (accessibility) kéo mốc về số thật (refine()).
+        // Noti GMaps thưa → gửi RAW làm cụm "trễ khi tới ngã rẽ/điểm đến"; nội suy lấp khoảng giữa cho mượt.
+        // Ép BẬT ở đây để migrate cả bản cài cũ từng bị ép TẮT (2026-07-13). Không có nút UI (giữ UI gọn);
+        // muốn TẮT nếu overlay cụm tự animate rồi đánh nhau (verify trên xe) → đổi 2 dòng dưới thành false.
+        Prefs.setInterpolate(this, true)
+        Prefs.setAccBooster(this, true)
 
         // Navigation source selector (turn-by-turn direction)
         val navSourceSpinner = findViewById<android.widget.Spinner>(R.id.spinner_nav_source)
@@ -143,10 +139,9 @@ class MainActivity : Activity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        // Kiểu hiển thị nav trên cụm — 2 nút phân đoạn (Nhỏ/ở trên · Giữa + ETA). File riêng để giữ
-        // MainActivity/CastController dưới ngưỡng LOC; nó chỉ ghi Prefs.navClusterMode mà
-        // ClusterNavLaneWidget đọc để quyết định assert op 39 hay không.
-        com.byd.clusternav.modules.clustercast.NavClusterModeButtons(this).bind()
+        // Nav trên cụm chỉ còn op 39 "Giữa + ETA" (owner chốt 2026-08-12) — bỏ nút chọn mode + nút test.
+        // Chỉ còn dòng trạng thái op39 (ASSERTED / Cast đang bật / chưa gửi được) để chẩn đoán.
+        navClusterStatus.bind()
 
         findViewById<Button>(R.id.btn_reconnect_nav).setOnClickListener {
             if (notificationAccessGranted()) {
@@ -241,6 +236,7 @@ class MainActivity : Activity() {
         hudStatus.text = "HUD: ${navigation.hud.status.label()}"
         findViewById<Button>(R.id.btn_reconnect_nav).visibility =
             if (permission != NavigationPermission.GRANTED) View.VISIBLE else View.GONE
+        navClusterStatus.refresh()
     }
 
     private fun View.tint(color: Int) {

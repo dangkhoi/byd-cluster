@@ -108,11 +108,13 @@ object ClusterBroadcaster {
         )
     }
 
-    /** Dựng frame với tên đường marquee (theo scrollTick) rồi gửi. Dùng chung cho emit + nhịp tim. */
+    /** Dựng frame với tên đường (marquee trượt theo scrollTick, hoặc TĨNH = tên đầy đủ) rồi gửi. Dùng chung cho emit + nhịp tim. */
     private fun sendFrame(ctx: Context, s: NavState, byd: Boolean) {
+        // marquee OFF (mặc định 2026-08-12): gửi tên đường ĐẦY ĐỦ đã clean — KHÔNG viết tắt, KHÔNG cắt phía app —
+        // để firmware cụm tự cắt theo ô của nó; owner xem trên xe ô hiện được bao nhiêu ký tự rồi mới quyết. marquee ON: cửa sổ trượt.
         val road = if (Prefs.marquee(ctx))
             NavFormat.roadWindow(lastCleanRoad, scrollTick, NavFormat.ROAD_MAX_UNITS)
-        else null
+        else lastCleanRoad
         // PROJECT nội suy: cự ly trừ dần giữa 2 noti (hạ lag). Truyền tốc-độ-HAL THÔ vào project() — interpolator
         // tự ưu tiên closingRate (tự khử over-read) và chỉ dùng speed×SPEEDO_CORRECTION khi chưa có closingRate.
         // speed vẫn cần để clamp closingRate ([0, 1.2×v+3]) chống delta-noti lỗi. Tắt nội suy -> parse thô.

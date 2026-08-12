@@ -95,11 +95,28 @@ object UpdateChecker {
     /**
      * Cài APK qua dadb loopback. Trả chuỗi kết quả để hiển thị.
      * `-r` = reinstall giữ dữ liệu; cùng chữ ký nên không cần gỡ trước.
+     *
+     * Relaunch: một `-r` THÀNH CÔNG kill process này ngay → không code nào sau đó chạy. Nên ta HẸN GIỜ
+     * mở lại Home TRƯỚC khi cài (lúc app còn foreground); nếu cài thất bại thì huỷ hẹn. Xem [UpdateRelaunch].
+     *
+     * Kết quả THẬT: [LocalDeviceShell.installApk] trả `false` khi dadb báo lỗi (vd khác chữ ký:
+     * debug↔release, hoặc downgrade) — trước đây hàm này BỎ QUA giá trị đó và luôn báo "đã cài", nên
+     * một lần cài fail vẫn hiện "sẽ tự khởi động lại" rồi đứng im. Giờ báo đúng thành/bại.
      */
-    fun install(ctx: Context, apk: File): String = runCatching {
-        LocalDeviceShell.installApk(AdbKeys.ensure(ctx.applicationContext), apk, "-r")
-        Lang.t("đã cài — app sẽ tự khởi động lại", "installed — the app will restart")
-    }.getOrElse { Lang.t("cài thất bại: ${it.message}\nAPK đã tải ở: ${apk.absolutePath}", "install failed: ${it.message}\nAPK downloaded at: ${apk.absolutePath}") }
+    fun install(ctx: Context, apk: File): String {
+        val app = ctx.applicationContext
+        UpdateRelaunch.schedule(app) // arm BEFORE install: a successful -r kills us mid-call.
+        val ok = LocalDeviceShell.installApk(AdbKeys.ensure(app), apk, "-r")
+        return if (ok) {
+            Lang.t("đã cài — đang mở lại…", "installed — reopening…")
+        } else {
+            UpdateRelaunch.cancel(app) // nothing was replaced → don't relaunch.
+            Lang.t(
+                "cài thất bại (khác chữ ký/phiên bản?). APK đã tải ở: ${apk.absolutePath}",
+                "install failed (signature/version mismatch?). APK saved at: ${apk.absolutePath}",
+            )
+        }
+    }
 
     // ── nội bộ ──
 

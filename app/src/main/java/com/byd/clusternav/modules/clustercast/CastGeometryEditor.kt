@@ -30,8 +30,18 @@ internal class CastGeometryEditor(
         activity.findViewById(R.id.cast_geometry_container)
     }
 
-    private var densityIndex = 0
+    // Label index into [densityCycle]; re-initialised per editor build from the actual/saved density
+    // (see [densityIndexFor]) so "DPI: N" matches reality. Owner 2026-08-12: it used to be pinned to
+    // index 0 ("320") even when the applied DPI was the 240 default → confusing label.
+    private var densityIndex = DEFAULT_DENSITY_INDEX
     private val densityCycle = intArrayOf(320, 240, 160)
+
+    /** Cycle index for a persisted density string ("240"/"reset"/null); unknown/reset → 240 default. */
+    private fun densityIndexFor(density: String?): Int {
+        val dpi = density?.toIntOrNull() ?: return DEFAULT_DENSITY_INDEX
+        val idx = densityCycle.indexOf(dpi)
+        return if (idx >= 0) idx else DEFAULT_DENSITY_INDEX
+    }
 
     /**
      * Show or hide the geometry editor based on current state.
@@ -111,6 +121,7 @@ internal class CastGeometryEditor(
             setPadding(0, (8 * dp).toInt(), 0, 0)
         }
 
+        densityIndex = densityIndexFor(displayConfig.density)
         val btnDpi = Button(activity).apply {
             text = "DPI: ${densityCycle[densityIndex]}"
             textSize = 13f
@@ -183,6 +194,13 @@ internal class CastGeometryEditor(
             outer.addView(buildSlotEditor(ClusterSlotSide.RIGHT, slot, split, clusterWidth, clusterWidth, clusterHeight, leftPercent, dp))
         }
 
+        // Reflect the saved split DPI (per-ratio profile) on the label; default 240 if none set.
+        val savedSplitDensity = state.left?.let {
+            coordinator.prefs.displayConfigFor(it.pkg, CastProfile.of(ClusterSlotSide.LEFT, leftPercent))?.density
+        } ?: state.right?.let {
+            coordinator.prefs.displayConfigFor(it.pkg, CastProfile.of(ClusterSlotSide.RIGHT, leftPercent))?.density
+        }
+        densityIndex = densityIndexFor(savedSplitDensity)
         outer.addView(buildSplitDpiRow(dp))
         geometryContainer.addView(outer)
     }
@@ -263,5 +281,10 @@ internal class CastGeometryEditor(
             setPadding((8 * dp).toInt(), 0, 0, 0)
         })
         return row
+    }
+
+    companion object {
+        /** densityCycle index of the 240 default (NORMAL_DEFAULT.density). densityCycle[1] == 240. */
+        private const val DEFAULT_DENSITY_INDEX = 1
     }
 }

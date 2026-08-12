@@ -16,9 +16,10 @@ import org.junit.jupiter.api.Test
  * the spec.
  *
  * Covers:
- *  • Item 1 — nav-display 2-button selector: both layouts carry the buttons, MainActivity binds the
- *    controller, Prefs declares the two modes and defaults to centre+ETA, and the NAV track drives the
- *    op-39 gate (nav-only + centre mode only) via the notification listener.
+ *  • Item 1 — nav-on-cluster is op39-only (owner 2026-08-12): both layouts dropped the mode buttons +
+ *    the self-test button (keeping the op39 status line), MainActivity no longer binds the selector,
+ *    Prefs no longer declares a nav-mode, the NAV track drives the op-39 gate (nav-only, Cast off), and
+ *    the speed self-compensation (interpolation + screen-read refine) is enabled by default (point 1B).
  *  • Item 2 — 9 visual split-ratio buttons replacing the old spinner: both layouts, controller
  *    bind/teardown, the removed spinner population, and the live coordinator path the buttons call.
  *  • Item 4 — bubble immediate-show on onResume, gated on castEnabled && canDrawOverlays.
@@ -63,49 +64,66 @@ class NavCastUiWiringContractTest {
     private val layoutNarrow by lazy { read(app("src/main/res/layout/activity_main.xml")) }
     private val layoutWide by lazy { read(app("src/main/res/layout-w960dp/activity_main.xml")) }
 
-    // ── Item 1: nav-display 2-button selector ────────────────────────────────
+    // ── Item 1: nav-on-cluster is op39-only (owner 2026-08-12) + speed self-compensation ON ──
     @Test
-    fun `both layouts carry the two nav-mode buttons`() {
+    fun `both layouts dropped the mode buttons and the self-test button but keep the op39 status line`() {
         for ((name, xml) in listOf("narrow" to layoutNarrow, "wide" to layoutWide)) {
-            assertTrue(xml.contains("@+id/btn_nav_mode_small"), "$name: small/top button present")
-            assertTrue(xml.contains("@+id/btn_nav_mode_center"), "$name: centre+ETA button present")
+            assertTrue(!xml.contains("btn_nav_mode_small"), "$name: small/top mode button removed")
+            assertTrue(!xml.contains("btn_nav_mode_center"), "$name: centre+ETA mode button removed")
+            assertTrue(!xml.contains("btn_nav_cluster_test"), "$name: 'Test cụm ngay' button removed")
+            assertTrue(xml.contains("@+id/txt_cluster_op39_status"), "$name: op39 status line kept")
         }
     }
 
     @Test
-    fun `main activity binds the nav-mode buttons`() {
+    fun `main activity no longer binds the mode selector but keeps the op39 status line`() {
         assertTrue(
-            mainActivity.contains("NavClusterModeButtons(this).bind()"),
-            "MainActivity.onCreate must bind NavClusterModeButtons so the selector is reachable",
+            !mainActivity.contains("NavClusterModeButtons"),
+            "the deleted mode-selector must not be referenced in MainActivity",
+        )
+        assertTrue(
+            mainActivity.contains("navClusterStatus.bind()"),
+            "the op39 status line stays bound",
         )
     }
 
     @Test
-    fun `prefs declares the two nav modes and defaults to centre+ETA`() {
-        assertTrue(prefs.contains("NAV_MODE_CENTER_ETA = \"center_eta\""), "centre mode constant present")
-        assertTrue(prefs.contains("NAV_MODE_SMALL_TOP = \"small_top\""), "small/top mode constant present")
-        assertTrue(
-            prefs.contains("getString(K_NAV_CLUSTER_MODE, NAV_MODE_CENTER_ETA)"),
-            "navClusterMode default is centre+ETA",
-        )
+    fun `prefs no longer declares a nav-cluster mode (op39 is the only mode)`() {
+        assertTrue(!prefs.contains("NAV_MODE_SMALL_TOP"), "small/top mode constant removed")
+        assertTrue(!prefs.contains("NAV_MODE_CENTER_ETA"), "centre-mode constant removed")
+        assertTrue(!prefs.contains("navClusterMode"), "navClusterMode getter removed")
+        assertTrue(!prefs.contains("setNavClusterMode"), "setNavClusterMode setter removed")
     }
 
     @Test
-    fun `nav track drives the op39 gate only in nav-only centre mode`() {
+    fun `nav track drives the op39 gate in nav-only mode (cast off)`() {
         // The listener (NAV track) tells the widget when nav starts/stops.
         assertTrue(listener.contains("ClusterNavLaneWidget.onNavActive("), "listener asserts the widget on nav active")
         assertTrue(listener.contains("ClusterNavLaneWidget.onNavIdle()"), "listener clears the widget on nav idle")
-        // The pure gate withholds op39 unless nav-only (cast OFF) AND centre mode.
+        // The pure 2-arg gate withholds op39 only while Cast is ON (Cast owns the cluster); there is no
+        // display-mode gate anymore. decide() is the single source of truth; shouldAssert() is the
+        // ==ASSERT predicate for back-compat callers/tests.
         assertTrue(
-            laneWidget.contains("navActive && !castEnabled && centerMode"),
-            "shouldAssert gates on nav active + cast OFF + centre mode",
+            laneWidget.contains("castEnabled -> Decision.GATED_CAST") &&
+                laneWidget.contains("decide(navActive, castEnabled) == Decision.ASSERT"),
+            "decide() gates on Cast only; shouldAssert() == (decide == ASSERT)",
         )
+        assertTrue(!laneWidget.contains("GATED_SMALL"), "no small/top gate remains")
+        assertTrue(!laneWidget.contains("navClusterMode"), "gate no longer reads a nav-mode pref")
+        assertTrue(!laneWidget.contains("fun selfTest("), "the self-test entry point is removed")
         // op39 is the OEM 'simple navigation' opcode on the AutoContainer 1000-channel.
         assertTrue(laneWidget.contains("OP_SIMPLE_NAV = 39"), "opcode is 39")
         assertTrue(laneWidget.contains("AutoContainer 2 i32 1000 i32"), "asserted via the 1000-channel service call")
-        // Two-track boundary: the gate reads the persisted castEnabled config + the nav-mode pref.
         assertTrue(laneWidget.contains("castEnabled()"), "gate reads the persisted cast-enabled flag")
-        assertTrue(laneWidget.contains("NAV_MODE_CENTER_ETA"), "gate reads the nav-mode pref")
+    }
+
+    @Test
+    fun `speed self-compensation is enabled by default (point 1B)`() {
+        // Sparse GMaps notifications froze the cluster countdown when sending RAW distance; re-enabling
+        // the speed-based interpolation + screen-read refine fills the gaps between notifications.
+        assertTrue(prefs.contains("getBoolean(\"interpolate\", true)"), "interpolate defaults ON")
+        assertTrue(mainActivity.contains("Prefs.setInterpolate(this, true)"), "MainActivity enables interpolation")
+        assertTrue(mainActivity.contains("Prefs.setAccBooster(this, true)"), "MainActivity enables the screen-read booster")
     }
 
     // ── Item 2: 9 split-ratio buttons replace the spinner ────────────────────
