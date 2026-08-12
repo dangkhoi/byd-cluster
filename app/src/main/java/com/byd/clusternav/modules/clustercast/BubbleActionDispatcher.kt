@@ -20,8 +20,8 @@ import com.byd.clusternav.modules.clustercast.simplified.SimpleCastRuntime
  * Gestures:
  *  - [onTap] — TOGGLE full: Idle → cast the foreground FULL (with the launcher guard); casting
  *    (full or split) → return everything (slot-less `Stop`).
- *  - [onSubmenuAction] — long-press submenu: Trái/Phải cast the foreground into a slot, Cấu hình
- *    opens [com.byd.clusternav.MainActivity].
+ *  - [onSubmenuAction] — long-press submenu: Trái/Phải TOGGLE that half (return it if it is already
+ *    cast, else cast the foreground into it), Cấu hình opens [com.byd.clusternav.MainActivity].
  *
  * The caller ([FloatingBubbleService]) invokes the cast paths on the tap executor (token-guarded,
  * off the main thread) because [detectForeground] performs shell I/O.
@@ -66,12 +66,26 @@ internal class BubbleActionDispatcher(
         if (slot != null) onCastSlot(slot) else openConfig()
     }
 
-    /** Cast the current foreground app into [side] (with the Wave-1 launcher guard). */
+    /**
+     * A long-press submenu LEFT/RIGHT choice TOGGLES that half (owner 2026-08-12): if that side is
+     * already cast, RETURN it; otherwise CAST the current foreground app into it (reusing the
+     * launcher guard). Mirrors the in-app zone buttons. The occupancy decision is the pure
+     * [BubbleGesturePlanner.slotOutcome] contract. Runs on the tap executor.
+     */
     fun onCastSlot(side: ClusterSlotSide) {
         val coordinator = SimpleCastRuntime.coordinator(context)
-        val foreground = detectForeground(coordinator) ?: return
-        coordinator.dispatch(SimpleCastIntent.CastSlot(foreground, side))
-        handler.post { toast(castingToast(foreground)) }
+        when (BubbleGesturePlanner.slotOutcome(coordinator.state, side)) {
+            BubbleGesturePlanner.BubbleSlotOutcome.RETURN -> {
+                coordinator.dispatch(SimpleCastIntent.Stop(side))
+                handler.post { toast(Lang.t("Đang trả app về…", "Returning app…")) }
+            }
+            BubbleGesturePlanner.BubbleSlotOutcome.CAST -> {
+                // detectForeground() posts the launcher-guard toast + returns null when not castable.
+                val foreground = detectForeground(coordinator) ?: return
+                coordinator.dispatch(SimpleCastIntent.CastSlot(foreground, side))
+                handler.post { toast(castingToast(foreground)) }
+            }
+        }
     }
 
     /**

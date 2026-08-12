@@ -1,7 +1,7 @@
 # ClusterNav
 
 > [!CAUTION]
-> **CURRENT STATUS: OFF-CAR SOURCE `1.05` (versionCode 105).** The complete JVM suite is green off-car and both the debug and release APKs build cleanly, with all test/instrument-write surfaces (the T10 probe harness) confined to the `vehicleTest` build type and absent from the release APK. The prior `1.04` vehicle-test candidate recorded in [`docs/_handoff/vehicle-candidate.json`](docs/_handoff/vehicle-candidate.json) was **invalidated** by the WARN-1 hardening — its SHA-256 is now blocklisted in the on-car scripts, so `require_candidate` refuses it; a fresh `1.05` candidate must be rebuilt from hardened source through the authorized exact-source `collectAuthorizedApk` pipeline (which regenerates the manifest). **Stage 11 on-car execution has not started.** No APK in this repository is a supported public release until a freshly built exact candidate passes Stage 11 on-car testing and owner sign-off.
+> **CURRENT STATUS: `1.11` (versionCode 111) — OTA self-test build.** The complete JVM suite is green off-car and the release APK builds cleanly and is signed, with all test/instrument-write surfaces (the T10 probe harness) confined to the `vehicleTest` build type and **absent from the release APK** (verified with `aapt2` on this build). From `1.11` the owner publishes each plain `apk/ClusterNav-<ver>-release.apk` to `main` so the app self-updates **over-the-air (OTA)** onto the car for testing — no ADB/laptop needed. **This is the owner's own iterative on-car test channel, not a supported public release, and is separate from the formal exact-source `collectAuthorizedApk` / Stage-11 candidate process (which remains its own distinct gate).** It is a hobby experiment with no driving-safety, compatibility, reversibility, or production-readiness claim — install at your own risk. The archived `1.04` vehicle-test candidate stays **blocklisted** in the on-car scripts (it exported the T10 `TEST_ADAS_*` / `TEST_SPEED_LIMIT` surface); the current release exports none.
 
 ClusterNav is a personal hobby experiment by **Đăng Khôi · `dangkhoi`** for exploring navigation and cluster projection on BYD DiLink hardware. It is not affiliated with BYD and makes no driving-safety, compatibility, reversibility, or production-readiness claim.
 
@@ -16,9 +16,9 @@ The tracks may share one APK as packaging, but they must not share runtime contr
 
 ## Downloads and installation
 
-**Current version: 1.05 (versionCode 105).** Build the hardened release from source with `./gradlew :app:assembleRelease`, or produce the vehicle candidate through the authorized exact-source `collectAuthorizedApk` pipeline (see the build context below).
+**Current version: 1.11 (versionCode 111).** The app self-updates **over-the-air**: it polls this repo's `apk/` folder on `main` for a newer `ClusterNav-<ver>-release.apk` and installs it via the on-device dadb loopback (`-r`, same signing key) — no ADB/laptop. To build the same release from source: `./gradlew :app:assembleRelease`. The formal exact-source vehicle candidate is a separate flow (the authorized `collectAuthorizedApk` pipeline; see the build context below).
 
-> ⚠️ The archived `apk/ClusterNav-1.04-v104-527589f2d16a-release.apk` predates the WARN-1 hardening and still exports the T10 `TEST_ADAS_*` / `TEST_SPEED_LIMIT` ADAS/instrument-write surface — **do not install it** (its SHA-256 is now blocklisted in the on-car install guard, which refuses it). A safe candidate must be rebuilt from the current hardened `1.05` source (the release built from `main` today no longer exports any test surface).
+> ⚠️ The archived `apk/ClusterNav-1.04-v104-527589f2d16a-release.apk` predates the WARN-1 hardening and still exports the T10 `TEST_ADAS_*` / `TEST_SPEED_LIMIT` ADAS/instrument-write surface — **do not install it** (its SHA-256 is now blocklisted in the on-car install guard, which refuses it). The current `1.11` release built from `main` exports no test surface.
 
 Features:
 - **Cluster Cast** — projection-first: open app → cluster ready instantly; tap floating button to cast foreground app to cluster; tap again to return.

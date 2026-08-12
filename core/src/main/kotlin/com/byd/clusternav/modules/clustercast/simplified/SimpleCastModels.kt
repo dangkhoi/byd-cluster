@@ -38,7 +38,7 @@ data class DisplayConfig(
     companion object {
         val CARPLAY = DisplayConfig(wmSize = "1422x800", overscan = "10,-120,10,50")
         val ANDROID_AUTO = DisplayConfig(wmSize = "1920x1080", overscan = "0,0,0,0")
-        val NORMAL_DEFAULT = DisplayConfig(wmSize = "1920x720", overscan = "0,0,0,0", bounds = CastBounds(0, 0, 1920, 720))
+        val NORMAL_DEFAULT = DisplayConfig(wmSize = "1920x720", overscan = "0,0,0,0", density = "240", bounds = CastBounds(0, 0, 1920, 720))
 
         fun forAppType(type: AppType): DisplayConfig = when (type) {
             AppType.CARPLAY -> CARPLAY

@@ -75,4 +75,28 @@ object BubbleGesturePlanner {
         BubbleMenuAction.CAST_RIGHT -> ClusterSlotSide.RIGHT
         BubbleMenuAction.OPEN_CONFIG -> null
     }
+
+    /** What a long-press submenu LEFT/RIGHT choice should do for the given [side]. */
+    enum class BubbleSlotOutcome {
+        /** That side is already cast (split) → return just that app to the main display. */
+        RETURN,
+
+        /** That side is free → cast the current foreground app into it. */
+        CAST,
+    }
+
+    /**
+     * A submenu slot choice TOGGLES that side (owner 2026-08-12): if the [side] is already occupied
+     * in a [SimpleCastState.CastingSplit], RETURN that app; otherwise CAST the current foreground app
+     * into it. This mirrors the in-app zone buttons (MainActivityCastController.setupZoneButtons) so
+     * the bubble and the Home card behave identically. Any non-split state (Idle/Full/transient) has
+     * no occupied slot, so it CASTs — including turning a full cast or idle cluster into a split.
+     */
+    fun slotOutcome(state: SimpleCastState, side: ClusterSlotSide): BubbleSlotOutcome {
+        val occupied = state is SimpleCastState.CastingSplit && when (side) {
+            ClusterSlotSide.LEFT -> state.left != null
+            ClusterSlotSide.RIGHT -> state.right != null
+        }
+        return if (occupied) BubbleSlotOutcome.RETURN else BubbleSlotOutcome.CAST
+    }
 }

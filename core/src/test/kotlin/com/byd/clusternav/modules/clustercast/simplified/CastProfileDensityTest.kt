@@ -192,6 +192,60 @@ class CastProfileDensityTest {
         assertNull(prefs.displayConfigFor("com.test.left", CastProfile.FULL))
     }
 
+    // ─── #1/#2 owner bugs (2026-08-12): default DPI 240, no-stamp-bounds, adopt-branch restore ──
+
+    @Test
+    fun `NORMAL default cluster DPI is 240 not native 360 (owner default)`() {
+        assertEquals("240", DisplayConfig.NORMAL_DEFAULT.density)
+    }
+
+    @Test
+    fun `split DPI-only change does not stamp full-cluster bounds onto an un-resized slot (#1 guard)`() {
+        prefs.setSplitRatioLeftPercent(20)
+        coordinator.openProjection()
+        awaitState<SimpleCastState.Idle>()
+        coordinator.dispatch(SimpleCastIntent.CastSlot("com.test.left", ClusterSlotSide.LEFT))
+        awaitTrue { (coordinator.state as? SimpleCastState.CastingSplit)?.left?.pkg == "com.test.left" }
+
+        coordinator.setDensitySplit(200)
+        awaitTrue { prefs.displayConfigFor("com.test.left", CastProfile.of(ClusterSlotSide.LEFT, 20))?.density == "200" }
+
+        val cfg = prefs.displayConfigFor("com.test.left", CastProfile.of(ClusterSlotSide.LEFT, 20))
+        assertEquals("200", cfg?.density)
+        assertNull(
+            cfg?.bounds,
+            "a DPI-only change must NOT stamp full-cluster bounds — that would resize the split slot to full on re-cast",
+        )
+    }
+
+    @Test
+    fun `re-casting an app already on the cluster restores its saved FULL size + DPI (#1 adopt-branch)`() {
+        coordinator.openProjection()
+        awaitState<SimpleCastState.Idle>()
+        // First cast lands the app on the cluster (am start --display 1 → present on display 1).
+        coordinator.dispatch(SimpleCastIntent.CastFull("com.test.app", AppType.NORMAL))
+        awaitTrue { (coordinator.state as? SimpleCastState.CastingFull)?.targetPkg == "com.test.app" }
+        // Return it — it is still present on display 1 (the adopt path). Save a resized FULL profile.
+        coordinator.dispatch(SimpleCastIntent.Stop())
+        awaitState<SimpleCastState.Idle>()
+        prefs.saveDisplayConfig(
+            "com.test.app", CastProfile.FULL,
+            DisplayConfig("1920x720", "0,0,0,0", "200", CastBounds(100, 50, 900, 600)),
+        )
+        // Re-cast: app already on display 1 → adopt branch. Must restore saved size + DPI (before the
+        // fix this branch used NORMAL_DEFAULT and returned BEFORE applySavedProfile → the size was lost).
+        coordinator.dispatch(SimpleCastIntent.CastFull("com.test.app", AppType.NORMAL))
+        awaitTrue {
+            (coordinator.state as? SimpleCastState.CastingFull)?.displayConfig?.bounds == CastBounds(100, 50, 900, 600)
+        }
+        val cfg = (coordinator.state as SimpleCastState.CastingFull).displayConfig
+        assertEquals(CastBounds(100, 50, 900, 600), cfg.bounds)
+        assertEquals("200", cfg.density)
+        // The saved bounds are actually re-applied on the cluster (only source of this exact resize).
+        // applySavedProfile runs on the executor right AFTER setState, so await the command landing.
+        awaitTrue { shell.history.any { it.startsWith("am task resize") && it.endsWith("100 50 900 600") } }
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private inline fun <reified T : SimpleCastState> awaitState(timeoutMs: Long = 2000) {

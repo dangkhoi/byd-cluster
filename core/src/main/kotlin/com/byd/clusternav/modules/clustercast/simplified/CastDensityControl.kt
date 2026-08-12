@@ -56,13 +56,18 @@ internal object CastDensityControl {
     }
 
     private fun saveForPkg(prefs: SimpleCastPrefs, pkg: String, dpi: Int?) {
-        val existing = prefs.displayConfigFor(pkg) ?: DisplayConfig.NORMAL_DEFAULT
+        // Seed bounds-less: a DPI-only change must never STAMP a size onto an app that was never
+        // resized (NORMAL_DEFAULT.bounds is full-cluster). Otherwise the next cast would resize it.
+        val existing = prefs.displayConfigFor(pkg) ?: DisplayConfig.NORMAL_DEFAULT.copy(bounds = null)
         prefs.saveDisplayConfig(pkg, existing.copy(density = dpi?.toString() ?: "reset"))
     }
 
     /** Persist [dpi] under the exact ([pkg], [profile]) geometry key — same key bounds use (R4/#5). */
     private fun saveForProfile(prefs: SimpleCastPrefs, pkg: String, profile: CastProfile, dpi: Int?) {
-        val existing = prefs.displayConfigFor(pkg, profile) ?: DisplayConfig.NORMAL_DEFAULT
+        // Seed bounds-less (see [saveForPkg]): a split slot whose DPI is changed before it is resized
+        // must NOT inherit NORMAL_DEFAULT's full-cluster bounds, or applySavedProfile would blow the
+        // slot up to the whole display on re-cast and destroy the split layout.
+        val existing = prefs.displayConfigFor(pkg, profile) ?: DisplayConfig.NORMAL_DEFAULT.copy(bounds = null)
         prefs.saveDisplayConfig(pkg, profile, existing.copy(density = dpi?.toString() ?: "reset"))
     }
 }

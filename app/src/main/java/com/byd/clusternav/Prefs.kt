@@ -34,30 +34,25 @@ object Prefs {
         else -> SpeedLimitSource.VIETMAP
     }
 
-    // Kiểu hiển thị dẫn đường trên CỤM (nav-only mode). Hai giá trị:
-    //   CENTER_ETA ("center_eta", MẶC ĐỊNH) — overlay "simple navigation" ở giữa cụm kèm ETA sống, bật bằng op 39.
-    //   SMALL_TOP  ("small_top")            — chỉ để broadcast mặc định vẽ (KHÔNG assert op 39). Xem
-    //                                          ClusterNavLaneWidget: opcode cho biến thể "nhỏ/ở trên" chưa
-    //                                          dò được trên xe nên tạm để broadcast tự lo (provisional).
-    const val NAV_MODE_CENTER_ETA = "center_eta"
-    const val NAV_MODE_SMALL_TOP = "small_top"
-    private const val K_NAV_CLUSTER_MODE = "nav_cluster_mode"
-    fun navClusterMode(ctx: Context): String =
-        sp(ctx).getString(K_NAV_CLUSTER_MODE, NAV_MODE_CENTER_ETA) ?: NAV_MODE_CENTER_ETA
-    fun setNavClusterMode(ctx: Context, mode: String) =
-        sp(ctx).edit().putString(K_NAV_CLUSTER_MODE, mode).apply()
+    // Nav-on-cluster: op 39 "simple navigation" (Giữa + ETA) là chế độ DUY NHẤT (owner chốt 2026-08-12).
+    // Bỏ hẳn biến thể "nhỏ/ở trên" (không dò được opcode trên xe) + nút chọn mode + nút test trên UI.
 
-    fun marquee(ctx: Context): Boolean = sp(ctx).getBoolean(K_MARQUEE, true)   // cuộn tên đường dài
+    // ★ 2026-08-12 (owner): MẶC ĐỊNH TẮT marquee — tên đường trên cụm/op39 hiển thị ĐỨNG IM (không chạy
+    // phải→trái). Tên dài được VIẾT TẮT (fitRoadName: "Nguyễn Hữu Cảnh"→"NHC") cho vừa ô ~7 ký tự thay vì
+    // cuộn cửa sổ theo scrollTick. Firmware cụm vốn hard-cut ~7 ký tự, không tự marquee → gửi tĩnh là đủ. Giữ toggle.
+    fun marquee(ctx: Context): Boolean = sp(ctx).getBoolean(K_MARQUEE, false)   // false = tên đường TĨNH (rút gọn)
     fun setMarquee(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_MARQUEE, v).apply()
-
-    // ★ 2026-07-13: MẶC ĐỊNH TẮT. RE DashCast/OpenBYD: HỌ KHÔNG nội suy — gửi cự ly RAW từ noti, để FIRMWARE cụm tự
-    // animate đếm-lùi. Nội suy app-side (baseline−traveled theo tốc độ mỗi 400ms) ĐÁNH NHAU với firmware → "số nhảy
 
     // Cluster-lane output is independently switchable while the shared Navigation session/HUD remain active.
     fun lane(ctx: Context): Boolean = sp(ctx).getBoolean("lane", true)
     fun setLane(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("lane", v).apply()
-    // tán loạn". Tắt = gửi raw → mượt như họ. Giữ toggle cho ai muốn thử lại.
-    fun interpolate(ctx: Context): Boolean = sp(ctx).getBoolean("interpolate", false)
+
+    // ★ 2026-08-12 (owner "1B"): MẶC ĐỊNH BẬT lại "tự bù theo tốc độ". Noti GMaps thưa → gửi RAW làm cự ly đứng im
+    // rồi nhảy khi tới ngã rẽ/điểm đến ("trễ"). Bật nội suy: TurnDistanceInterpolator trừ dần cự ly theo TỐC ĐỘ XE
+    // thật (SpeedProvider) mỗi nhịp tim 400ms; bộ đọc màn Maps (accBooster → refine()) kéo mốc về số thật. Interpolator
+    // đã bảo thủ (FACTOR 0.95, slew-limit 2 chiều, dừng→giữ số, maneuver→snap) nên không tái diễn "số nhảy tán loạn"
+    // của bản 2026-07-13. Giữ toggle để TẮT nếu overlay cụm tự animate rồi đánh nhau (cần verify trên xe).
+    fun interpolate(ctx: Context): Boolean = sp(ctx).getBoolean("interpolate", true)
     fun setInterpolate(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("interpolate", v).apply()
 
     // ★ HUD kính lái: T7 chỉ feeds request/output lifecycle vào HudMirrorController UNKNOWN/no-op.

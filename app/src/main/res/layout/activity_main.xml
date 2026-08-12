@@ -52,24 +52,13 @@
                 android:textColor="@color/text_secondary" android:textSize="13sp" />
             <Spinner android:id="@+id/spinner_nav_source" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginTop="12dp" android:text="Kiểu hiển thị nav trên cụm"
-                android:textColor="@color/text_secondary" android:textSize="13sp" />
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="horizontal" android:layout_marginTop="6dp">
-                <Button android:id="@+id/btn_nav_mode_small" android:layout_width="0dp"
-                    android:layout_weight="1" android:layout_height="wrap_content"
-                    android:layout_marginEnd="4dp" android:minHeight="@dimen/touch_min"
-                    android:background="@drawable/btn_outline" android:text="Nhỏ / ở trên"
-                    android:textAllCaps="false" android:textColor="@color/btn_text"
-                    android:contentDescription="Hiển thị dẫn đường nhỏ ở phía trên cụm" />
-                <Button android:id="@+id/btn_nav_mode_center" android:layout_width="0dp"
-                    android:layout_weight="1" android:layout_height="wrap_content"
-                    android:layout_marginStart="4dp" android:minHeight="@dimen/touch_min"
-                    android:background="@drawable/btn_primary" android:text="Giữa + ETA"
-                    android:textAllCaps="false" android:textColor="@android:color/white"
-                    android:contentDescription="Hiển thị dẫn đường ở giữa cụm kèm thời gian đến" />
-            </LinearLayout>
+            <!-- op39 self-diagnose (docs/specs/nav-cluster-op39-selfdiagnose.html · D3): op 39 "Giữa + ETA" là
+                 chế độ nav-trên-cụm DUY NHẤT (owner 2026-08-12) — bỏ nút chọn mode + nút test. Chỉ còn dòng
+                 trạng thái trung thực của overlay op39. -->
+            <TextView android:id="@+id/txt_cluster_op39_status" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="12dp"
+                android:text="Cụm: chờ dẫn đường" android:textColor="@color/text_secondary" android:textSize="13sp"
+                android:contentDescription="Trạng thái hiển thị dẫn đường trên cụm" />
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="12dp" android:text="Nguồn tốc độ + cảnh báo (biển báo · camera)"
                 android:textColor="@color/text_secondary" android:textSize="13sp" />
