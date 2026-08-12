@@ -5,29 +5,91 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * T2 gap coverage — NavigationSpeedSignOwner race conditions:
- *
- * 1. Push after clear races: frame submitted concurrently with stopSession
- *    → the frame MUST be discarded (generation fencing).
- * 2. Stale-after-clear discarded: markStale after stopSession is a no-op
- *    (cleared output has no cached sequence to mark stale).
- * 3. Rapid push-clear-push pattern: no leakage between generations.
- * 4. SpeedReading: invalid/null values produce null (not 0).
- *
- * Note: NavigationOutputTarget.SPEED_SIGN is modeled but there is no SpeedSignAdapter
- * class in the current architecture — it uses the same BoundedNavigationOutputWorker.
- * These tests use a ClusterLaneAdapter as the concrete test subject since the worker
- * logic is shared, but they verify the SPEED_SIGN-relevant race patterns.
+ * Concurrency coverage for the real typed speed-sign coordinator plus the shared bounded-output
+ * worker generation regressions. No test encodes a speed sign in NavigationFrame.distanceMeters.
  */
 class NavigationSpeedSignRaceTest {
 
     private val source = NavigationSourceIdentity("com.example.maps", "Example Maps")
+
+    @Test
+    fun `typed coordinator serializes concurrent positives behind one master clear`() {
+        val clock = AtomicLong(1_000L)
+        val cluster = RecordingSpeedSignPort(SpeedSignOutput.CLUSTER)
+        val hud = RecordingSpeedSignPort(SpeedSignOutput.HUD)
+        val coordinator = SpeedSignLifecycleCoordinator(cluster, hud, clock::get)
+        try {
+            coordinator.onProcessRestart(1)
+            cluster.clearHistory(); hud.clearHistory()
+            coordinator.onSourceSelected(com.byd.clusternav.contracts.SpeedLimitSource.WAZE)
+            coordinator.onOutputEnabled(SpeedSignOutput.CLUSTER, true)
+            coordinator.onOutputEnabled(SpeedSignOutput.HUD, true)
+            coordinator.onMasterEnabled(true)
+            coordinator.onSpeedLimit(com.byd.clusternav.contracts.SpeedLimitSource.WAZE, 50, clock.get(), 1)
+
+            val start = CountDownLatch(1)
+            val done = CountDownLatch(2)
+            Thread {
+                start.await()
+                repeat(100) { value ->
+                    coordinator.onSpeedLimit(
+                        com.byd.clusternav.contracts.SpeedLimitSource.WAZE,
+                        60 + value % 3,
+                        clock.incrementAndGet(),
+                        1,
+                    )
+                }
+                done.countDown()
+            }.start()
+            Thread {
+                start.await()
+                coordinator.onMasterEnabled(false)
+                done.countDown()
+            }.start()
+            start.countDown()
+            assertTrue(done.await(3, TimeUnit.SECONDS))
+
+            listOf(cluster, hud).forEach { port ->
+                val events = port.snapshot().map { it.frame }
+                val clears = events.filter { it.value == null }
+                assertEquals(1, clears.size)
+                val clearIndex = events.indexOf(clears.single())
+                assertTrue(events.drop(clearIndex + 1).none { it.value != null })
+            }
+        } finally {
+            coordinator.close()
+        }
+    }
+
+    @Test
+    fun `typed coordinator rejects callback from prior process epoch after restart clear`() {
+        val clock = AtomicLong(1_000L)
+        val cluster = RecordingSpeedSignPort(SpeedSignOutput.CLUSTER)
+        val hud = RecordingSpeedSignPort(SpeedSignOutput.HUD)
+        val coordinator = SpeedSignLifecycleCoordinator(cluster, hud, clock::get)
+        try {
+            coordinator.onProcessRestart(10)
+            coordinator.onSourceSelected(com.byd.clusternav.contracts.SpeedLimitSource.VIETMAP)
+            coordinator.onOutputEnabled(SpeedSignOutput.CLUSTER, true)
+            coordinator.onOutputEnabled(SpeedSignOutput.HUD, true)
+            coordinator.onMasterEnabled(true)
+            coordinator.onSpeedLimit(com.byd.clusternav.contracts.SpeedLimitSource.VIETMAP, 80, 1_000, 10)
+            coordinator.onProcessRestart(11)
+            assertFalse(coordinator.onSpeedLimit(
+                com.byd.clusternav.contracts.SpeedLimitSource.VIETMAP, 100, 1_001, 10,
+            ))
+            assertEquals(null, coordinator.snapshot().activeFrame)
+        } finally {
+            coordinator.close()
+        }
+    }
 
     private fun frame(sequence: Long, sessionId: String = "s-1") = NavigationFrame(
         sessionId, source, sequence, 1_000L,

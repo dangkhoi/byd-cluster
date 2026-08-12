@@ -15,13 +15,12 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.widget.LinearLayout
 import android.widget.Toast
 import com.byd.clusternav.Lang
 import com.byd.clusternav.R
-import com.byd.clusternav.modules.clustercast.v2.BubbleZone
 import com.byd.clusternav.cast.platform.CastAppCatalog
 import com.byd.clusternav.modules.clustercast.simplified.AppMover
+import com.byd.clusternav.modules.clustercast.simplified.BubbleGesturePlanner
 import com.byd.clusternav.modules.clustercast.simplified.ClusterSlotSide
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastCoordinator
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastIntent
@@ -30,10 +29,11 @@ import com.byd.clusternav.modules.clustercast.simplified.SimpleCastState
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Presentation-only overlay host for the canonical Cast model. Three zones, one tap each.
+ * Presentation-only overlay host for the canonical Cast model. ONE nav-arrow icon, three gestures.
  *
- * Delegates rendering to [BubbleRenderer] and gesture handling to [BubbleGestureHandler].
- * This file owns only: service lifecycle, window management, state listener registration.
+ * Delegates rendering to [BubbleRenderer], gesture disambiguation to [BubbleGestureHandler], action
+ * dispatch to [BubbleActionDispatcher], and the long-press menu to [BubbleSubmenuOverlay]. This file
+ * owns only: service lifecycle, window management, gesture→action wiring, state listener.
  */
 class FloatingBubbleService : Service() {
 
@@ -45,11 +45,15 @@ class FloatingBubbleService : Service() {
     private lateinit var actionDispatcher: BubbleActionDispatcher
 
     private var windowManager: WindowManager? = null
-    private var bubble: LinearLayout? = null
+    private var bubble: View? = null
     private var params: WindowManager.LayoutParams? = null
+    /** Long-press submenu overlay (Trái/Phải/Cấu hình); created lazily, dismissed on destroy. */
+    private var submenu: BubbleSubmenuOverlay? = null
 
     @Volatile private var destroyed = false
     private var foregroundStarted = false
+    /** One-shot: the overlay settings screen is launched at most once per service start. */
+    private var overlayRequested = false
     private val pipPreviousModes = mutableMapOf<String, String>()
 
     /**
@@ -120,8 +124,14 @@ class FloatingBubbleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        if (!requestOverlayIfMissing()) { stopSelf(); return }
+        // Started via startForegroundService(): Android requires startForeground() within ~5s or it
+        // kills us with RemoteServiceException. Call it FIRST, before any early stopSelf(); a clean
+        // install's first launch has no overlay grant yet, so the overlay gate below would otherwise
+        // bail before we ever went foreground. stopSelf() AFTER startForeground() is legal.
         if (!startForegroundOnce()) { stopSelf(); return }
+        // Master OFF (default OFF, opt-in 2026-08-11) → stand down after startForeground (stopSelf legal): no projection/bubble/autostart; nav→cluster + HUD stay independent.
+        if (!castEnabledNow()) { stopSelf(); return }
+        if (!requestOverlayIfMissing()) { stopSelf(); return }
 
         renderer = BubbleRenderer(this)
         gestureHandler = BubbleGestureHandler(
@@ -129,6 +139,8 @@ class FloatingBubbleService : Service() {
             handler = handler,
             onDragEnd = { x, y -> saveBubblePosition(x, y) },
             onWake = { wakeBubble() },
+            onTap = { onBubbleTap() },
+            onLongPress = { onBubbleLongPress() },
         )
         actionDispatcher = BubbleActionDispatcher(applicationContext, handler, ::toast)
 
@@ -147,8 +159,10 @@ class FloatingBubbleService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!requestOverlayIfMissing()) { stopSelf(startId); return START_NOT_STICKY }
+        // startForeground() before the overlay gate — same startForegroundService() contract as onCreate.
         if (!startForegroundOnce()) { stopSelf(startId); return START_NOT_STICKY }
+        if (!castEnabledNow()) { stopSelf(startId); return START_NOT_STICKY }
+        if (!requestOverlayIfMissing()) { stopSelf(startId); return START_NOT_STICKY }
         showBubble()
         return START_STICKY
     }
@@ -167,12 +181,18 @@ class FloatingBubbleService : Service() {
         autoStartSplitRightListener = null
         // Restore PiP permissions for blocked apps
         restorePipForKnownApps(coordinator)
-        // Shutdown gesture executor
-        gestureHandler.shutdown()
+        // Shutdown gesture executor. Guard the lateinits: onCreate() may stopSelf() and return
+        // BEFORE these are initialized (overlay permission or startForeground denied — e.g. the
+        // very first launch after a clean install), and stopSelf() still runs onDestroy(). Touching
+        // an uninitialized lateinit here would throw UninitializedPropertyAccessException.
+        if (::gestureHandler.isInitialized) gestureHandler.shutdown()
+        // Remove the long-press submenu overlay if it is still showing.
+        submenu?.dismiss()
+        submenu = null
         // Remove overlay
         bubble?.let { view -> runCatching { windowManager?.removeView(view) } }
         bubble = null
-        renderer.clearViews()
+        if (::renderer.isInitialized) renderer.clearViews()
         super.onDestroy()
     }
 
@@ -183,7 +203,7 @@ class FloatingBubbleService : Service() {
         val manager = getSystemService(WINDOW_SERVICE) as WindowManager
         windowManager = manager
 
-        val root = renderer.buildBubbleLayout(::onZoneTap)
+        val root = renderer.buildBubble()
         measureBubble(root)
 
         val type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -211,17 +231,40 @@ class FloatingBubbleService : Service() {
     }
 
     /**
-     * Zone tap entry point. Enforces tap-token (only one operation in flight).
-     * Disabled zones produce no action.
+     * Single tap on the icon = toggle full (cast the foreground / return to gauges). Token-gated so
+     * only one cast/stop runs at a time; a rejected duplicate shows a toast. [detectForeground] does
+     * shell I/O, so the work runs on the tap executor.
      */
-    private fun onZoneTap(zone: BubbleZone) {
-        // Disabled zone = no-op (non-destructive)
-        if (renderer.isZoneDisabled(zone)) return
-
-        if (!gestureHandler.submitTapAction("zone-tap-$zone") {
-            actionDispatcher.onZoneTap(zone)
-        }) {
+    private fun onBubbleTap() {
+        if (!gestureHandler.submitTapAction("bubble-tap") { actionDispatcher.onTap() }) {
             toast(Lang.t("Đang xử lý thao tác trước…", "Previous operation in progress…"))
+        }
+    }
+
+    /**
+     * Long-press = show the Trái/Phải/Cấu hình submenu (runs on the main thread — GestureDetector
+     * callback). A second long-press toggles it closed. Trái/Phải cast a slot (shell I/O → tap
+     * executor, token-gated); Cấu hình opens the app on the main thread (not gated by the cast token).
+     */
+    private fun onBubbleLongPress() {
+        val manager = windowManager ?: return
+        val overlay = submenu ?: BubbleSubmenuOverlay(this, manager).also { submenu = it }
+        if (overlay.isShowing()) {
+            overlay.dismiss()
+            return
+        }
+        wakeBubble()
+        // Anchor the submenu BESIDE the bubble (its current window rect), not centred on screen.
+        val anchor = params
+        overlay.show(anchor?.x ?: 0, anchor?.y ?: 0, bubbleWidthPx(), bubbleHeightPx()) { action ->
+            if (BubbleGesturePlanner.slotFor(action) == null) {
+                actionDispatcher.onSubmenuAction(action) // Cấu hình → open app
+            } else if (!gestureHandler.submitTapAction("submenu-$action") {
+                    actionDispatcher.onSubmenuAction(action)
+                }
+            ) {
+                toast(Lang.t("Đang xử lý thao tác trước…", "Previous operation in progress…"))
+            }
         }
     }
 
@@ -244,7 +287,14 @@ class FloatingBubbleService : Service() {
 
     private fun requestOverlayIfMissing(): Boolean {
         if (Settings.canDrawOverlays(this)) return true
-        CastBubbleControl.requestOverlay(this)
+        // Launch the system overlay screen at most ONCE per service start. onCreate() and
+        // onStartCommand() both gate on the permission and, on a startForegroundService() start,
+        // run back-to-back before the user can grant it — without this guard the settings screen
+        // opens twice (the "asked twice / asks again right after allowing" bug).
+        if (!overlayRequested) {
+            overlayRequested = true
+            CastBubbleControl.requestOverlay(this)
+        }
         return false
     }
 
@@ -257,16 +307,20 @@ class FloatingBubbleService : Service() {
         false
     }
 
+    // Master Cast enable, read fresh each lifecycle entry (persisted via prefs). Fail-safe FALSE so a transient coordinator read error never silently STARTS casting (Cast is opt-in / default off, 2026-08-11).
+    private fun castEnabledNow(): Boolean =
+        runCatching { SimpleCastRuntime.coordinator(applicationContext).prefs.castEnabled() }.getOrDefault(false)
+
     private fun measureBubble(view: View) {
         val unspecified = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         runCatching { view.measure(unspecified, unspecified) }
     }
 
     private fun bubbleWidthPx(view: View? = bubble): Int =
-        view?.width?.takeIf { it > 0 } ?: view?.measuredWidth?.takeIf { it > 0 } ?: dp(BubbleRenderer.ZONE_MIN_DP)
+        view?.width?.takeIf { it > 0 } ?: view?.measuredWidth?.takeIf { it > 0 } ?: dp(BubbleRenderer.ICON_SIZE_DP)
 
     private fun bubbleHeightPx(view: View? = bubble): Int =
-        view?.height?.takeIf { it > 0 } ?: view?.measuredHeight?.takeIf { it > 0 } ?: dp(BubbleRenderer.ZONE_MIN_DP)
+        view?.height?.takeIf { it > 0 } ?: view?.measuredHeight?.takeIf { it > 0 } ?: dp(BubbleRenderer.ICON_SIZE_DP)
 
     private fun clampX(value: Int, view: View? = bubble): Int {
         val width = resources.displayMetrics.widthPixels

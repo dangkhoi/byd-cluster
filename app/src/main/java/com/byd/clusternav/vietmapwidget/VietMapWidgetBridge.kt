@@ -1,5 +1,4 @@
 package com.byd.clusternav.vietmapwidget
-
 import android.appwidget.AppWidgetHostView
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
@@ -12,10 +11,10 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CopyOnWriteArraySet
-
+import java.util.concurrent.ExecutionException
 private const val VIETMAP_PACKAGE = "vn.vietmap.live"
-
 /**
  * VietMap widget bridge — binding lifecycle, per-provider independence, generation-bound callbacks.
  *
@@ -37,10 +36,8 @@ class VietMapWidgetBridge private constructor(context: Context) {
     private val views = mutableMapOf<VietMapWidgetSlot, AppWidgetHostView>()
     private val slotsById = mutableMapOf<Int, VietMapWidgetSlot>()
     private val unsupportedSlots = mutableSetOf<VietMapWidgetSlot>()
-
     /** Generation counters for listener callback binding — incremented on stop/restart. */
     @Volatile private var listenerGeneration = 0L
-
     /** Per-provider snapshots — fully independent. */
     private var speedSnapshot = VietMapProviderSnapshot<VietMapWidgetRawValues>(
         slot = VietMapWidgetSlot.SPEED_LIMIT, values = null,
@@ -52,10 +49,8 @@ class VietMapWidgetBridge private constructor(context: Context) {
         updatedAtElapsedMs = null, freshness = VietMapWidgetFreshness.UNAVAILABLE,
         reason = VietMapWidgetUnavailableReason.NOT_BOUND, generation = 0L,
     )
-
     private var listening = false
     @Volatile private var published = unavailable(VietMapWidgetUnavailableReason.NOT_BOUND)
-
     private val publishDebounced = Runnable { publishSnapshot() }
     private val freshnessTick = object : Runnable {
         override fun run() {
@@ -64,16 +59,14 @@ class VietMapWidgetBridge private constructor(context: Context) {
             main.postDelayed(this, FRESHNESS_TICK_MS)
         }
     }
-
     // --- Lifecycle ---
-
     fun start(owner: VietMapWidgetOwner) = onMain {
         owners.add(owner)
         if (listening) return@onMain
+        listenerGeneration++
+        listening = true
         try {
             host.startListening()
-            listening = true
-            listenerGeneration++
             restoreBoundViews()
             autoBindMissing()
             main.removeCallbacks(freshnessTick)
@@ -85,46 +78,38 @@ class VietMapWidgetBridge private constructor(context: Context) {
             setUnavailable(VietMapWidgetUnavailableReason.HOST_ERROR)
         }
     }
-
     fun stop(owner: VietMapWidgetOwner) = onMain {
         if (!owners.remove(owner) || owners.isNotEmpty() || !listening) return@onMain
         main.removeCallbacks(freshnessTick)
         main.removeCallbacks(publishDebounced)
+        clearRuntimeValues()
+        publishSnapshot()
         listenerGeneration++
+        listening = false
         try {
             host.stopListening()
         } catch (error: RuntimeException) {
             Log.e(TAG, "widget host stop failed", error)
         }
-        listening = false
-        clearRuntimeValues()
-        publishSnapshot()
         Log.i(TAG, "widget host stopped (gen=$listenerGeneration)")
     }
-
     // --- Listener management with generation binding ---
-
     fun addListener(listener: (VietMapWidgetSnapshot) -> Unit) {
         val entry = ListenerEntry(listener, listenerGeneration)
         listeners += entry
         main.post { listener(published) }
     }
-
     fun removeListener(listener: (VietMapWidgetSnapshot) -> Unit) {
         listeners.removeIf { it.callback === listener }
     }
-
     fun snapshot(): VietMapWidgetSnapshot = published
-
     // --- Binding ---
-
     fun bindingStatuses(): List<VietMapWidgetBindingStatus> = VietMapWidgetSlot.entries.map { slot ->
         val id = prefs.widgetId(slot)
         val available = providerInfo(slot) != null
         val bound = id != null && manager.getAppWidgetInfo(id)?.provider == slot.component
         VietMapWidgetBindingStatus(slot, id, available, bound)
     }
-
     fun beginBinding(slot: VietMapWidgetSlot): VietMapWidgetBindResult {
         val provider = providerInfo(slot)
             ?: return VietMapWidgetBindResult.Failed(
@@ -134,7 +119,6 @@ class VietMapWidgetBridge private constructor(context: Context) {
         bindingStatuses().first { it.slot == slot }.takeIf { it.bound }?.let {
             return VietMapWidgetBindResult.Bound(slot)
         }
-
         val appWidgetId = try {
             host.allocateAppWidgetId()
         } catch (error: RuntimeException) {
@@ -144,7 +128,6 @@ class VietMapWidgetBridge private constructor(context: Context) {
                 "Cannot allocate widget ID",
             )
         }
-
         val bound = try {
             manager.bindAppWidgetIdIfAllowed(appWidgetId, provider.provider)
         } catch (error: SecurityException) {
@@ -157,7 +140,6 @@ class VietMapWidgetBridge private constructor(context: Context) {
                 "Widget provider rejected the binding",
             )
         }
-
         if (bound && completeBinding(slot, appWidgetId, granted = true)) {
             return VietMapWidgetBindResult.Bound(slot)
         }
@@ -167,7 +149,6 @@ class VietMapWidgetBridge private constructor(context: Context) {
                 "Android did not retain the widget binding",
             )
         }
-
         val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
             putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
             putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider.provider)
@@ -183,7 +164,6 @@ class VietMapWidgetBridge private constructor(context: Context) {
         }
         return VietMapWidgetBindResult.ConsentRequired(slot, appWidgetId, intent)
     }
-
     fun completeBinding(slot: VietMapWidgetSlot, appWidgetId: Int, granted: Boolean): Boolean {
         val actuallyBound = manager.getAppWidgetInfo(appWidgetId)?.provider == slot.component
         if (!granted || !actuallyBound) {
@@ -196,7 +176,6 @@ class VietMapWidgetBridge private constructor(context: Context) {
         if (listening) restoreBoundViews()
         return true
     }
-
     fun unbindAll() = onMain {
         VietMapWidgetSlot.entries.forEach { slot ->
             prefs.widgetId(slot)?.let(::deleteAllocatedId)
@@ -206,12 +185,12 @@ class VietMapWidgetBridge private constructor(context: Context) {
         publishSnapshot()
         Log.i(TAG, "widget bindings removed")
     }
-
     // --- Host callback (generation-bound) ---
-
     private fun onHostViewUpdated(appWidgetId: Int, view: AppWidgetHostView) = onMain {
+        if (!listening) return@onMain
         val callbackGeneration = listenerGeneration
         val slot = slotsById[appWidgetId] ?: return@onMain
+        if (views[slot] !== view) return@onMain
         // Generation check: discard callbacks from prior listening sessions
         if (callbackGeneration != listenerGeneration) {
             Log.d(TAG, "discarding stale callback gen=$callbackGeneration current=$listenerGeneration")
@@ -264,8 +243,12 @@ class VietMapWidgetBridge private constructor(context: Context) {
                                     }
                                 }
                             }
-                        } catch (_: Exception) {
-                            // Hash computation failed — alert values remain without hashes
+                        } catch (interrupted: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                        } catch (cancelled: CancellationException) {
+                            Log.d(TAG, "alert hash cancelled", cancelled)
+                        } catch (failed: ExecutionException) {
+                            Log.w(TAG, "alert hash failed", failed.cause ?: failed)
                         }
                     }.start()
                 }
@@ -273,38 +256,30 @@ class VietMapWidgetBridge private constructor(context: Context) {
         }
         schedulePublish()
     }
-
     private fun schedulePublish() {
         main.removeCallbacks(publishDebounced)
         main.postDelayed(publishDebounced, UPDATE_DEBOUNCE_MS)
     }
-
     // --- Snapshot publishing (per-provider independent) ---
-
     private fun publishSnapshot() {
         val now = SystemClock.elapsedRealtime()
-
         // Compute per-provider freshness INDEPENDENTLY — no combined gate
         val speedReason = unavailableReasonForSlot(VietMapWidgetSlot.SPEED_LIMIT)
         val alertsReason = unavailableReasonForSlot(VietMapWidgetSlot.ALERTS)
-
         val (speedFresh, speedFreshReason) = VietMapWidgetTextParser.freshness(
             speedSnapshot.updatedAtElapsedMs, now, speedReason
         )
         val (alertsFresh, alertsFreshReason) = VietMapWidgetTextParser.freshness(
             alertsSnapshot.updatedAtElapsedMs, now, alertsReason
         )
-
         // Update provider snapshots with computed freshness
         speedSnapshot = speedSnapshot.copy(freshness = speedFresh, reason = speedFreshReason)
         alertsSnapshot = alertsSnapshot.copy(freshness = alertsFresh, reason = alertsFreshReason)
-
         // Compose combined snapshot for backward-compat consumers
         val speedRaw = if (speedFresh == VietMapWidgetFreshness.FRESH)
             speedSnapshot.values ?: VietMapWidgetRawValues() else VietMapWidgetRawValues()
         val alertsRaw = if (alertsFresh == VietMapWidgetFreshness.FRESH)
             alertsSnapshot.values ?: VietMapWidgetRawValues() else VietMapWidgetRawValues()
-
         val combinedRaw = speedRaw.copy(
             firstAlertSpeedLimitText = alertsRaw.firstAlertSpeedLimitText,
             firstAlertDistanceText = alertsRaw.firstAlertDistanceText,
@@ -315,7 +290,6 @@ class VietMapWidgetBridge private constructor(context: Context) {
             secondAlertImageVisible = alertsRaw.secondAlertImageVisible,
             secondAlertImageHash = alertsRaw.secondAlertImageHash,
         )
-
         // Combined freshness uses the WORSE of the two only for the legacy field
         val combinedFreshness = when {
             speedFresh == VietMapWidgetFreshness.UNAVAILABLE || alertsFresh == VietMapWidgetFreshness.UNAVAILABLE ->
@@ -325,13 +299,11 @@ class VietMapWidgetBridge private constructor(context: Context) {
             else -> VietMapWidgetFreshness.FRESH
         }
         val combinedReason = speedFreshReason ?: alertsFreshReason
-
         val updatedAt = if (speedSnapshot.updatedAtElapsedMs != null && alertsSnapshot.updatedAtElapsedMs != null) {
             minOf(speedSnapshot.updatedAtElapsedMs!!, alertsSnapshot.updatedAtElapsedMs!!)
         } else {
             speedSnapshot.updatedAtElapsedMs ?: alertsSnapshot.updatedAtElapsedMs
         }
-
         val next = VietMapWidgetTextParser.parseSnapshot(
             combinedRaw, providerVersion(), updatedAt, now, combinedReason
         ).copy(
@@ -346,7 +318,6 @@ class VietMapWidgetBridge private constructor(context: Context) {
         published = next
         dispatchToListeners(next)
     }
-
     /**
      * Dispatch snapshot to listeners, filtering out stale-generation entries.
      * Stale listeners are automatically pruned.
@@ -369,23 +340,18 @@ class VietMapWidgetBridge private constructor(context: Context) {
             Log.d(TAG, "pruned ${stale.size} stale listener(s)")
         }
     }
-
     // --- Per-slot unavailable reason (independent of other slot) ---
-
     private fun unavailableReasonForSlot(slot: VietMapWidgetSlot): VietMapWidgetUnavailableReason? = when {
         providerInfo(slot) == null -> VietMapWidgetUnavailableReason.PROVIDER_MISSING
         slot in unsupportedSlots -> VietMapWidgetUnavailableReason.UNSUPPORTED_SHAPE
         !isSlotBound(slot) -> VietMapWidgetUnavailableReason.NOT_BOUND
         else -> null
     }
-
     private fun isSlotBound(slot: VietMapWidgetSlot): Boolean {
         val id = prefs.widgetId(slot) ?: return false
         return manager.getAppWidgetInfo(id)?.provider == slot.component
     }
-
     // --- Restore / Clear ---
-
     private fun restoreBoundViews() {
         clearRuntimeValues()
         extraction.reloadRemoteResources()
@@ -423,7 +389,6 @@ class VietMapWidgetBridge private constructor(context: Context) {
         }
         publishSnapshot()
     }
-
     /**
      * Auto-bind any missing slots silently. Called on every start() after restoreBoundViews().
      * Only binds if: provider is installed AND bindAppWidgetIdIfAllowed succeeds (grant already given).
@@ -451,11 +416,14 @@ class VietMapWidgetBridge private constructor(context: Context) {
                 Log.i(TAG, "auto-bound ${slot.name} → id=$appWidgetId")
             } else {
                 // Grant not given — clean up allocated ID, user must bind manually once
-                try { host.deleteAppWidgetId(appWidgetId) } catch (_: Exception) {}
+                try {
+                    host.deleteAppWidgetId(appWidgetId)
+                } catch (error: RuntimeException) {
+                    Log.w(TAG, "allocated widget ID cleanup failed", error)
+                }
             }
         }
     }
-
     private fun clearRuntimeValues() {
         views.clear()
         slotsById.clear()
@@ -472,17 +440,13 @@ class VietMapWidgetBridge private constructor(context: Context) {
         )
         extraction.releaseResources()
     }
-
     private fun setUnavailable(reason: VietMapWidgetUnavailableReason) {
         published = unavailable(reason)
         dispatchToListeners(published)
     }
-
     // --- Utility ---
-
     private fun providerInfo(slot: VietMapWidgetSlot): AppWidgetProviderInfo? =
         manager.installedProviders.firstOrNull { it.provider == slot.component }
-
     private fun providerVersion(): String? = try {
         val info = if (Build.VERSION.SDK_INT >= 33) {
             appContext.packageManager.getPackageInfo(VIETMAP_PACKAGE, PackageManager.PackageInfoFlags.of(0))
@@ -492,7 +456,6 @@ class VietMapWidgetBridge private constructor(context: Context) {
         }
         info.versionName
     } catch (_: PackageManager.NameNotFoundException) { null }
-
     private fun deleteAllocatedId(appWidgetId: Int) {
         try {
             host.deleteAppWidgetId(appWidgetId)
@@ -504,30 +467,23 @@ class VietMapWidgetBridge private constructor(context: Context) {
         slotsById.remove(appWidgetId)
         views.entries.removeAll { it.value.appWidgetId == appWidgetId }
     }
-
     private fun onMain(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
     }
-
     // --- Generation-bound listener entry ---
-
     private data class ListenerEntry(
         val callback: (VietMapWidgetSnapshot) -> Unit,
         val generation: Long,
     )
-
     companion object {
         private const val TAG = "VietMapWidget"
         private const val HOST_ID = 0x564D
         private const val UPDATE_DEBOUNCE_MS = 120L
         private const val FRESHNESS_TICK_MS = 1_000L
-
         @Volatile private var instance: VietMapWidgetBridge? = null
-
         fun get(context: Context): VietMapWidgetBridge = instance ?: synchronized(this) {
             instance ?: VietMapWidgetBridge(context).also { instance = it }
         }
-
         private fun unavailable(reason: VietMapWidgetUnavailableReason) = VietMapWidgetSnapshot(
             currentSpeedKph = null,
             speedLimitKph = null,

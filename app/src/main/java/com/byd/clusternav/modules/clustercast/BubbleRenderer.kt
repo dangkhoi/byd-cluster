@@ -1,215 +1,103 @@
 package com.byd.clusternav.modules.clustercast
 
 import android.content.Context
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
-import android.view.Gravity
-import android.widget.LinearLayout
-import android.widget.TextView
-import com.byd.clusternav.modules.clustercast.v2.BubbleZone
-import com.byd.clusternav.modules.clustercast.v2.CastBubbleProjection
+import android.view.View
+import android.widget.ImageView
+import com.byd.clusternav.R
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastState
 
 /**
- * Renders bubble zones and repaints them based on simplified coordinator state.
+ * Renders the single-icon floating bubble (R5 / #7 — docs/specs/cast-nav-ux-release-v104.html).
  *
- * Extracted from FloatingBubbleService to keep each file ≤ 400 LOC.
- * Owns: zone view creation, painting (occupied/empty/disabled), full-state refresh.
+ * The bubble is ONE navigation-arrow icon sized like an app icon (~[ICON_SIZE_DP]dp), with **no
+ * background / border / fill** — just the vector arrow ([R.drawable.ic_bubble_nav]). Idle/active
+ * dimming is the WINDOW alpha owned by [FloatingBubbleService], not a per-view background. The prior
+ * three-zone (Trái/Phải/Full) layout, its painting and its zone-hit-test are gone; slot casting now
+ * lives in the long-press submenu ([BubbleSubmenuOverlay]).
+ *
+ * Owns: icon-view creation and a state-driven content description. Gesture disambiguation lives in
+ * [BubbleGestureHandler]; action dispatch in [BubbleActionDispatcher].
  */
 internal class BubbleRenderer(private val context: Context) {
 
-    /** Zone views indexed by [BubbleZone] — populated by [createZoneView]. */
-    val zoneViews = LinkedHashMap<BubbleZone, TextView>()
+    /** The single bubble icon, or null before [buildBubble] / after [clearViews]. */
+    var iconView: ImageView? = null
+        private set
 
     /**
-     * Creates a zone view and registers it in [zoneViews].
-     *
-     * Each zone is at least [ZONE_MIN_DP] (48dp) per axis to meet the 48dp automotive
-     * touch-target guideline. `minimumWidth`/`minimumHeight` enforces this even if layout
-     * params request a smaller size.
+     * Build the one-icon bubble: a transparent [ImageView] showing only the nav arrow. The view has
+     * no background, so the cluster/app content shows through around the glyph. `minimumWidth`/
+     * `minimumHeight` force a ≥[ICON_SIZE_DP]dp box (well above the [TOUCH_MIN_DP]dp automotive
+     * touch-target floor) even though the vector's intrinsic size is smaller. It is clickable,
+     * long-clickable and focusable so the gesture handler and TalkBack both see one actionable
+     * target. Window WRAP_CONTENT + this minimum give the bubble its size (see
+     * [FloatingBubbleService.showBubble]).
      */
-    fun createZoneView(
-        zone: BubbleZone,
-        widthPx: Int,
-        heightPx: Int,
-        leftMarginPx: Int,
-        onTap: (BubbleZone) -> Unit,
-    ): TextView = TextView(context).apply {
-        text = CastBubbleProjection.zoneShortLabel(zone)
-        textSize = ZONE_TEXT_SP
-        setTextColor(Color.WHITE)
-        gravity = Gravity.CENTER
-        isFocusable = true
-        minimumWidth = dp(ZONE_MIN_DP)
-        minimumHeight = dp(ZONE_MIN_DP)
-        setPadding(dp(2), dp(2), dp(2), dp(2))
-        layoutParams = LinearLayout.LayoutParams(widthPx, heightPx).apply { leftMargin = leftMarginPx }
-        contentDescription = CastBubbleProjection.zoneShortLabel(zone)
-        paintEmpty(this)
-        setOnClickListener {
-            it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
-            onTap(zone)
+    fun buildBubble(): View {
+        val size = dp(ICON_SIZE_DP)
+        val pad = dp(ICON_PADDING_DP)
+        val icon = ImageView(context).apply {
+            setImageResource(R.drawable.ic_bubble_nav)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            background = null // R5: no background / border / fill — just the arrow
+            minimumWidth = size
+            minimumHeight = size
+            setPadding(pad, pad, pad, pad)
+            isClickable = true
+            isLongClickable = true
+            isFocusable = true
+            contentDescription = CONTENT_DESC_IDLE
         }
-        zoneViews[zone] = this
+        iconView = icon
+        return icon
     }
 
     /**
-     * Build the bubble layout: ONE horizontal row of three equal-size zones,
-     * order **Trái · Phải · Full**. All three zones are SQUARE, sized
-     * [ZONE_MIN_DP] × [ZONE_MIN_DP] (also enforced as `minimumWidth`/`minimumHeight`
-     * in [createZoneView]). Small [ZONE_GAP_DP] gaps separate the zones. Tap wiring and
-     * the [zoneViews] map are registered by [createZoneView], so ordering here does not
-     * affect painting/state lookups.
+     * Update ONLY the icon's content description to reflect whether a tap will cast or return
+     * (no background/tint change — the arrow stays a plain transparent icon, R5). Returns true when
+     * a view exists to update. The visual idle/active state is the window alpha, handled elsewhere.
      */
-    fun buildBubbleLayout(onTap: (BubbleZone) -> Unit): LinearLayout {
-        // 2026-08-06 on-car: nút cao quá thừa (35×48). Làm VUÔNG: rộng = cao = ZONE_MIN_DP (38dp, owner-chosen).
-        val zoneHeight = dp(ZONE_MIN_DP)
-        val zoneWidth = dp(ZONE_MIN_DP)
-        val gap = dp(ZONE_GAP_DP)
-
-        val leftZone = createZoneView(BubbleZone.LEFT, zoneWidth, zoneHeight, 0, onTap)
-        val rightZone = createZoneView(BubbleZone.RIGHT, zoneWidth, zoneHeight, gap, onTap)
-        val fullZone = createZoneView(BubbleZone.FULL, zoneWidth, zoneHeight, gap, onTap)
-        return LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, 0)
-            contentDescription = "Cluster Cast"
-            addView(leftZone)
-            addView(rightZone)
-            addView(fullZone)
-        }
-    }
-
-    /** Repaint all zones based on current simplified coordinator state. Returns true if painted. */
     fun refreshFromState(state: SimpleCastState): Boolean {
-        val fullView = zoneViews[BubbleZone.FULL] ?: return false
-        val leftView = zoneViews[BubbleZone.LEFT]
-        val rightView = zoneViews[BubbleZone.RIGHT]
-        when (state) {
-            is SimpleCastState.CastingFull -> {
-                paintOccupied(fullView, state.targetPkg.substringAfterLast('.'))
-                leftView?.let { paintDisabled(it, "Đang chiếu full") }
-                rightView?.let { paintDisabled(it, "Đang chiếu full") }
-            }
-            is SimpleCastState.CastingSplit -> {
-                paintDisabled(fullView, "Đang chia đôi")
-                val leftSlot = state.left
-                val rightSlot = state.right
-                leftView?.let {
-                    if (leftSlot != null) paintOccupied(it, leftSlot.pkg.substringAfterLast('.'))
-                    else paintEmpty(it)
-                }
-                rightView?.let {
-                    if (rightSlot != null) paintOccupied(it, rightSlot.pkg.substringAfterLast('.'))
-                    else paintEmpty(it)
-                }
-            }
-            is SimpleCastState.Idle -> {
-                paintEmpty(fullView)
-                leftView?.let { paintEmpty(it) }
-                rightView?.let { paintEmpty(it) }
-            }
-            else -> {
-                // Off/Opening/Stopping/Closing/Error — all disabled
-                val reason = when (state) {
-                    is SimpleCastState.Opening -> "Đang mở cụm"
-                    is SimpleCastState.Stopping -> "Đang trả app"
-                    is SimpleCastState.Closing -> "Đang đóng"
-                    is SimpleCastState.Error -> "Lỗi: ${state.message}"
-                    else -> "Chưa sẵn sàng"
-                }
-                paintDisabled(fullView, reason)
-                leftView?.let { paintDisabled(it, reason) }
-                rightView?.let { paintDisabled(it, reason) }
-            }
-        }
+        val icon = iconView ?: return false
+        icon.contentDescription = contentDescriptionFor(state)
         return true
     }
 
-    fun paintOccupied(view: TextView, label: String) {
-        view.setTextColor(Color.WHITE)
-        view.background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(ZONE_CORNER_DP).toFloat()
-            setColor(FILL_OCCUPIED)
-            setStroke(dp(ZONE_STROKE_DP), BRAND)
-        }
-        view.alpha = 1f
-        view.isEnabled = true
-        view.tag = false
-        view.contentDescription = "$label · chạm để trả về"
+    fun clearViews() {
+        iconView = null
     }
-
-    fun paintEmpty(view: TextView) {
-        view.setTextColor(BRAND)
-        view.background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(ZONE_CORNER_DP).toFloat()
-            setColor(FILL_EMPTY)
-            setStroke(dp(ZONE_STROKE_DP), BRAND)
-        }
-        view.alpha = 1f
-        view.isEnabled = true
-        view.tag = false
-        view.contentDescription = "${view.text} · chạm để chiếu"
-    }
-
-    /**
-     * Paint a disabled zone: visually distinct (low alpha), and taps are no-op.
-     * Content description states WHY it is disabled for accessibility.
-     */
-    fun paintDisabled(view: TextView, reason: String = "") {
-        view.setTextColor(BRAND)
-        view.background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(ZONE_CORNER_DP).toFloat()
-            setColor(FILL_DISABLED)
-            setStroke(dp(ZONE_STROKE_DP), BRAND)
-        }
-        view.alpha = DISABLED_ZONE_ALPHA
-        // 2026-08-06 fix drag "lúc được lúc không": Android CHỈ gọi OnTouchListener khi view ENABLED.
-        // Trước đây disabled zone (isEnabled=false) nuốt touch nhưng không phát drag → không kéo được.
-        // GIỮ enabled=true để luôn kéo được; đánh dấu disabled qua tag cho tap-gate (isZoneDisabled).
-        view.isEnabled = true
-        view.tag = true
-        view.contentDescription = if (reason.isNotBlank()) "${view.text} · không khả dụng: $reason" else "${view.text} · không khả dụng"
-    }
-
-    /** Check if a zone view is disabled (tap should be no-op). Reads the tag, NOT isEnabled —
-     *  zones stay isEnabled=true so the drag OnTouchListener always fires (see [paintDisabled]). */
-    fun isZoneDisabled(zone: BubbleZone): Boolean = zoneViews[zone]?.tag == true
-
-    fun clearViews() { zoneViews.clear() }
 
     private fun dp(value: Int) = (value * context.resources.displayMetrics.density + .5f).toInt()
 
     companion object {
-        /**
-         * Rendered square side per zone (dp), also the enforced min touch target (used for BOTH axes
-         * in [buildBubbleLayout] → square, and as minimumWidth/Height in [createZoneView]).
-         * 2026-08-06 owner (on-car): shrunk to 38dp (~80% of the prior 48dp) for a more compact bubble.
-         * Intentionally BELOW the 48dp automotive guideline per explicit owner request.
-         */
-        internal const val ZONE_MIN_DP = 38
-        internal const val ZONE_GAP_DP = 2
-        internal const val ZONE_CORNER_DP = 5
-        internal const val ZONE_STROKE_DP = 1
-        // 2026-08-06 on-car: 7sp quá bé không đọc được → nâng lên 13sp (vẫn vừa ô vuông 38dp với padding 2).
-        internal const val ZONE_TEXT_SP = 13f
-        internal const val DISABLED_ZONE_ALPHA = 0.35f
+        /** Rendered icon side (dp) — app-icon sized, within the 48–56dp band the spec (#7) asks for. */
+        internal const val ICON_SIZE_DP = 52
 
-        /** Opaque brand blue — used for zone strokes and empty-zone text so labels stay legible. */
-        internal val BRAND = 0xFF1565C0.toInt()
+        /** Automotive minimum touch target (dp) enforced for the icon AND each submenu row (R5/R9). */
+        internal const val TOUCH_MIN_DP = 48
+
+        /** Inset so the arrow reads as an ~app-icon glyph rather than edge-to-edge. */
+        internal const val ICON_PADDING_DP = 6
+
+        /** Accessibility label when nothing is on the cluster (a tap will cast the foreground). */
+        internal const val CONTENT_DESC_IDLE = "ClusterNav cast"
+
+        /** Accessibility label while casting (a tap will return to the cluster gauges). */
+        internal const val CONTENT_DESC_CASTING = "ClusterNav cast · chạm để trả về"
+
+        /** Accessibility label during a transient state (not actionable yet). */
+        internal const val CONTENT_DESC_BUSY = "ClusterNav cast · đang xử lý"
 
         /**
-         * Translucent zone fills so live cluster content shows through the bubble in every state.
-         * All share the brand-blue RGB (0x1565C0); only the alpha byte differs:
-         *  - [FILL_OCCUPIED] ≈ 0x99 (~60%): clearly "casting" yet still see-through.
-         *  - [FILL_EMPTY]    ≈ 0x33 (~20%): barely tinted so idle cluster content dominates.
-         *  - [FILL_DISABLED] ≈ 0x1F (~12%): faintest fill, paired with view-level [DISABLED_ZONE_ALPHA].
+         * Content description for a cast state — pure so it is unit-testable without a Context.
+         * Idle → [CONTENT_DESC_IDLE]; casting (full or split) → [CONTENT_DESC_CASTING]; any transient
+         * state → [CONTENT_DESC_BUSY]. Mirrors [BubbleGesturePlanner.tapOutcome] so the spoken hint
+         * always matches what the tap will do.
          */
-        internal val FILL_OCCUPIED = 0x991565C0.toInt()
-        internal val FILL_EMPTY = 0x331565C0.toInt()
-        internal val FILL_DISABLED = 0x1F1565C0.toInt()
+        fun contentDescriptionFor(state: SimpleCastState): String = when (state) {
+            is SimpleCastState.Idle -> CONTENT_DESC_IDLE
+            is SimpleCastState.CastingFull, is SimpleCastState.CastingSplit -> CONTENT_DESC_CASTING
+            else -> CONTENT_DESC_BUSY
+        }
     }
 }

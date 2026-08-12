@@ -103,7 +103,7 @@ data class ClusterProfile(
          */
         fun sanitize(s: String): String {
             val cleaned = s
-                .replace(' ', ' ').replace("​", "").replace("﻿", "")
+                .replace(' ', ' ').replace("​", "").replace("\uFEFF", "")
                 .replace('–', '-').replace('—', '-').replace('−', '-')
                 .replace('；', ';').replace('－', '-')
             return cleaned.lineSequence().map { it.trim() }

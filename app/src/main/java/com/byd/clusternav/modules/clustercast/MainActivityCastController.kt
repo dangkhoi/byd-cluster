@@ -52,8 +52,10 @@ internal class MainActivityCastController(private val activity: Activity) {
         catalog = CastAppCatalog(activity.applicationContext)
         val coordinator = SimpleCastRuntime.coordinator(activity.applicationContext)
 
-        // Open projection on start.
-        coordinator.openProjection()
+        // Open projection on start — only when the master Cast switch is ON (default OFF — opt-in). When OFF
+        // the cluster stays on native gauges; nav→cluster (broadcast) and HUD are independent tracks
+        // and keep running regardless. The switch itself is wired via CastEnableSwitch below.
+        if (coordinator.prefs.castEnabled()) coordinator.openProjection()
 
         status = activity.findViewById(R.id.txt_cast_status)
         statusDot = activity.findViewById(R.id.dot_cast)
@@ -82,6 +84,17 @@ internal class MainActivityCastController(private val activity: Activity) {
             }
         }
 
+        // Deep rescue (owner 2026-08-11): the DashCast-conflict clean the plain rescue (Stop+reopen)
+        // can't do — stand ClusterNav fully down (no reopen), force-stop DashCast, reset the cluster VD.
+        CastDeepRescueAction(
+            activity = activity,
+            coordinator = coordinator,
+            background = { block -> Thread(block, "deep-rescue").start() },
+            postUi = ::postUi,
+            toast = { msg -> Toast.makeText(activity, msg, Toast.LENGTH_LONG).show() },
+            stopOwnServices = { activity.stopService(Intent(activity, FloatingBubbleService::class.java)) },
+        ).bind(activity.findViewById(R.id.cast_deep_rescue))
+
         // Zone buttons
         setupZoneButtons(coordinator)
 
@@ -90,6 +103,13 @@ internal class MainActivityCastController(private val activity: Activity) {
         autostart.setup()
 
         geometryEditor = CastGeometryEditor(activity, coordinator)
+
+        // Master Cast enable switch — reveals/hides the Cast body and drives projection + bubble.
+        CastEnableSwitch(activity, coordinator).bind(
+            switch = activity.findViewById(R.id.switch_cast_enabled),
+            castBody = activity.findViewById(R.id.cast_body),
+            disabledHint = activity.findViewById(R.id.txt_cast_disabled_hint),
+        )
 
         // Initial render
         postUi { refresh() }
@@ -110,7 +130,9 @@ internal class MainActivityCastController(private val activity: Activity) {
         // Only tear down here when autostart is OFF — the classic Activity-scoped projection.
         val coordinator = SimpleCastRuntime.coordinator(activity.applicationContext)
         val autostartOwns = coordinator.prefs.autoStartEnabled() || coordinator.prefs.autoStartSplitEnabled()
-        if (!autostartOwns) coordinator.closeProjection()
+        // Only tear down a projection we actually opened. When Cast is disabled we never opened one,
+        // so skip the close entirely (avoids needless shell work on the cluster VD).
+        if (coordinator.prefs.castEnabled() && !autostartOwns) coordinator.closeProjection()
     }
 
     private fun setupZoneButtons(coordinator: com.byd.clusternav.modules.clustercast.simplified.SimpleCastCoordinator) {

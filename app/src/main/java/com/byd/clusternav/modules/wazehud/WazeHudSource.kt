@@ -27,6 +27,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * @param shell runs a shell command via the privileged transport; returns stdout, or null on failure.
  */
+enum class WazeHudAvailability {
+    AVAILABLE,
+    UNAVAILABLE,
+    STOPPED,
+}
+
 class WazeHudSource(private val shell: (command: String) -> String?) {
 
     companion object {
@@ -73,6 +79,8 @@ class WazeHudSource(private val shell: (command: String) -> String?) {
         private set
 
     @Volatile var listener: ((WazeHudState) -> Unit)? = null
+    @Volatile var availabilityListener: ((WazeHudAvailability) -> Unit)? = null
+    @Volatile private var lastAvailability: WazeHudAvailability? = null
 
     fun start() {
         if (running.getAndSet(true)) return
@@ -89,22 +97,50 @@ class WazeHudSource(private val shell: (command: String) -> String?) {
         exec.execute { runCatching { shell(GRANT_CMD) } }
         exec.scheduleWithFixedDelay({
             runCatching {
-                val dump = shell(DUMP_CMD)
-                if (dump.isNullOrBlank()) return@runCatching
-                val state = pollOnce(dump) ?: return@runCatching
+                val state = processDump(shell(DUMP_CMD)) ?: return@runCatching
                 lastState = state
                 listener?.invoke(state)
-            }.onFailure { Log.e(TAG, "poll failed", it) }
+            }.onFailure {
+                updateAvailability(WazeHudAvailability.UNAVAILABLE)
+                Log.e(TAG, "poll failed", it)
+            }
         }, 0L, POLL_MS, TimeUnit.MILLISECONDS)
     }
 
     fun stop() {
+        updateAvailability(WazeHudAvailability.STOPPED)
         running.set(false)
         scheduler?.shutdownNow()
         scheduler = null
         lastState = null
         lastEmittedTs = -1L
         lastRaw = null
+    }
+
+    /** Classifies provider availability separately from de-dup; silence is left to the 5s TTL. */
+    internal fun processDump(dump: String?): WazeHudState? {
+        if (dump.isNullOrBlank()) {
+            updateAvailability(WazeHudAvailability.UNAVAILABLE)
+            return null
+        }
+        val state = pollOnce(dump)
+        val hasState = state != null || dump.lineSequence().any { line ->
+            val raw = line.trim()
+            raw.startsWith("{") && runCatching { parseHlp(raw) }.getOrNull() != null
+        }
+        updateAvailability(
+            if (hasState) WazeHudAvailability.AVAILABLE else WazeHudAvailability.UNAVAILABLE,
+        )
+        return state
+    }
+
+    private fun updateAvailability(value: WazeHudAvailability) {
+        val callback = synchronized(this) {
+            if (lastAvailability == value) return
+            lastAvailability = value
+            availabilityListener
+        }
+        callback?.invoke(value)
     }
 
     /**

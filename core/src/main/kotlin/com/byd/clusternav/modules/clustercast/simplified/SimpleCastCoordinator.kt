@@ -433,9 +433,9 @@ class SimpleCastCoordinator(
         CastDensityControl.set(shell, prefs, displayId, dpi, (state as? SimpleCastState.CastingFull)?.targetPkg)
     }
 
-    /** @see CastDensityControl.setForPkg — persists ONLY on shell success (R6). */
-    fun setDensityForPkg(dpi: Int?, pkg: String) = executor.submit("density-pkg") {
-        CastDensityControl.setForPkg(shell, prefs, displayId, dpi, pkg)
+    /** @see CastDensityControl.setForSplit — split DPI, persists the per-ratio profile on success (R4/#5). */
+    fun setDensitySplit(dpi: Int?) = executor.submit("density-split") {
+        CastDensityControl.setForSplit(shell, prefs, displayId, dpi, state)
     }
     /** Shutdown executor. Call on app destroy. */
     fun shutdown() {

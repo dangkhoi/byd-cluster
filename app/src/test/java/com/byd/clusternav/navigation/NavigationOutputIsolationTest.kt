@@ -1,6 +1,8 @@
 package com.byd.clusternav.navigation
 
 import com.byd.clusternav.testsupport.SourceRoots
+import com.byd.clusternav.contracts.SpeedLimitClearReason
+import com.byd.clusternav.contracts.SpeedLimitSource
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -60,6 +62,37 @@ class NavigationOutputIsolationTest {
         val hud = sourceRoot.resolve("HudAdapter.kt").toFile().readText()
         assertFalse(lane.contains("HudAdapter"), "lane must not reference or reset HUD")
         assertFalse(hud.contains("ClusterLaneAdapter"), "HUD must not reference or reset lane")
+    }
+
+    @Test fun `speed sign ports are independent from each other and canonical Amap navigation`() {
+        var now = 1_000L
+        val cluster = RecordingSpeedSignPort(SpeedSignOutput.CLUSTER)
+        val hud = RecordingSpeedSignPort(SpeedSignOutput.HUD)
+        val coordinator = SpeedSignLifecycleCoordinator(cluster, hud, { now })
+        try {
+            coordinator.onProcessRestart(1)
+            cluster.clearHistory(); hud.clearHistory()
+            coordinator.onSourceSelected(SpeedLimitSource.WAZE)
+            coordinator.onOutputEnabled(SpeedSignOutput.CLUSTER, true)
+            coordinator.onOutputEnabled(SpeedSignOutput.HUD, true)
+            coordinator.onMasterEnabled(true)
+            assertTrue(coordinator.onSpeedLimit(SpeedLimitSource.WAZE, 80, now++, 1))
+            coordinator.onOutputEnabled(SpeedSignOutput.CLUSTER, false)
+
+            assertEquals(listOf(SpeedLimitClearReason.OUTPUT_DISABLED),
+                cluster.snapshot().mapNotNull { it.frame.clearReason })
+            assertTrue(hud.snapshot().none { it.frame.clearReason != null })
+            assertEquals(80, hud.snapshot().single().frame.value)
+        } finally {
+            coordinator.close()
+        }
+
+        val navigation = SourceRoots.text("src/main/java/com/byd/clusternav/ClusterBroadcaster.kt")
+        val speed = SourceRoots.text("src/main/java/com/byd/clusternav/NavigationSpeedSignOwner.kt")
+        assertFalse(navigation.contains("NavigationSpeedSignOwner"))
+        assertFalse(navigation.contains("SpeedLimitFrame"))
+        assertFalse(speed.contains("ClusterBroadcaster"))
+        assertFalse(speed.contains("AmapFrameBuilder"))
     }
 
     private fun assertBlockIsolation(failingTarget: NavigationOutputTarget) {

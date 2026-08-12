@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * - Tap token rejects duplicate operations
  * - Listener cleanup on destroy
  * - Geometry editor uses dynamic display size
- * - Disabled zone tap is no-op
+ * - Single-icon touch target ≥48dp (the 3-zone disabled-zone no-op is gone — R5)
  *
  * Pure JVM tests — no Android framework required.
  */
@@ -197,60 +197,77 @@ class CastUILifecycleSafetyTest {
         assertEquals(720, h)
     }
 
-    // ─── Disabled zone no-op tests ────────────────────────────────────────────
+    // ─── Single-icon touch target (replaces 3-zone size + disabled-zone no-op) ─
 
     @Test
-    fun `disabled zone does not dispatch action`() {
-        // Simulates: FloatingBubbleService.onZoneTap checks renderer.isZoneDisabled
-        var dispatched = false
-        val zoneEnabled = false // isZoneDisabled(zone)==true: paintDisabled TAGS disabled; isEnabled stays true (for drag)
-
-        // Pattern from FloatingBubbleService.onZoneTap:
-        if (!zoneEnabled) {
-            // no-op — return early
-        } else {
-            dispatched = true
-        }
-        assertFalse(dispatched, "Disabled zone tap must not dispatch any action")
-    }
-
-    @Test
-    fun `enabled occupied zone dispatches stop action`() {
-        var dispatched = false
-        val zoneEnabled = true // isZoneDisabled(zone)==false: paintOccupied tags not-disabled
-
-        if (!zoneEnabled) {
-            // no-op
-        } else {
-            dispatched = true
-        }
-        assertTrue(dispatched, "Enabled zone tap should dispatch action")
-    }
-
-    @Test
-    fun `enabled empty zone dispatches cast action`() {
-        var dispatched = false
-        val zoneEnabled = true // isZoneDisabled(zone)==false: paintEmpty tags not-disabled
-
-        if (!zoneEnabled) {
-            // no-op
-        } else {
-            dispatched = true
-        }
-        assertTrue(dispatched, "Enabled empty zone should dispatch cast")
-    }
-
-    // ─── Touch target size constant tests ─────────────────────────────────────
-
-    @Test
-    fun `zone size is owner-chosen 38dp compact below 48dp guideline per owner 2026-08-06`() {
-        // Owner shrank the 3 zones to ~80% (48dp → 38dp) on-car 2026-08-06 for a more compact bubble.
-        // Intentionally below the 48dp automotive guideline; this test locks the owner decision.
-        assertEquals(38, BubbleRenderer.ZONE_MIN_DP)
+    fun `single icon is app-icon sized and honours the 48dp automotive minimum`() {
+        // The 3-zone layout (its 38dp compact size and its disabled-zone no-op) is gone. The one
+        // nav-arrow icon is ALWAYS actionable (tap = cast / return / prepare, never a dead no-op),
+        // so there is no disabled-zone gate to test; instead the icon's touch target must meet the
+        // ≥48dp automotive guideline and be ~app-icon sized.
+        assertEquals(52, BubbleRenderer.ICON_SIZE_DP)
+        assertTrue(BubbleRenderer.TOUCH_MIN_DP >= 48, "automotive touch target must be ≥48dp")
         assertTrue(
-            BubbleRenderer.ZONE_MIN_DP in 32..48,
-            "zone size (${BubbleRenderer.ZONE_MIN_DP}dp) must stay in a sane 32–48dp range"
+            BubbleRenderer.ICON_SIZE_DP in BubbleRenderer.TOUCH_MIN_DP..56,
+            "icon (${BubbleRenderer.ICON_SIZE_DP}dp) must be app-icon sized and ≥${BubbleRenderer.TOUCH_MIN_DP}dp",
         )
+    }
+
+    // ─── Teardown-before-init safety (onDestroy after onCreate bailed early) ───
+
+    /**
+     * Mirrors FloatingBubbleService's lateinit teardown contract. onCreate() calls
+     * `stopSelf(); return` when the overlay permission is missing (a clean install) or
+     * startForeground is denied — BEFORE `renderer`/`gestureHandler` are assigned. stopSelf()
+     * still runs onDestroy(), so onDestroy must guard every lateinit with `::prop.isInitialized`.
+     */
+    private class TeardownMirror {
+        lateinit var gestureHandler: Any
+        lateinit var renderer: Any
+        var shutdownCalled = false
+        var clearCalled = false
+
+        /** onCreate() reached `stopSelf(); return` before initializing the lateinits. */
+        fun createBailedEarly() { /* intentionally no assignment */ }
+
+        /** onCreate() ran to completion. */
+        fun createFully() {
+            gestureHandler = Any()
+            renderer = Any()
+        }
+
+        /** onDestroy() guarded teardown — must be safe whether or not onCreate finished. */
+        fun destroy() {
+            if (::gestureHandler.isInitialized) shutdownCalled = true
+            if (::renderer.isInitialized) clearCalled = true
+        }
+    }
+
+    @Test
+    fun `onDestroy after early-bail onCreate does not touch uninitialized lateinits`() {
+        val svc = TeardownMirror()
+        svc.createBailedEarly()
+        assertDoesNotThrow { svc.destroy() } // pre-fix: UninitializedPropertyAccessException (crash)
+        assertFalse(svc.shutdownCalled, "gestureHandler.shutdown() must be skipped when uninitialized")
+        assertFalse(svc.clearCalled, "renderer.clearViews() must be skipped when uninitialized")
+    }
+
+    @Test
+    fun `onDestroy after full onCreate still tears down initialized lateinits`() {
+        val svc = TeardownMirror()
+        svc.createFully()
+        svc.destroy()
+        assertTrue(svc.shutdownCalled, "gestureHandler.shutdown() must run when initialized")
+        assertTrue(svc.clearCalled, "renderer.clearViews() must run when initialized")
+    }
+
+    @Test
+    fun `unguarded lateinit access throws — documents the crash the guard prevents`() {
+        val svc = TeardownMirror()
+        svc.createBailedEarly()
+        assertThrows(UninitializedPropertyAccessException::class.java) {
+            svc.gestureHandler.toString() // exactly what the pre-fix onDestroy did at line 171
+        }
     }
 
     // ─── Helper ───────────────────────────────────────────────────────────────

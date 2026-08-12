@@ -58,25 +58,78 @@ data class SlotState(
 enum class ClusterSlotSide { LEFT, RIGHT }
 
 /**
- * Per-app geometry profile key (R4).
+ * Per-app geometry profile key (R3/R4).
  *
- * Each NORMAL app may persist up to 7 geometry profiles:
- * - [FULL] — full-cluster placement (stored under the legacy no-suffix prefs keys).
- * - Split placements: side (L/R) × leftPercent ∈ {50, 30, 70} → 6 keys.
+ * A profile is either [FULL] (full-cluster placement, stored under the legacy no-suffix prefs
+ * keys) or a split placement keyed by ([side] ∈ {LEFT,RIGHT}, [percent] ∈ [SPLIT_PERCENTS]).
+ * With the 9 supported ratios that is 9×2 split keys + FULL = **19 profiles per app** (R3).
+ *
+ * Data-driven, not a fixed enum: split percents come from [SPLIT_PERCENTS] so extending the ratio
+ * set is a one-line change. The [key] string ("FULL", "L30", "R70") is the round-trippable prefs
+ * token and is backward-compatible with keys the predecessor saved (which only used {50,30,70}).
  *
  * Pure Kotlin (no Android import) so it lives in :core (LayeringRulesTest Q1).
  */
-enum class CastProfile {
-    FULL, L50, R50, L30, R30, L70, R70;
+class CastProfile private constructor(
+    /** LEFT/RIGHT for a split profile; null (together with [percent]) means [FULL]. */
+    val side: ClusterSlotSide?,
+    /** leftPercent bucket (one of [SPLIT_PERCENTS]) for a split profile; null means [FULL]. */
+    val percent: Int?,
+) {
+    /** True for the full-cluster profile (legacy no-suffix prefs keys). */
+    val isFull: Boolean get() = side == null || percent == null
+
+    /**
+     * Round-trippable prefs token: `"FULL"` for the full profile, else `"L<percent>"` /
+     * `"R<percent>"` (e.g. `L30`, `R70`). Stable across releases — used verbatim as the prefs
+     * key suffix, so it must never change format for an existing percent (backward compat, R3).
+     */
+    val key: String
+        get() = if (isFull) FULL_KEY else (if (side == ClusterSlotSide.LEFT) "L" else "R") + percent
+
+    override fun toString(): String = key
+    override fun equals(other: Any?): Boolean =
+        other is CastProfile && other.side == side && other.percent == percent
+    override fun hashCode(): Int = 31 * (side?.ordinal ?: -1) + (percent ?: -1)
 
     companion object {
+        /** All supported split ratios as leftPercent, step 10 → {10,20,…,90} (R3). */
+        val SPLIT_PERCENTS: List<Int> = (10..90 step 10).toList()
+
+        /** Fallback ratio when a saved/received percent is not one of [SPLIT_PERCENTS]. */
+        const val DEFAULT_PERCENT: Int = 50
+
+        private const val FULL_KEY = "FULL"
+
+        /** The full-cluster profile (legacy no-suffix prefs keys). */
+        val FULL: CastProfile = CastProfile(null, null)
+
         /**
-         * Map a split (side, leftPercent) to its profile. A [leftPercent] outside {30, 70}
-         * (the 50/50 case or any backfilled value) maps to the L50 / R50 variant.
+         * Profile for a split ([side], [leftPercent]). A [leftPercent] outside [SPLIT_PERCENTS]
+         * falls back to [DEFAULT_PERCENT] (R3: "unknown/legacy percent → nearest default (50)").
          */
-        fun of(side: ClusterSlotSide, leftPercent: Int): CastProfile = when (side) {
-            ClusterSlotSide.LEFT -> when (leftPercent) { 30 -> L30; 70 -> L70; else -> L50 }
-            ClusterSlotSide.RIGHT -> when (leftPercent) { 30 -> R30; 70 -> R70; else -> R50 }
+        fun of(side: ClusterSlotSide, leftPercent: Int): CastProfile =
+            CastProfile(side, normalizePercent(leftPercent))
+
+        /** Clamp an arbitrary percent to a valid [SPLIT_PERCENTS] bucket (unknown → [DEFAULT_PERCENT]). */
+        fun normalizePercent(percent: Int): Int =
+            if (percent in SPLIT_PERCENTS) percent else DEFAULT_PERCENT
+
+        /**
+         * Parse a prefs [key] token back into a profile (backward-compat with saved keys).
+         * `"FULL"` → [FULL]; `"L<pct>"`/`"R<pct>"` → the matching split (unknown percent →
+         * [DEFAULT_PERCENT]); anything malformed → null.
+         */
+        fun fromKey(key: String): CastProfile? {
+            if (key == FULL_KEY) return FULL
+            if (key.length < 2) return null
+            val side = when (key[0]) {
+                'L' -> ClusterSlotSide.LEFT
+                'R' -> ClusterSlotSide.RIGHT
+                else -> return null
+            }
+            val pct = key.substring(1).toIntOrNull() ?: return null
+            return of(side, pct)
         }
     }
 }
@@ -250,4 +303,14 @@ interface SimpleCastPrefs {
     fun setAutoStartRightPackage(pkg: String?)
     fun autoStartSplitEnabled(): Boolean
     fun setAutoStartSplitEnabled(enabled: Boolean)
+
+    /**
+     * Master Cluster-Cast enable. Default FALSE (owner 2026-08-11) = nav-only: the app opens NO
+     * projection, shows NO floating bubble, runs NO cast-autostart, and leaves the cluster on native
+     * gauges so navigation shows on the cluster with no competing projection. When TRUE the app opens
+     * the projection + shows the floating bubble (opt-in). This ONLY gates the Cast track;
+     * navigation→cluster (broadcast) and HUD are independent and keep working either way.
+     */
+    fun castEnabled(): Boolean
+    fun setCastEnabled(enabled: Boolean)
 }

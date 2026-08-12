@@ -290,15 +290,15 @@ class SimpleCastCoordinatorTest {
 
     @Test
     fun `CastProfile of maps side and leftPercent`() {
-        assertEquals(CastProfile.L50, CastProfile.of(ClusterSlotSide.LEFT, 50))
-        assertEquals(CastProfile.L30, CastProfile.of(ClusterSlotSide.LEFT, 30))
-        assertEquals(CastProfile.L70, CastProfile.of(ClusterSlotSide.LEFT, 70))
-        assertEquals(CastProfile.R50, CastProfile.of(ClusterSlotSide.RIGHT, 50))
-        assertEquals(CastProfile.R30, CastProfile.of(ClusterSlotSide.RIGHT, 30))
-        assertEquals(CastProfile.R70, CastProfile.of(ClusterSlotSide.RIGHT, 70))
-        // Out-of-set leftPercent (a backfilled value) maps to the 50-variant.
-        assertEquals(CastProfile.L50, CastProfile.of(ClusterSlotSide.LEFT, 60))
-        assertEquals(CastProfile.R50, CastProfile.of(ClusterSlotSide.RIGHT, 999))
+        assertEquals("L50", CastProfile.of(ClusterSlotSide.LEFT, 50).key)
+        assertEquals("L30", CastProfile.of(ClusterSlotSide.LEFT, 30).key)
+        assertEquals("L70", CastProfile.of(ClusterSlotSide.LEFT, 70).key)
+        assertEquals("R50", CastProfile.of(ClusterSlotSide.RIGHT, 50).key)
+        assertEquals("R30", CastProfile.of(ClusterSlotSide.RIGHT, 30).key)
+        assertEquals("R70", CastProfile.of(ClusterSlotSide.RIGHT, 70).key)
+        // Out-of-set leftPercent (never one of the 9 ratios) falls back to the default (50).
+        assertEquals(CastProfile.of(ClusterSlotSide.LEFT, 50), CastProfile.of(ClusterSlotSide.LEFT, 55))
+        assertEquals(CastProfile.of(ClusterSlotSide.RIGHT, 50), CastProfile.of(ClusterSlotSide.RIGHT, 999))
     }
 
     @Test
@@ -309,18 +309,18 @@ class SimpleCastCoordinatorTest {
         val r70 = DisplayConfig("1920x720", "0,0,0,0", "240", CastBounds(576, 0, 1920, 720))
 
         prefs.saveDisplayConfig(pkg, CastProfile.FULL, full)
-        prefs.saveDisplayConfig(pkg, CastProfile.L30, l30)
-        prefs.saveDisplayConfig(pkg, CastProfile.R70, r70)
+        prefs.saveDisplayConfig(pkg, CastProfile.of(ClusterSlotSide.LEFT, 30), l30)
+        prefs.saveDisplayConfig(pkg, CastProfile.of(ClusterSlotSide.RIGHT, 70), r70)
 
         // Each profile reads back its own value — no cross-contamination.
         assertEquals(full, prefs.displayConfigFor(pkg, CastProfile.FULL))
-        assertEquals(l30, prefs.displayConfigFor(pkg, CastProfile.L30))
-        assertEquals(r70, prefs.displayConfigFor(pkg, CastProfile.R70))
+        assertEquals(l30, prefs.displayConfigFor(pkg, CastProfile.of(ClusterSlotSide.LEFT, 30)))
+        assertEquals(r70, prefs.displayConfigFor(pkg, CastProfile.of(ClusterSlotSide.RIGHT, 70)))
         // No-arg overload is the FULL profile (backward compat).
         assertEquals(full, prefs.displayConfigFor(pkg))
         // Untouched profiles remain null.
-        assertNull(prefs.displayConfigFor(pkg, CastProfile.L50))
-        assertNull(prefs.displayConfigFor(pkg, CastProfile.R30))
+        assertNull(prefs.displayConfigFor(pkg, CastProfile.of(ClusterSlotSide.LEFT, 50)))
+        assertNull(prefs.displayConfigFor(pkg, CastProfile.of(ClusterSlotSide.RIGHT, 30)))
     }
 
     @Test
@@ -333,11 +333,11 @@ class SimpleCastCoordinatorTest {
 
         coordinator.resizeActiveSlot(ClusterSlotSide.LEFT, 0, 0, 500, 720)
         // LEFT × ratio 30 → profile L30
-        awaitTrue { prefs.displayConfigFor("com.test.left", CastProfile.L30)?.bounds == CastBounds(0, 0, 500, 720) }
+        awaitTrue { prefs.displayConfigFor("com.test.left", CastProfile.of(ClusterSlotSide.LEFT, 30))?.bounds == CastBounds(0, 0, 500, 720) }
 
         assertEquals(
             CastBounds(0, 0, 500, 720),
-            prefs.displayConfigFor("com.test.left", CastProfile.L30)?.bounds,
+            prefs.displayConfigFor("com.test.left", CastProfile.of(ClusterSlotSide.LEFT, 30))?.bounds,
         )
         // Persisted to L30 only — the FULL profile is untouched.
         assertNull(prefs.displayConfigFor("com.test.left", CastProfile.FULL))
@@ -357,7 +357,7 @@ class SimpleCastCoordinatorTest {
         Thread.sleep(300) // allow the serial executor to run the (failing) resize
 
         // RIGHT × ratio 70 → profile R70; must stay null because the shell rejected the resize.
-        assertNull(prefs.displayConfigFor("com.test.right", CastProfile.R70))
+        assertNull(prefs.displayConfigFor("com.test.right", CastProfile.of(ClusterSlotSide.RIGHT, 70)))
     }
 
     // ─── T1 autostart sequencing proof (R1) ──────────────────────────────────

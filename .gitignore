@@ -59,7 +59,10 @@ docs/diagnostics/log-nav-debug.txt
 # Dump/trace on-car theo phiên (WM NPE traces, castlog, IP nội bộ, tên app) — PII, TUYỆT ĐỐI không public
 oncar-*/
 # ─── Không thuộc ClusterNav (PoSound / tooling / audio / bên thứ 3) ──
-tools/
+tools/*
+!tools/re/
+tools/re/*
+!tools/re/manifest.json
 *.wav
 apks/
 # ─── Local Kiro autonomous orchestrator state (session ID, locks, logs) ───

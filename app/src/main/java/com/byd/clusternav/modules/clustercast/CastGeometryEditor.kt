@@ -252,7 +252,9 @@ internal class CastGeometryEditor(
             setOnClickListener {
                 densityIndex = (densityIndex + 1) % densityCycle.size
                 text = "DPI: ${densityCycle[densityIndex]}"
-                coordinator.setDensity(densityCycle[densityIndex])
+                // R4/#5: split DPI must persist under the per-ratio profile of each occupied slot
+                // (setDensitySplit), NOT the FULL-only setDensity (which no-ops in split state).
+                coordinator.setDensitySplit(densityCycle[densityIndex])
             }
         })
         row.addView(TextView(activity).apply {
