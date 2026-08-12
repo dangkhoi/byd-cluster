@@ -2,6 +2,7 @@ package com.byd.clusternav.modules.hal
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.PackageManager
 import java.lang.reflect.Array as RArray
 
 /**
@@ -29,7 +30,6 @@ object BydHal {
     // Nguồn HƯỚNG cho dead-reckoning (recon: getInstance được không trên ROM này?): góc lái + tốc độ 4 bánh.
     const val BODYWORK = "android.hardware.bydauto.bodywork.BYDAutoBodyworkDevice"   // getSteeringWheelValue (±780°)
     const val SPECIAL = "android.hardware.bydauto.special.BYDAutoSpecialDevice"      // getWheelSpeed(area) 4 bánh → yaw
-    const val ADAS = "android.hardware.bydauto.adas.BYDAutoADASDevice"              // TSR/speed limit inject
     // (ENGINE / EngineVoiceSimulator đã theo tiếng pô sang app com.byd.posound — bỏ khỏi ClusterNav)
 
     // Quyền KHÔNG có substring "byd" nhưng kim.apk vẫn allowlist (để bypass đầy đủ như reference).
@@ -45,10 +45,10 @@ object BydHal {
     fun bypass(base: Context): Context = object : ContextWrapper(base) {
         private fun byd(p: String?): Boolean = !p.isNullOrBlank() &&
             (p.contains("BYDAUTO", true) || p.contains("BYDACQUISITION", true) || p.contains("byd", true) || p in EXTRA_PERMS)
-        override fun checkPermission(p: String, pid: Int, uid: Int) = if (byd(p)) 0 else super.checkPermission(p, pid, uid)
-        override fun checkCallingPermission(p: String) = if (byd(p)) 0 else super.checkCallingPermission(p)
-        override fun checkCallingOrSelfPermission(p: String) = if (byd(p)) 0 else super.checkCallingOrSelfPermission(p)
-        override fun checkSelfPermission(p: String) = if (byd(p)) 0 else super.checkSelfPermission(p)
+        override fun checkPermission(p: String, pid: Int, uid: Int) = if (byd(p)) PackageManager.PERMISSION_GRANTED else super.checkPermission(p, pid, uid)
+        override fun checkCallingPermission(p: String) = if (byd(p)) PackageManager.PERMISSION_GRANTED else super.checkCallingPermission(p)
+        override fun checkCallingOrSelfPermission(p: String) = if (byd(p)) PackageManager.PERMISSION_GRANTED else super.checkCallingOrSelfPermission(p)
+        override fun checkSelfPermission(p: String) = if (byd(p)) PackageManager.PERMISSION_GRANTED else super.checkSelfPermission(p)
         override fun enforcePermission(p: String, pid: Int, uid: Int, m: String?) { if (!byd(p)) super.enforcePermission(p, pid, uid, m) }
         override fun enforceCallingPermission(p: String, m: String?) { if (!byd(p)) super.enforceCallingPermission(p, m) }
         override fun enforceCallingOrSelfPermission(p: String, m: String?) { if (!byd(p)) super.enforceCallingOrSelfPermission(p, m) }
@@ -176,23 +176,6 @@ object BydHal {
         w("INSTRUMENT_GUIDE_INFO_SIMPLE_SET", 0)
         w("INSTRUMENT_FRONT_CROSSING_DISTANCE_SET", -1)
         return rc.toString().trim()
-    }
-
-    /**
-     * Ghi giới hạn tốc độ lên cụm qua ADAS device (feature ADAS_TRAFFIC_LIMIT_SPEED_STATUS_PROMPT).
-     * Proven on-car: bắn 60 → cụm hiện biển 60. Cần test thêm: 0 có xoá biển không.
-     * Feature hex 0x4F40201D = int 1329602589.
-     */
-    fun writeSpeedLimit(ctx: Context, limitKph: Int): String {
-        val sys = systemBypassContext()
-        val adas = device(ADAS, sys, bypass(ctx)) ?: return "ADASDevice null"
-        val id = featureId("ADAS_TRAFFIC_LIMIT_SPEED_STATUS_PROMPT") ?: 1329602589
-        return "SPEED_LIMIT=$limitKph rc=" + runCatching { setInt(adas, id, limitKph) }.getOrElse { root(it) }
-    }
-
-    /** Xoá biển tốc độ giới hạn trên cụm (gửi 0). */
-    fun clearSpeedLimit(ctx: Context): String {
-        return writeSpeedLimit(ctx, 0)
     }
 
     /** Đọc đồng bộ feature đầu tiên ra giá trị (cho self-test read). null nếu không đọc được cái nào. */

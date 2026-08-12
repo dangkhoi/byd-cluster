@@ -56,16 +56,17 @@
                         android:text="Cụm: tắt" android:textColor="@color/text_secondary" />
                     <TextView android:id="@+id/txt_hud_status" android:layout_width="0dp"
                         android:layout_height="wrap_content" android:layout_weight="1"
-                        android:text="HUD: tắt" android:textColor="@color/text_secondary" />
+                        android:text="HUD: tắt" android:textColor="@color/text_secondary"
+                        android:visibility="gone" />
                 </LinearLayout>
 
-                <CheckBox android:id="@+id/cb_lane" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:layout_marginTop="6dp"
-                    android:minHeight="@dimen/touch_min" android:text="Bật đầu ra làn cụm độc lập"
-                    android:textColor="@color/text_secondary" />
+                <!-- cb_lane removed (owner 2026-08-11): cluster-lane output follows the master switch above. -->
+                <!-- #6 (R1 · cast-nav-ux-release-v104): nav→HUD output toggle hidden; id kept so
+                     findViewById stays non-null. nav→cluster pipeline untouched. -->
                 <CheckBox android:id="@+id/cb_hud" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:minHeight="@dimen/touch_min"
-                    android:text="Bật đầu ra HUD độc lập" android:textColor="@color/text_secondary" />
+                    android:text="Bật đầu ra HUD độc lập" android:textColor="@color/text_secondary"
+                    android:visibility="gone" />
 
                                 <!-- MỘT công tắc cho một mục đích. Hai phần bên dưới là hai nửa của cùng một cơ chế: nội suy
                 trừ dần cự ly theo tốc độ xe giữa hai lần notification, còn bộ đọc màn Maps kéo mốc về đúng
@@ -137,9 +138,24 @@
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:background="@drawable/card_bg"
                 android:padding="@dimen/card_pad">
-                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:text="Cluster Cast" android:textColor="@color/text_primary"
-                    android:textSize="@dimen/text_status" android:fontFamily="sans-serif-medium" />
+                <!-- Header: title + master enable switch (mirrors the Navigation+HUD card's switch_enabled). -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Cluster Cast" android:textColor="@color/text_primary"
+                        android:textSize="@dimen/text_status" android:fontFamily="sans-serif-medium" />
+                    <Switch android:id="@+id/switch_cast_enabled" android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" android:text="Bật" android:textColor="@color/text_secondary"
+                        android:contentDescription="Bật hoặc tắt Cluster Cast" />
+                </LinearLayout>
+                <!-- Shown ONLY when Cast is OFF: reassures that nav→cụm + HUD still work. -->
+                <TextView android:id="@+id/txt_cast_disabled_hint" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="6dp" android:visibility="gone"
+                    android:text="Đang tắt · cụm vẫn hiện dẫn đường và HUD như thường. Bật để chiếu app lên cụm."
+                    android:textColor="@color/text_secondary" android:textSize="@dimen/text_label" />
+                <!-- Collapsible Cast body: hidden when the master switch is OFF. -->
+                <LinearLayout android:id="@+id/cast_body" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical">
                 <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginTop="2dp" android:text="Chạm nút nổi để chiếu app đang mở · chạm lại để về màn chính"
                     android:textColor="@color/text_secondary" android:textSize="@dimen/text_label" />
@@ -209,10 +225,6 @@
                     android:layout_height="wrap_content" android:layout_marginTop="6dp" android:minHeight="@dimen/touch_min"
                     android:contentDescription="Tỉ lệ chia đôi cụm khi chiếu hai app" />
 
-                <Button android:id="@+id/btn_check_update" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp" android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
-                    android:text="⬇ Kiểm tra cập nhật" android:textAllCaps="false" android:textColor="@color/brand" />
-
                 <TextView android:id="@+id/cast_recovery_toggle" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical"
                     android:layout_marginTop="14dp" android:text="Khắc phục sự cố"
@@ -234,7 +246,17 @@
                         android:layout_marginTop="6dp" android:background="@drawable/btn_warning_outline" android:text="Trả cụm về đồng hồ (cứu hộ)" android:textAllCaps="false"
                         android:textSize="14sp" android:textColor="@color/btn_text" />
 
+                    <Button android:id="@+id/cast_deep_rescue" android:contentDescription="Dọn sạch cụm khi kẹt do DashCast: dừng hẳn chiếu của app này, force-stop DashCast, reset cụm về đồng hồ. Không mở lại chiếu."
+                        android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp"
+                        android:layout_marginTop="6dp" android:background="@drawable/btn_warning_outline" android:text="Dọn sạch cụm (gỡ kẹt DashCast)" android:textAllCaps="false"
+                        android:textSize="14sp" android:textColor="@color/btn_text" />
+
                 </LinearLayout>
+                </LinearLayout>
+                <!-- App update — OUTSIDE cast_body so it stays reachable even when Cast is OFF. -->
+                <Button android:id="@+id/btn_check_update" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp" android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
+                    android:text="⬇ Kiểm tra cập nhật" android:textAllCaps="false" android:textColor="@color/brand" />
             </LinearLayout>
         </ScrollView>
     </LinearLayout>

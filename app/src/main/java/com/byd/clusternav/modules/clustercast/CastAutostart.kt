@@ -7,6 +7,8 @@ import android.widget.CheckBox
 import android.widget.Spinner
 import com.byd.clusternav.Lang
 import com.byd.clusternav.R
+import com.byd.clusternav.modules.clustercast.simplified.AppMover
+import com.byd.clusternav.modules.clustercast.simplified.CastProfile
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastCoordinator
 import com.byd.clusternav.modules.clustercast.simplified.SimpleCastPrefs
 
@@ -82,8 +84,11 @@ internal class CastAutostart(
         val launchIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolveInfos = activity.packageManager.queryIntentActivities(launchIntent, 0)
         val excluded = setOf(activity.packageName, "com.android.launcher", "com.android.launcher3")
+        // R2 (#3): a launcher/home must never be an autostart target either — same guard the bubble
+        // dispatcher uses for tap-cast. AppMover.isLauncher catches Dudu + any *launcher* id beyond
+        // the two hard-coded above.
         val apps = resolveInfos
-            .filter { it.activityInfo.packageName !in excluded }
+            .filter { it.activityInfo.packageName !in excluded && !AppMover.isLauncher(it.activityInfo.packageName) }
             .map { it.loadLabel(activity.packageManager).toString() to it.activityInfo.packageName }
             .distinctBy { it.second }
             .sortedBy { it.first.lowercase() }
@@ -119,17 +124,20 @@ internal class CastAutostart(
     }
 
     private fun populateSplitRatioSpinner(spinner: Spinner) {
-        val options = listOf("50/50", "30/70", "70/30")
-        val percentValues = listOf(50, 30, 70)
+        // R3 (#4): all 9 split ratios, data-driven from CastProfile.SPLIT_PERCENTS ({10,20,…,90}).
+        // Value = leftPercent; label = "left/right" (10/90 … 90/10). One spinner covers both
+        // directions because leftPercent alone determines the whole split.
+        val percentValues = CastProfile.SPLIT_PERCENTS
+        val options = percentValues.map { "$it/${100 - it}" }
 
         val adapter = android.widget.ArrayAdapter(activity, android.R.layout.simple_spinner_item, options)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         spinner.adapter = adapter
 
-        // R3 backfill: any previously-stored ratio outside {50,30,70} (e.g. legacy 60/40, 40/60)
-        // falls back to 50 and is re-persisted so the coordinator reads a valid ratio.
+        // R3 backfill: any previously-stored ratio outside SPLIT_PERCENTS (e.g. legacy 55, 0) falls
+        // back to the default (50) and is re-persisted so the coordinator reads a valid ratio.
         val savedPct = castPrefs.splitRatioLeftPercent()
-        val effectivePct = if (savedPct in percentValues) savedPct else 50
+        val effectivePct = CastProfile.normalizePercent(savedPct)
         if (effectivePct != savedPct) castPrefs.setSplitRatioLeftPercent(effectivePct)
         spinner.setSelection(percentValues.indexOf(effectivePct))
 

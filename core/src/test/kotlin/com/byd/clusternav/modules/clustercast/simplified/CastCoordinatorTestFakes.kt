@@ -97,6 +97,7 @@ class FakePrefs : SimpleCastPrefs {
     private var _autoStartLeftPackage: String? = null
     private var _autoStartRightPackage: String? = null
     private var _autoStartSplitEnabled: Boolean = false
+    private var _castEnabled: Boolean = false
 
     override fun displayConfigFor(pkg: String): DisplayConfig? = displayConfigFor(pkg, CastProfile.FULL)
     override fun displayConfigFor(pkg: String, profile: CastProfile): DisplayConfig? = configs[profileKey(pkg, profile)]
@@ -105,9 +106,9 @@ class FakePrefs : SimpleCastPrefs {
         configs[profileKey(pkg, profile)] = config
     }
 
-    /** Mirrors SharedPrefsSimpleCastPrefs: FULL = bare pkg key, others append `__<profile.name>`. */
+    /** Mirrors SharedPrefsSimpleCastPrefs: FULL = bare pkg key, others append `__<profile.key>`. */
     private fun profileKey(pkg: String, profile: CastProfile): String =
-        if (profile == CastProfile.FULL) pkg else "${pkg}__${profile.name}"
+        if (profile.isFull) pkg else "${pkg}__${profile.key}"
     override fun lastDisplayId(): Int? = lastDisplay
     override fun saveLastDisplayId(id: Int) { lastDisplay = id }
 
@@ -128,4 +129,7 @@ class FakePrefs : SimpleCastPrefs {
     override fun setAutoStartRightPackage(pkg: String?) { _autoStartRightPackage = pkg }
     override fun autoStartSplitEnabled(): Boolean = _autoStartSplitEnabled
     override fun setAutoStartSplitEnabled(enabled: Boolean) { _autoStartSplitEnabled = enabled }
+
+    override fun castEnabled(): Boolean = _castEnabled
+    override fun setCastEnabled(enabled: Boolean) { _castEnabled = enabled }
 }

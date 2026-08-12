@@ -1,6 +1,7 @@
 package com.byd.clusternav
 
 import android.content.Context
+import com.byd.clusternav.contracts.SpeedLimitSource
 
 /** Lưu lựa chọn người dùng (bật/tắt đẩy cụm + chế độ chọn nguồn). Đọc trực tiếp trong listener. */
 object Prefs {
@@ -28,6 +29,10 @@ object Prefs {
 
     fun speedSource(ctx: Context): Int = sp(ctx).getInt(K_SPEED_SOURCE, com.byd.clusternav.navigation.NavSourceMode.SPEED_VIETMAP)
     fun setSpeedSource(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_SPEED_SOURCE, v).apply()
+    fun speedLimitSource(ctx: Context): SpeedLimitSource = when (speedSource(ctx)) {
+        com.byd.clusternav.navigation.NavSourceMode.SPEED_WAZE -> SpeedLimitSource.WAZE
+        else -> SpeedLimitSource.VIETMAP
+    }
 
     fun marquee(ctx: Context): Boolean = sp(ctx).getBoolean(K_MARQUEE, true)   // cuộn tên đường dài
     fun setMarquee(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_MARQUEE, v).apply()
@@ -42,8 +47,8 @@ object Prefs {
     fun interpolate(ctx: Context): Boolean = sp(ctx).getBoolean("interpolate", false)
     fun setInterpolate(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("interpolate", v).apply()
 
-    // ★ HUD kính lái: ghi thẳng CAN instrument register (BydHal.writeNavFrame) như DashCast/OpenBYD → firmware animate.
-    // THỬ NGHIỆM (mặc định TẮT): cần xe có HUD + xác minh writeNavFrame render. Bật ở màn chính để test.
+    // ★ HUD kính lái: T7 chỉ feeds request/output lifecycle vào HudMirrorController UNKNOWN/no-op.
+    // Mặc định TẮT; không có direct HAL content write hoặc physical-OFF ownership in production.
     fun hud(ctx: Context): Boolean = sp(ctx).getBoolean("hud", false)
     fun setHud(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("hud", v).apply()
 

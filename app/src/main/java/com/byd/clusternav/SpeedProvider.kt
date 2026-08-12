@@ -4,6 +4,7 @@ import com.byd.clusternav.navigation.SpeedReading
 import com.byd.clusternav.navigation.TurnDistanceInterpolator
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.PackageManager
 
 /**
  * Đọc TỐC ĐỘ XE real-time từ BYD HAL (no-root, in-process) cho dead-reckoning. TỰ CHỨA reflection — KHÔNG
@@ -63,8 +64,8 @@ object SpeedProvider {
 
     private fun bypass(base: Context): Context = object : ContextWrapper(base) {
         private fun byd(p: String?) = !p.isNullOrBlank() && (p.contains("byd", true) || p.contains("BYDAUTO", true))
-        override fun checkSelfPermission(p: String) = if (byd(p)) 0 else super.checkSelfPermission(p)
-        override fun checkCallingOrSelfPermission(p: String) = if (byd(p)) 0 else super.checkCallingOrSelfPermission(p)
+        override fun checkSelfPermission(p: String) = if (byd(p)) PackageManager.PERMISSION_GRANTED else super.checkSelfPermission(p)
+        override fun checkCallingOrSelfPermission(p: String) = if (byd(p)) PackageManager.PERMISSION_GRANTED else super.checkCallingOrSelfPermission(p)
         override fun enforceCallingOrSelfPermission(p: String, m: String?) { if (!byd(p)) super.enforceCallingOrSelfPermission(p, m) }
         override fun getPackageName() = "com.byd.dashcast"
         override fun getApplicationContext(): Context = this

@@ -19,70 +19,93 @@ import android.util.Log
 object ClusterBroadcaster {
     private const val TAG = "ClusterBroadcaster"
 
-    // Nhịp tim KIÊM ticker cuộn chữ (marquee): re-feed mỗi ~0.7s -> vừa giữ làn vừa trượt tên đường dài.
-    // Quá STALE_MS không có frame mới -> coi như nav đã kết thúc -> self-heal (idle + nhả khoá nguồn).
-    private const val HEARTBEAT_MS = 400L     // re-feed + re-project nội suy + cuộn marquee
-    private const val STALE_MS = 180000L   // 3 phút: đứng yên (đèn đỏ/kẹt xe) GMaps ngừng đẩy noti — KHÔNG xoá cụm.
-    //                                        Nav thật kết thúc đã có onNotificationRemoved lo; đây chỉ là backstop khi noti chết câm.
+    // Existing cluster heartbeat remains exactly 400 ms; freshness is monotonic and session-scoped.
+    private const val HEARTBEAT_MS = 400L
+    private const val STALE_MS = 180_000L
     private val handler by lazy { Handler(Looper.getMainLooper()) }
-    private var heartbeat: Runnable? = null
-    @Volatile private var lastCtx: Context? = null
-    @Volatile private var lastState: NavState? = null
-    @Volatile private var lastByd: Boolean = false
-    @Volatile private var lastFreshAt: Long = 0L
 
-    // Marquee: tên đường đầy đủ (đã dọn) + vị trí cuộn. Đổi đường -> cuộn lại từ đầu.
-    @Volatile private var lastCleanRoad: String = ""
-    @Volatile private var scrollTick: Int = 0
+    private data class LanePayload(
+        val context: Context,
+        val state: NavState,
+        val byd: Boolean,
+    )
 
-    // Self-heal: mỗi PHIÊN nav, lần đầu transition inactive->active thì reset cờ kẹt 1 lần.
-    @Volatile private var sessionReset = false
+    private data class SessionFrame(
+        val sourceId: String,
+        val sessionId: String,
+        val sequence: Long,
+    )
 
-    // HUD kính lái — delegated to NavigationHudOwner (bounded executor, generation, dedup, typed HAL result).
-    private var hudOwner: NavigationHudOwner? = null
-    // Speed-sign — delegated to NavigationSpeedSignOwner (bounded executor, generation-fence, dedup).
-    private var speedSignOwner: NavigationSpeedSignOwner? = null
+    private val sourceLock = Any()
+    private var selectedSource: String? = null
+    private var sessionSerial = 0L
+    private var sessionSelectedAtEpochMs = 0L
+    private var sourceSequence = 0L
+    private var lastCleanRoad = ""
+    private var scrollTick = 0
+    private val hudController = HudMirrorController()
 
-    private fun ensureHudOwner(ctx: Context): NavigationHudOwner {
-        return hudOwner ?: NavigationHudOwner(ctx.applicationContext).also { hudOwner = it; it.start() }
+    private val emissionArbiter by lazy {
+        AmapEmissionArbiter(
+            scheduler = HandlerAmapEmissionScheduler(handler),
+            sink = ::handleEmission,
+            monotonicNowMs = SystemClock::elapsedRealtime,
+            heartbeatMs = HEARTBEAT_MS,
+        )
     }
 
-    private fun ensureSpeedSignOwner(ctx: Context): NavigationSpeedSignOwner {
-        return speedSignOwner ?: NavigationSpeedSignOwner(ctx.applicationContext).also { speedSignOwner = it }
+    /** Called at the accepted source boundary; the next frame starts a new monotonic Amap session. */
+    fun selectSource(sourceId: String) {
+        require(sourceId.isNotBlank()) { "sourceId must not be blank" }
+        val sessionId = synchronized(sourceLock) {
+            if (selectedSource == sourceId) return
+            selectedSource = sourceId
+            sessionSerial++
+            sessionSelectedAtEpochMs = System.currentTimeMillis()
+            sourceSequence = 0L
+            "amap-$sessionSerial"
+        }
+        emissionArbiter.beginSession(sourceId, sessionId)
     }
 
-    /**
-     * RESET cờ kẹt (chống "không lên gì"): mIsBYDMapNaving=true còn sót từ test IS_BYD_MAP=true sẽ
-     * CHẶN mọi frame IS_BYD_MAP=false. AmapService chỉ clear mIsBYDMapNaving khi 10019/EXTRA_STATE=9
-     * mang IS_BYD_MAP=TRUE; pass FALSE sau đó clear mIsGAODENaving về idle sạch. PHẢI gửi 2 lần đúng thứ tự.
-     */
-    fun resetBydNaving(ctx: Context) {
-        send(ctx, AmapFrameBuilder.buildStateFrame(AmapFrameBuilder.KEY_TYPE_STATE, AmapFrameBuilder.STATE_STOP, true))
-        send(ctx, AmapFrameBuilder.buildStateFrame(AmapFrameBuilder.KEY_TYPE_STATE, AmapFrameBuilder.STATE_STOP, false))
-        Log.i(TAG, "resetBydNaving (10019/STATE=9: true->false)")
-    }
-
-    /** Deliver one frame to the Cluster lane only. HUD delivery has a separate adapter entry point. */
+    /** Deliver one fresh source frame to the canonical AmapService lane. */
     fun emitLane(ctx: Context, s: NavState, byd: Boolean = false) {
         if (!s.active) { stopLane(ctx); return }
+        val identity = synchronized(sourceLock) {
+            if (selectedSource == null) {
+                selectedSource = "legacy-navigation"
+                sessionSerial++
+                sessionSelectedAtEpochMs = System.currentTimeMillis()
+            }
+            if (s.updatedAt > 0L && s.updatedAt < sessionSelectedAtEpochMs) {
+                Log.i(TAG, "drop old source frame updatedAt=${s.updatedAt} sessionStart=$sessionSelectedAtEpochMs")
+                return
+            }
+            sourceSequence++
+            SessionFrame(checkNotNull(selectedSource), "amap-$sessionSerial", sourceSequence)
+        }
+        emissionArbiter.beginSession(identity.sourceId, identity.sessionId)
+
         val clean = NavFormat.cleanRoadName(s.road)
-        if (clean != lastCleanRoad) { lastCleanRoad = clean; scrollTick = 0 }   // đổi đường -> cuộn lại từ đầu
         val seg = NavParse.parseMeters(s.distance)
-        val hasDist = seg > 0    // <= 0 = chỉ hướng, KHÔNG gửi số lên cụm
-        // CHỈ-HƯỚNG (GMaps không gửi m/km): KHÔNG bịa 0m, reset nội suy để khỏi giữ số cũ; vẫn hiện mũi tên+đường.
-        if (hasDist) {
-            if (Prefs.interpolate(ctx)) TurnDistanceInterpolator.anchor(seg, "$clean|${s.maneuverText}", SystemClock.elapsedRealtime(), SpeedProvider.mps())
+        if (seg > 0) {
+            if (Prefs.interpolate(ctx)) {
+                TurnDistanceInterpolator.anchor(
+                    seg, "$clean|${s.maneuverText}", SystemClock.elapsedRealtime(), SpeedProvider.mps(),
+                )
+            }
         } else {
-            runCatching { TurnDistanceInterpolator.clearAnchor() }   // Q5: giữ curveFactor, chỉ xoá mốc
+            runCatching { TurnDistanceInterpolator.clearAnchor() }
         }
         NavDistanceLog.ensure(ctx)
-        // Self-heal: đầu mỗi phiên, clear cờ kẹt rồi mới feed (đúng recipe: reset true->false rồi 10001).
-        if (!sessionReset) { resetBydNaving(ctx); sessionReset = true }
-        lastCtx = ctx.applicationContext; lastState = s; lastByd = byd
-        lastFreshAt = System.currentTimeMillis()
-        sendFrame(ctx, s, byd)
-        scrollTick++
-        scheduleHeartbeat()
+        emissionArbiter.sourceFrame(
+            sourceId = identity.sourceId,
+            sessionId = identity.sessionId,
+            sourceSequence = identity.sequence,
+            observedAtMs = SystemClock.elapsedRealtime(),
+            freshForMs = STALE_MS,
+            payload = LanePayload(ctx.applicationContext, s, byd),
+        )
     }
 
     /** Dựng frame với tên đường marquee (theo scrollTick) rồi gửi. Dùng chung cho emit + nhịp tim. */
@@ -130,120 +153,91 @@ object ClusterBroadcaster {
             "raw='${s.distance}' road='${frame.getStringExtra("NEXT_ROAD_NAME")}' byd=$byd")
     }
 
-    /** Deliver one frame to HUD only; it never broadcasts, resets or backpressures the Cluster lane. */
-    fun emitHud(ctx: Context, s: NavState) {
-        val cleanRoad = NavFormat.cleanRoadName(s.road)
-        val meters = NavParse.parseMeters(s.distance).takeIf { it >= 0 } ?: -1
-        pushHud(ctx, s, meters, cleanRoad)
+    /** HUD remains UNKNOWN in T7: record request/source truth and perform zero physical writes. */
+    fun emitHud(@Suppress("UNUSED_PARAMETER") ctx: Context, @Suppress("UNUSED_PARAMETER") s: NavState) {
+        hudController.requestEnabled(true)
+        emissionArbiter.latestToken()?.let(hudController::onCanonicalFrame)
     }
 
-    /** Ghi 1 frame nav lên HUD qua bounded owner — dedup + FIFO + typed HAL result inside owner. */
-    private fun pushHud(ctx: Context, s: NavState, seg: Int, cleanRoad: String) {
-        val icon = bydIcon(s)
-        val hudRoad = NavFormat.fitRoadName(cleanRoad, NavFormat.HUD_ROAD_MAX_UNITS)
-        ensureHudOwner(ctx).push(icon, seg, hudRoad)
+    fun stopHud(@Suppress("UNUSED_PARAMETER") ctx: Context) {
+        hudController.onOutputDisabled()
     }
-
-    /** Tắt HUD (clear via bounded owner) — gọi khi hết nav HOẶC khi tắt toggle HUD giữa phiên. */
-    private fun clearHud(ctx: Context) {
-        hudOwner?.stop()
-    }
-
-    /** Stop HUD only; Cluster-lane delivery/session state is untouched. */
-    fun stopHud(ctx: Context) = clearHud(ctx)
 
     @Deprecated("Use stopHud")
     fun onHudOff(ctx: Context) = stopHud(ctx)
 
-    /** BYD turn-icon (1-49, CanBusController enum) cho HUD — ENCODER THUẦN từ maneuver TRUNG LẬP.
-     *  Đọc `s.maneuver` (quyết định hướng rẽ duy nhất, CHUNG với làn cụm) qua [Maneuver.toHudIcon].
-     *  CHỈ khi maneuver = null (chưa phân loại) mới suy từ CHỮ. Trước đây HUD suy lại từ chữ nên với
-     *  GMaps/Waze — hướng rẽ nằm ở ẢNH/turn-enum chứ không ở chữ — mọi cua rớt về "đi thẳng" (11). */
-    private fun bydIcon(s: NavState): Int {
-        s.maneuver?.toHudIcon()?.let { return it }   // (1) encoder thuần: maneuver -> mã CAN
-        // (2) FALLBACK khi maneuver = null: suy từ chữ + glyph HUD-riêng (hầm 49, vòng-xuyến-có-số-nhánh).
-        //     Lớp cuối, hiếm khi tới (GMaps/Waze đã chốt maneuver ở biên đầu vào).
-        val src = s.maneuverText.ifBlank { s.road }
-        val t = src.lowercase()
-        if (NavFormat.roundaboutExit(src) in 1..10 || t.contains("vòng xuyến") || t.contains("roundabout") || t.contains("bùng binh")) return 15   // vòng xuyến (glyph chung)
-        if (t.contains("hầm") || t.contains("tunnel")) return 49  // hầm
-        val right = t.contains("phải") || t.contains("right")
-        val left = t.contains("trái") || t.contains("left")
-        val sharp = t.contains("gắt") || t.contains("sharp")
-        val slight = t.contains("nhẹ") || t.contains("slight")
-        return when {
-            t.contains("quay đầu") || t.contains("u-turn") || t.contains("u turn") -> if (left) 9 else 10
-            t.contains("đến nơi") || t.contains("điểm đến") || t.contains("destination") || t.contains("arrive") -> 48
-            right && sharp -> 8; left && sharp -> 7
-            right && slight -> 5; left && slight -> 3
-            right -> 2; left -> 1
-            else -> 11                                            // đi thẳng
-        }
-    }
-
-    /** Stop Cluster lane only; HUD state and executor are untouched. */
+    /** Stop Cluster lane only; HUD physical ownership is untouched. */
     fun stopLane(ctx: Context) {
-        cancelHeartbeat()
-        sessionReset = false
-        lastState = null
-        lastCleanRoad = ""; scrollTick = 0
-        TurnDistanceInterpolator.reset()
-        resetBydNaving(ctx)
+        val (source, session) = synchronized(sourceLock) {
+            if (sessionSerial == 0L) sessionSerial = 1L
+            val stoppedSource = selectedSource ?: "legacy-navigation"
+            val stoppedSession = "amap-$sessionSerial"
+            selectedSource = null
+            sourceSequence = 0L
+            sessionSerial++
+            stoppedSource to stoppedSession
+        }
+        emissionArbiter.stop(source, session, LanePayload(ctx.applicationContext, NavState(), false))
         Log.i(TAG, "stop lane")
     }
 
-    /** Whole Navigation Stop clears both physical outputs. */
     fun stop(ctx: Context) {
         stopLane(ctx)
         stopHud(ctx)
         Log.i(TAG, "stop navigation")
     }
 
-    private fun send(ctx: Context, intent: Intent) {
-        runCatching { ctx.sendBroadcast(intent) }.onFailure { Log.e(TAG, "sendBroadcast failed", it) }
-    }
-
-    private fun scheduleHeartbeat() {
-        heartbeat?.let { handler.removeCallbacks(it) }
-        val r = object : Runnable {
-            override fun run() {
-                val ctx = lastCtx; val s = lastState
-                if (ctx == null || s == null || !s.active) return
-                if (!Prefs.enabled(ctx)) { idleSelfHeal(); return }                       // công tắc tắt giữa chừng
-                if (System.currentTimeMillis() - lastFreshAt > STALE_MS) { idleSelfHeal(); return } // nav coi như hết
-                scrollTick++                          // trượt marquee 1 nhịp
-                sendFrame(ctx, s, lastByd)            // re-feed giữ làn + cuộn chữ
-                handler.postDelayed(this, HEARTBEAT_MS)
+    private fun handleEmission(emission: AmapEmission<LanePayload>) {
+        val payload = emission.payload
+        when (emission.kind) {
+            AmapEmissionKind.SESSION_RESET -> {
+                lastCleanRoad = ""
+                scrollTick = 0
+                sendResetFrames(payload.context)
+            }
+            AmapEmissionKind.SOURCE_FRAME -> {
+                val cleanRoad = NavFormat.cleanRoadName(payload.state.road)
+                if (cleanRoad != lastCleanRoad) {
+                    lastCleanRoad = cleanRoad
+                    scrollTick = 0
+                }
+                sendFrame(payload.context, payload.state, payload.byd)
+                scrollTick++
+                hudController.onCanonicalFrame(emission.token)
+            }
+            AmapEmissionKind.HEARTBEAT -> {
+                scrollTick++
+                sendFrame(payload.context, payload.state, payload.byd)
+                hudController.onCanonicalFrame(emission.token)
+            }
+            AmapEmissionKind.FORCED_REPLAY -> {
+                sendFrame(payload.context, payload.state, payload.byd)
+                hudController.onCanonicalFrame(emission.token)
+            }
+            AmapEmissionKind.STOP -> {
+                lastCleanRoad = ""
+                scrollTick = 0
+                TurnDistanceInterpolator.reset()
+                SourceArbiter.clear()
+                sendResetFrames(payload.context)
+                hudController.onStop()
             }
         }
-        heartbeat = r
-        handler.postDelayed(r, HEARTBEAT_MS)
     }
 
-    /** Nav coi như hết / bị tắt giữa chừng: tắt nhịp tim, idle cụm, nhả khoá nguồn (cho app khác tiếp quản). */
-    private fun idleSelfHeal() {
-        cancelHeartbeat()
-        sessionReset = false
-        val ctx = lastCtx
-        lastState = null
-        TurnDistanceInterpolator.reset()
-        SourceArbiter.clear()
-        ctx?.let { resetBydNaving(it) }
-        Log.i(TAG, "lane idle self-heal (stale/disabled); HUD remains independently owned")
+    /** Field-proven Amap reset pair; only the emission-arbiter sink may call this sender. */
+    private fun sendResetFrames(ctx: Context) {
+        send(ctx, AmapFrameBuilder.buildStateFrame(
+            AmapFrameBuilder.KEY_TYPE_STATE, AmapFrameBuilder.STATE_STOP, true,
+        ))
+        send(ctx, AmapFrameBuilder.buildStateFrame(
+            AmapFrameBuilder.KEY_TYPE_STATE, AmapFrameBuilder.STATE_STOP, false,
+        ))
+        Log.i(TAG, "Amap reset/stop 10019 STATE=9 true→false")
     }
 
-    private fun cancelHeartbeat() {
-        heartbeat?.let { handler.removeCallbacks(it) }
-        heartbeat = null
-    }
-
-    // ─── Speed limit → cluster instrument (from VietMap widget bridge) ────────────────────────────────
-
-    /**
-     * Call from VietMapWidgetBridge snapshot listener. Deduplicates — only writes HAL when value changes.
-     * Pass null to clear the speed limit display (stale / unavailable / no limit).
-     */
-    fun pushSpeedLimit(ctx: Context, limitKph: Int?) {
-        ensureSpeedSignOwner(ctx).push(limitKph)
+    private fun send(ctx: Context, intent: Intent) {
+        runCatching { ctx.sendBroadcast(intent) }
+            .onFailure { Log.e(TAG, "sendBroadcast failed", it) }
     }
 }

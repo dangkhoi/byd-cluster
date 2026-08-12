@@ -19,6 +19,10 @@ INVALIDATED_CANDIDATE_SHA256S=(
   "afcd7a07651d5def520c62a4eb3016876d3b0610a438f156a0517564a4688005"
   "a7c4701bc881298d05500fe59517ac55ff8fe68d2c328c208506c0529ed616aa"
   "b1f1356251950601da5b7e87c5e0f09c3a94f1510766c841d17add2dfceb7c0c"
+  # 1.04 pre-hardening release (2026-08-06): exported TEST_ADAS_*/TEST_SPEED_LIMIT via RebindReceiver
+  # (WARN-1 / P0). Current source is hardened; this stale binary must never reach a head unit. Rebuild
+  # the candidate from hardened source via collectAuthorizedApk, then regenerate vehicle-candidate.json.
+  "b9a0259e7174a694b7bd4fd8984199ac91091e5e52e8de9c73ae6c67542bb598"
 )
 
 candidate_field() {

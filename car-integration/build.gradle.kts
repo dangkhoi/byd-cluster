@@ -24,3 +24,13 @@ dependencies {
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 }
+
+// Fixed no-argument T10 host entry. Tests must never execute this dadb-capable task.
+tasks.register<JavaExec>("runHudSignT10") {
+    group = "verification"
+    description = "Run the fixed-path, no-argument HUD/sign T10 host gate"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.byd.clusternav.vehicleprobe.T10RunnerMain")
+    workingDir = rootProject.projectDir
+    args(emptyList<String>())
+}

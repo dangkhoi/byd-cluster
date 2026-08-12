@@ -1,5 +1,8 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.navigation.NavArrivalGuard
+import com.byd.clusternav.navigation.NavFormat
+import com.byd.clusternav.navigation.NavParse
 import com.byd.clusternav.navigation.SourceArbiter
 import com.byd.clusternav.navigation.TurnDistanceInterpolator
 import android.app.Notification
@@ -7,12 +10,15 @@ import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.os.SystemClock
 import android.util.Log
+import com.byd.clusternav.contracts.SpeedLimitSource
 import com.byd.clusternav.navigation.NavigationPermission
 import com.byd.clusternav.vietmapwidget.VietMapWidgetBridge
 import com.byd.clusternav.vietmapwidget.VietMapWidgetFreshness
 import com.byd.clusternav.vietmapwidget.VietMapWidgetOwner
 import com.byd.clusternav.modules.wazehud.WazeHudSource
+import com.byd.clusternav.modules.wazehud.WazeHudAvailability
 
 /**
  * Adapter MỎNG cho notification dẫn đường (Google Maps / ReVanced). Chỉ làm:
@@ -28,8 +34,7 @@ class NavNotificationListener : NotificationListenerService() {
         @Volatile var connected = false
         // Token cự ly (m/km/ft/mi) — dấu hiệu noti dẫn đường, dùng khi category không phải navigation.
         private val DIST_TOKEN = Regex("""\b\d+([.,]\d+)?\s?(m|km|ft|mi)\b""", RegexOption.IGNORE_CASE)
-        // "Đã đến nơi" — GMaps/VietMap báo kết thúc dẫn đường (hết cự ly) → tín hiệu để XOÁ cụm.
-        private val ARRIVAL = Regex("""arriv|đã đến|đến nơi|tới nơi|bạn đã tới|đã tới""", RegexOption.IGNORE_CASE)
+        // "Đã đến nơi" — phát hiện KẾT-THÚC-NAV dùng chung ở NavArrivalGuard.isArrivalText (R7/#2).
         val MAPS_PACKAGES = setOf(
             "com.google.android.apps.maps",
             "app.revanced.android.apps.maps",
@@ -43,12 +48,23 @@ class NavNotificationListener : NotificationListenerService() {
         )
     }
 
-    /** Hệ thống THẢ binding (head-unit hay làm lúc chạy) → yêu cầu bind lại NGAY, không thì nav "câm". */
+    private val speedSignOwner by lazy { NavigationSpeedSignOwner.get(applicationContext) }
+
+    /**
+     * R7 (#2): per-session arrival + distance-regression guard (pure logic in :core). Reset on
+     * STOP / arrival / notification removal so each route starts clean.
+     */
+    private val arrivalGuard = NavArrivalGuard()
+
+    /** Hệ thống THẢ binding (head-unit hay làm lúc chạy) → clear typed sources before teardown. */
     override fun onListenerDisconnected() {
         connected = false
+        speedSignOwner.onProviderDisconnected(SpeedLimitSource.VIETMAP)
+        speedSignOwner.onProviderDisconnected(SpeedLimitSource.WAZE)
+        stopWazeHudSource(clearFirst = false)
         val bridge = VietMapWidgetBridge.get(applicationContext)
-        bridge.removeListener(speedLimitPusher)
         bridge.stop(VietMapWidgetOwner.NAVIGATION)
+        bridge.removeListener(speedLimitPusher)
         runCatching { NavRepository.setPermission(applicationContext, NavigationPermission.UNKNOWN) }
             .onFailure { Log.e(TAG, "permission state update failed", it) }
         runCatching {
@@ -59,6 +75,7 @@ class NavNotificationListener : NotificationListenerService() {
     /** Khi (re)cấp quyền / service bind lại: clear cờ kẹt + QUÉT noti đang hiện (nav có thể đã chạy trước). */
     override fun onListenerConnected() {
         connected = true
+        speedSignOwner.syncFromPrefs()
         val bridge = VietMapWidgetBridge.get(applicationContext)
         bridge.start(VietMapWidgetOwner.NAVIGATION)
         bridge.addListener(speedLimitPusher)
@@ -80,18 +97,25 @@ class NavNotificationListener : NotificationListenerService() {
 
     override fun onDestroy() {
         connected = false
-        stopWazeHudSource()
+        speedSignOwner.onSourceStopped(SpeedLimitSource.VIETMAP)
+        speedSignOwner.onSourceStopped(SpeedLimitSource.WAZE)
+        stopWazeHudSource(clearFirst = false)
         val bridge = VietMapWidgetBridge.get(applicationContext)
-        bridge.removeListener(speedLimitPusher)
         bridge.stop(VietMapWidgetOwner.NAVIGATION)
+        bridge.removeListener(speedLimitPusher)
         super.onDestroy()
     }
 
     private val speedLimitPusher: (com.byd.clusternav.vietmapwidget.VietMapWidgetSnapshot) -> Unit = { snapshot ->
-        // Only push VietMap speed if speed source = VIETMAP
-        if (Prefs.speedSource(applicationContext) == com.byd.clusternav.navigation.NavSourceMode.SPEED_VIETMAP) {
-            val limit = if (snapshot.speedFreshness == VietMapWidgetFreshness.FRESH) snapshot.speedLimitKph else null
-            ClusterBroadcaster.pushSpeedLimit(applicationContext, limit)
+        speedSignOwner.onSourceSelected(Prefs.speedLimitSource(applicationContext))
+        if (snapshot.speedFreshness == VietMapWidgetFreshness.FRESH) {
+            speedSignOwner.onSpeedLimit(
+                source = SpeedLimitSource.VIETMAP,
+                valueKph = snapshot.speedLimitKph ?: 0,
+                observedAtMonotonicMs = snapshot.speedUpdatedAtElapsedMs ?: SystemClock.elapsedRealtime(),
+            )
+        } else {
+            speedSignOwner.onProviderDisconnected(SpeedLimitSource.VIETMAP)
         }
     }
 
@@ -108,37 +132,51 @@ class NavNotificationListener : NotificationListenerService() {
                 if (r.success) r.stdout else null
             }.getOrNull()
         }
+        source.availabilityListener = { availability ->
+            when (availability) {
+                WazeHudAvailability.AVAILABLE -> Unit
+                WazeHudAvailability.UNAVAILABLE ->
+                    speedSignOwner.onProviderDisconnected(SpeedLimitSource.WAZE)
+                WazeHudAvailability.STOPPED ->
+                    speedSignOwner.onSourceStopped(SpeedLimitSource.WAZE)
+            }
+        }
         source.listener = listener@{ state ->
-            if (!Prefs.enabled(applicationContext)) return@listener // master cluster-push switch only
             val ctx = applicationContext
-            val now = System.currentTimeMillis()
+            val masterEnabled = Prefs.enabled(ctx)
+            speedSignOwner.onMasterEnabled(masterEnabled)
+            speedSignOwner.onSourceSelected(Prefs.speedLimitSource(ctx))
 
-            // NAV (turn/distance/road/eta) needs an ACTIVE route + a nav source that allows Waze.
-            if (state.navigating) {
+            // Navigation requires an active route; speed acquisition below remains route-independent.
+            if (masterEnabled && state.navigating) {
                 val navMode = Prefs.sourceMode(ctx)
                 if ((navMode == Prefs.PREFER_WAZE || navMode == Prefs.AUTO) &&
-                    SourceArbiter.shouldFeed("com.chisadin.wazemod", navMode, now)) {
+                    SourceArbiter.shouldFeed("com.chisadin.wazemod", navMode, System.currentTimeMillis())) {
+                    ClusterBroadcaster.selectSource("com.chisadin.wazemod")
                     val navState = source.toNavState(state)
                     ClusterBroadcaster.emitLane(ctx, navState)
                     ClusterBroadcaster.emitHud(ctx, navState)
                 }
             }
 
-            // SPEED LIMIT is present even WITHOUT a route (just driving) — must NOT be gated on
-            // `navigating`. Only requires the speed source = WAZE and a real limit value.
-            if (Prefs.speedSource(ctx) == com.byd.clusternav.navigation.NavSourceMode.SPEED_WAZE &&
-                state.speedLimitKmh > 0) {
-                ClusterBroadcaster.pushSpeedLimit(ctx, state.speedLimitKmh)
-                // TODO: push alerts (alr/alrD/alrV) to speed-sign output when alert rendering is added
-            }
+            // HLP lim=0/missing is a real clear event. Never gate speed on `navigating`.
+            speedSignOwner.onSpeedLimit(
+                source = SpeedLimitSource.WAZE,
+                valueKph = state.speedLimitKmh,
+                observedAtMonotonicMs = SystemClock.elapsedRealtime(),
+            )
         }
         source.start()
         wazeHudSource = source
         Log.i(TAG, "WazeHUD logcat source started (dadb-shell poll)")
     }
 
-    private fun stopWazeHudSource() {
-        wazeHudSource?.stop()
+    private fun stopWazeHudSource(clearFirst: Boolean = true) {
+        val source = wazeHudSource ?: return
+        if (clearFirst) speedSignOwner.onSourceStopped(SpeedLimitSource.WAZE)
+        source.listener = null
+        source.availabilityListener = null
+        source.stop()
         wazeHudSource = null
     }
 
@@ -176,11 +214,12 @@ class NavNotificationListener : NotificationListenerService() {
             val hasDist = DIST_TOKEN.containsMatchIn(t) || DIST_TOKEN.containsMatchIn(x)
             // PHẢI tính cả ARRIVAL: noti "Đã đến" (build ReVanced KHÔNG set category, arrival KHÔNG có m/km) chính là
             // tín hiệu KẾT-THÚC-NAV để idle cụm — nếu chỉ isNav||hasDist thì nó bị nuốt → cụm kẹt icon-đích 3' (STALE_MS).
-            val isArrival = ARRIVAL.containsMatchIn(t) || ARRIVAL.containsMatchIn(x)
+            val isArrival = NavArrivalGuard.isArrivalText(t, x)
             if (!isNav && !hasDist && !isArrival) return
         }
         // CHỈ tắt cụm nếu app vừa-gỡ chính là nguồn đang giữ khoá — gỡ noti app nền KHÔNG tắt nav app đang dẫn.
         if (SourceArbiter.release(sbn.packageName)) {
+            arrivalGuard.reset()
             NavRepository.stop(applicationContext)
             Log.i(TAG, "nguồn ${sbn.packageName} dừng -> stop authoritative session")
         }
@@ -194,21 +233,18 @@ class NavNotificationListener : NotificationListenerService() {
         val sub = ex.getCharSequence("android.subText")?.toString()?.trim().orEmpty()
         val big = ex.getCharSequence("android.bigText")?.toString()?.trim().orEmpty()
         if (title.isEmpty() && text.isEmpty()) return
-        // ĐÃ ĐẾN NƠI: GMaps báo "Arrived/đã đến" → CẮM CỜ ĐÍCH (NEW_ICON 15) + tên đích, KHÔNG số.
-        // Giữ cờ tới khi GMaps gỡ noti (onNotificationRemoved mới idle cụm). Không xoá trống ngay.
-        if (ARRIVAL.containsMatchIn(title) || ARRIVAL.containsMatchIn(text) || ARRIVAL.containsMatchIn(big)) {
+        // ĐÃ ĐẾN NƠI (R7/#2): GMaps/VietMap báo "Arrived/đã đến" → PHÁT STOP/CLEAR cụm (về đồng hồ),
+        // KHÔNG cắm frame kẹt heart-beat STALE_MS. Trước đây nhánh này ingest 1 frame icon-đích (15) và
+        // GIỮ tới khi noti bị gỡ; nếu noti không bị gỡ (hoặc frame khác đè), cụm kẹt (owner 2026-08:
+        // "GMaps đã báo tới nơi mà cụm kẹt 3.5 km đi thẳng"). Giờ đóng đường về gauges ngay.
+        if (NavArrivalGuard.isArrivalText(title, text, big)) {
             // R3: "đã đến" cũng phải qua trọng tài — app NỀN báo đến KHÔNG được đè cụm đang do app khác giữ.
             if (!SourceArbiter.shouldFeed(sbn.packageName, Prefs.sourceMode(applicationContext), System.currentTimeMillis())) return
+            arrivalGuard.reset()
             runCatching { TurnDistanceInterpolator.reset() }
-            val dest = text.ifBlank { title }
-            val arrived = NavState(
-                active = true, arrow = null, distance = "", road = dest,
-                maneuverText = "Đã đến", maneuverIcon = 15, eta = "",
-                updatedAt = System.currentTimeMillis()
-            )
-            runCatching { NavRepository.ingest(applicationContext, sbn.packageName, null, arrived) }
-                .onFailure { Log.e(TAG, "arrival ingest failed", it) }
-            Log.i(TAG, "đã đến nơi (${sbn.packageName}) → cắm cờ đích (icon 15)")
+            runCatching { NavRepository.stop(applicationContext) }
+                .onFailure { Log.e(TAG, "arrival stop failed", it) }
+            Log.i(TAG, "đã đến nơi (${sbn.packageName}) → clear cụm (stop)")
             return
         }
         // NHẬN noti dẫn đường: category=navigation HOẶC có TOKEN CỰ LY trong title/text (bản GMaps patched/ReVanced
@@ -227,6 +263,7 @@ class NavNotificationListener : NotificationListenerService() {
             Log.i(TAG, "bỏ qua ${sbn.packageName}: nguồn khác đang giữ cụm")
             return
         }
+        ClusterBroadcaster.selectSource(sbn.packageName)
 
         // HƯỚNG RẼ: thử tên small-icon (ReVanced GMaps luôn logo -> trượt) rồi tới đọc ẢNH large-icon.
         val manIcon = IconResource.resolve(applicationContext, sbn.packageName, n.smallIcon)
@@ -242,6 +279,27 @@ class NavNotificationListener : NotificationListenerService() {
             ?: -1
 
         val state = NotificationParser.parse(sbn.packageName, title, text, sub, big, arrow, classifiedIcon) ?: return
+
+        // R7/#2: route complete (route-remaining collapsed to ~0) → clear cụm thay vì heart-beat frame cũ.
+        val routeRemainMeters = NavParse.parseEta(state.eta).first
+        if (arrivalGuard.arrivedByRouteRemaining(routeRemainMeters.takeIf { it >= 0 })) {
+            arrivalGuard.reset()
+            runCatching { TurnDistanceInterpolator.reset() }
+            runCatching { NavRepository.stop(applicationContext) }.onFailure { Log.e(TAG, "route-end stop failed", it) }
+            Log.i(TAG, "route-remaining ~0 (${sbn.packageName}) → clear cụm (stop)")
+            return
+        }
+
+        // R7/#2: chặn cự ly NHẢY LÙI vô lý (đang tới gần mà vọt lên, cùng maneuver, không reroute) — giữ
+        // frame cũ trên cụm thay vì để frame lỗi trở thành giá trị heart-beat (owner: 500 m → 3.5 km).
+        val distMeters = NavParse.parseMeters(state.distance)
+        if (distMeters >= 0) {
+            val maneuverKey = NavFormat.cleanRoadName(state.road) + "|" + state.maneuverText
+            if (!arrivalGuard.acceptDistance(distMeters, maneuverKey)) {
+                Log.i(TAG, "bỏ frame cự ly nhảy vô lý: ${distMeters}m road='${state.road}' (giữ frame cũ)")
+                return
+            }
+        }
 
         NavRepository.ingest(applicationContext, sbn.packageName, null, state)
         Log.i(TAG, "nav dist='${state.distance}' road='${state.road}' eta='${state.eta}'")

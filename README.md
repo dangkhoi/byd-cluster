@@ -1,7 +1,7 @@
 # ClusterNav
 
 > [!CAUTION]
-> **CURRENT STATUS: OFF-CAR CANDIDATE `0.72` — FIELD-EXECUTION CORRECTION.** The 2026-07-25 vehicle run of the previous source failed on every case; the cluster placement recipe, bootstrap preconditions and verification constants have been corrected against the field-proven V1 behaviour (canonical D10) and the complete JVM suite is green off-car. The authorized vehicle-test candidate now exists and is recorded in [`docs/_handoff/vehicle-candidate.json`](docs/_handoff/vehicle-candidate.json) (apk path, SHA-256, exact-source identity); it passes the off-car emulator pre-check but **Stage 11 on-car execution has not started**. No APK in this repository is a supported public release until that exact candidate passes Stage 11 on-car testing and owner sign-off.
+> **CURRENT STATUS: OFF-CAR SOURCE `1.05` (versionCode 105).** The complete JVM suite is green off-car and both the debug and release APKs build cleanly, with all test/instrument-write surfaces (the T10 probe harness) confined to the `vehicleTest` build type and absent from the release APK. The prior `1.04` vehicle-test candidate recorded in [`docs/_handoff/vehicle-candidate.json`](docs/_handoff/vehicle-candidate.json) was **invalidated** by the WARN-1 hardening — its SHA-256 is now blocklisted in the on-car scripts, so `require_candidate` refuses it; a fresh `1.05` candidate must be rebuilt from hardened source through the authorized exact-source `collectAuthorizedApk` pipeline (which regenerates the manifest). **Stage 11 on-car execution has not started.** No APK in this repository is a supported public release until a freshly built exact candidate passes Stage 11 on-car testing and owner sign-off.
 
 ClusterNav is a personal hobby experiment by **Đăng Khôi · `dangkhoi`** for exploring navigation and cluster projection on BYD DiLink hardware. It is not affiliated with BYD and makes no driving-safety, compatibility, reversibility, or production-readiness claim.
 
@@ -16,7 +16,9 @@ The tracks may share one APK as packaging, but they must not share runtime contr
 
 ## Downloads and installation
 
-**Current version: 0.99** — [`apk/ClusterNav-0.99-release.apk`](apk/ClusterNav-0.99-release.apk)
+**Current version: 1.05 (versionCode 105).** Build the hardened release from source with `./gradlew :app:assembleRelease`, or produce the vehicle candidate through the authorized exact-source `collectAuthorizedApk` pipeline (see the build context below).
+
+> ⚠️ The archived `apk/ClusterNav-1.04-v104-527589f2d16a-release.apk` predates the WARN-1 hardening and still exports the T10 `TEST_ADAS_*` / `TEST_SPEED_LIMIT` ADAS/instrument-write surface — **do not install it** (its SHA-256 is now blocklisted in the on-car install guard, which refuses it). A safe candidate must be rebuilt from the current hardened `1.05` source (the release built from `main` today no longer exports any test surface).
 
 Features:
 - **Cluster Cast** — projection-first: open app → cluster ready instantly; tap floating button to cast foreground app to cluster; tap again to return.

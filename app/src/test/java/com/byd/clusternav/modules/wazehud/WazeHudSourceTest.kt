@@ -71,6 +71,30 @@ class WazeHudSourceTest {
         assertEquals(50, s.speedLimitKmh)
     }
 
+    @Test
+    fun `zero or missing HLP limit is an explicit zero clear value`() {
+        assertEquals(0, source().parseHlp("""{"v":1,"t":"s","nav":0,"lim":0}""")!!.speedLimitKmh)
+        assertEquals(0, source().parseHlp("""{"v":1,"t":"s","nav":1}""")!!.speedLimitKmh)
+    }
+
+    @Test
+    fun `dump availability transitions are idempotent and independent of de-dup`() {
+        val src = source()
+        val lifecycle = mutableListOf<WazeHudAvailability>()
+        src.availabilityListener = lifecycle::add
+        val frame = """{"v":1,"t":"s","nav":0,"lim":50,"ts":10}"""
+
+        assertNotNull(src.processDump(frame))
+        assertNull(src.processDump(frame), "same producer timestamp is de-duplicated")
+        assertNull(src.processDump(null))
+        assertNull(src.processDump(""))
+        assertNotNull(src.processDump("""{"v":1,"t":"s","nav":0,"lim":0,"ts":11}"""))
+        assertEquals(
+            listOf(WazeHudAvailability.AVAILABLE, WazeHudAvailability.UNAVAILABLE, WazeHudAvailability.AVAILABLE),
+            lifecycle,
+        )
+    }
+
     // ─── turn enum mapping ───────────────────────────────────────────────────
 
     @Test

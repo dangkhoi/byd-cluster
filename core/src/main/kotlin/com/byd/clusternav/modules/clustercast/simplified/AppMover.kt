@@ -235,6 +235,39 @@ class AppMover(
     }
 
     /**
+     * R6 (#1): best-effort check that [pkg] came back from the cluster as a freeform/floating WINDOW
+     * on display 0 — i.e. its task sits under a stack on display 0 whose bounds do NOT cover the full
+     * display. Used only to decide whether to re-issue the fullscreen reset once ([returnToMain]).
+     *
+     * This is a heuristic read of `am stack list`; the authoritative windowing-mode truth needs
+     * `dumpsys window displays` (what the legacy [com.byd.clusternav.modules.clustercast.CastShell]
+     * uses on-car). Fail-open: if the display size or stack bounds can't be parsed it returns false
+     * (no retry), so it can never loop or relaunch spuriously.
+     */
+    private fun isWindowedOnMain(pkg: String): Boolean {
+        val list = shell.execute("am stack list")
+        if (!list.success) return false
+        val (dispW, dispH) = queryDisplaySize(0) ?: return false
+        val stackRegex = Regex("""Stack id=\d+ bounds=\[(-?\d+),(-?\d+)]\[(-?\d+),(-?\d+)] displayId=(\d+)""")
+        var windowedStackOnMain = false
+        for (line in list.stdout.lines()) {
+            val m = stackRegex.find(line)
+            if (m != null) {
+                val left = m.groupValues[1].toInt(); val top = m.groupValues[2].toInt()
+                val right = m.groupValues[3].toInt(); val bottom = m.groupValues[4].toInt()
+                val disp = m.groupValues[5].toIntOrNull() ?: -1
+                // A fullscreen stack on display 0 covers [0,0][dispW,dispH]; anything offset or
+                // smaller (allowing a 2px rounding slop) is a freeform/floating window.
+                windowedStackOnMain = disp == 0 &&
+                    (left > 2 || top > 2 || (right - left) < dispW - 2 || (bottom - top) < dispH - 2)
+                continue
+            }
+            if (windowedStackOnMain && line.contains(pkg)) return true
+        }
+        return false
+    }
+
+    /**
      * Resolve the launcher activity for a package.
      * Uses `cmd package resolve-activity` (same as CastPlacementCommands).
      */
@@ -261,8 +294,9 @@ class AppMover(
     /**
      * Returns an app from the cluster back to display 0.
      *
-     * Normal: `am start --display 0 --windowingMode 1 -n '<component>'` (fullscreen, proven)
-     * CP/AA: `am stack move-task <taskId> <homeStackId> true`
+     * Normal (R6/#1): [fullscreenReturnCommand] — LAUNCHER + `FLAG_ACTIVITY_SINGLE_TOP` +
+     *   `--windowingMode 1`, re-issued once if a freeform window still lingers ([isWindowedOnMain]).
+     * CP/AA: `am stack move-task <taskId> <homeStackId> true` (unchanged).
      */
     fun returnToMain(
         pkg: String,
@@ -286,16 +320,45 @@ class AppMover(
                 result.success
             }
             AppType.NORMAL -> {
-                // Return to fullscreen on display 0. windowingMode 1 only affects THIS app's task,
-                // not the launcher. Without it, the app stays in freeform (tiny window on main screen).
+                // R6 (#1): a NORMAL app is cast with `--windowingMode 5` (freeform) + `am task
+                // resize`, so its task is left in freeform mode with cluster bounds. The old bare
+                // `am start --display 0 --windowingMode 1 -n <comp>` did NOT reliably clear freeform
+                // on an already-running task (A10, DiLink3): the app returned to display 0 but kept
+                // freeform + its [0,0,W,H] cluster rect and rendered as a skewed floating WINDOW —
+                // and every cast/return cycle kept it stuck (owner 2026-08: "cast VietMap back and
+                // forth → window, even 'return to main' stays windowed"). Use the field-proven
+                // fullscreen recipe (LAUNCHER + FLAG_ACTIVITY_SINGLE_TOP; see fullscreenReturnCommand)
+                // and self-heal: if a freeform window still lingers on the main display, re-issue once.
                 val component = activity ?: resolveLauncherComponent(pkg) ?: "$pkg/.MainActivity"
-                val result = shell.execute("am start --display 0 --windowingMode 1 -n '$component'")
+                val cmd = fullscreenReturnCommand(component)
+                var result = shell.execute(cmd)
+                if (result.success && isWindowedOnMain(pkg)) {
+                    log("returnToMain: $pkg still a freeform window on display 0 → re-issuing fullscreen reset (R6/#1)")
+                    result = shell.execute(cmd)
+                }
                 result.success
             }
         }
     }
 
     companion object {
+        /**
+         * R6 (#1, docs/specs/cast-nav-ux-release-v104.html): the field-proven verb that returns a
+         * NORMAL app from the cluster to display 0 AND resets its windowing-mode to FULLSCREEN.
+         *
+         * A bare `am start --display 0 --windowingMode 1 -n <comp>` did not reliably clear freeform
+         * on an already-running task (A10 / DiLink3), leaving the returned app as a skewed floating
+         * window. Adding the LAUNCHER intent + `FLAG_ACTIVITY_SINGLE_TOP` (0x20000000) brings the
+         * EXISTING task forward and reparents it into a fullscreen stack instead of adding a
+         * duplicate activity — the same recipe the legacy CastShell.restoreFullscreenOnMain used
+         * after the 2026-07-22 field failure ("VietMap scaled on the main screen, still scaled after
+         * restart"). `--windowingMode 1` is the only shell verb that changes a running task's
+         * windowing-mode on Android 10.
+         */
+        fun fullscreenReturnCommand(component: String): String =
+            "am start --display 0 --windowingMode 1 -f 0x20000000" +
+                " -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n '$component'"
+
         /** Known CarPlay packages on BYD DiLink. */
         private val CARPLAY_PACKAGES = setOf(
             "com.byd.autolink.carplay",
@@ -317,6 +380,22 @@ class AppMover(
                 || pkg.contains("androidauto", ignoreCase = true) ->
                 AppType.ANDROID_AUTO
             else -> AppType.NORMAL
+        }
+
+        /**
+         * True when [pkg] is a launcher / home-screen package that must never be cast to the
+         * cluster (#3, R2 — docs/specs/cast-nav-ux-release-v104.html). Casting a launcher moves the
+         * BYD Dudu home task off display 0 and freezes the main screen (owner-observed 2026-08).
+         *
+         * Pure string match (no PackageManager) so it can run in :core and be unit-tested off-car;
+         * the app layer UNIONs this with the runtime CATEGORY_HOME package list (which also catches
+         * OEM launchers whose id contains neither token). Matches:
+         *  - any id containing "launcher" (case-insensitive): com.android.launcher3, Nova, etc.
+         *  - the BYD Dudu home: prefix "com.byd.dudu" or any id containing "dudu".
+         */
+        fun isLauncher(pkg: String): Boolean {
+            val p = pkg.lowercase()
+            return p.contains("launcher") || p.startsWith("com.byd.dudu") || p.contains("dudu")
         }
     }
 }

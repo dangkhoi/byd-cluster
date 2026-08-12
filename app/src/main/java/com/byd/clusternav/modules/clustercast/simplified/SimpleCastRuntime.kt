@@ -189,10 +189,11 @@ private class SharedPrefsSimpleCastPrefs(context: Context) : SimpleCastPrefs {
     /**
      * Prefs key namespace for a profile. [CastProfile.FULL] keeps the legacy no-suffix key
      * (`config_<field>_<pkg>`) so previously-saved full configs survive; every other profile
-     * appends `__<profile.name>` (e.g. `config_size_<pkg>__L30`) — distinct, non-colliding (R4/R8).
+     * appends `__<profile.key>` (e.g. `config_size_<pkg>__L30`) — distinct, non-colliding, and
+     * byte-identical to the predecessor's keys for the {50,30,70} set (R3/R4/R8 backward compat).
      */
     private fun profileKey(pkg: String, profile: CastProfile): String =
-        if (profile == CastProfile.FULL) pkg else "${pkg}__${profile.name}"
+        if (profile.isFull) pkg else "${pkg}__${profile.key}"
 
     override fun lastDisplayId(): Int? {
         val v = sp.getInt("last_display_id", -1)
@@ -247,5 +248,14 @@ private class SharedPrefsSimpleCastPrefs(context: Context) : SimpleCastPrefs {
 
     override fun setAutoStartSplitEnabled(enabled: Boolean) {
         sp.edit().putBoolean("autostart_split_enabled", enabled).apply()
+    }
+
+    // Master enable — default FALSE (owner 2026-08-11): nav-only is the common case, so a fresh
+    // install keeps the cluster native (no projection/curve/black surface) and navigation shows on
+    // the cluster immediately. Users who want to cast apps turn Cast on explicitly (persisted).
+    override fun castEnabled(): Boolean = sp.getBoolean("cast_enabled", false)
+
+    override fun setCastEnabled(enabled: Boolean) {
+        sp.edit().putBoolean("cast_enabled", enabled).apply()
     }
 }

@@ -1,104 +1,75 @@
 package com.byd.clusternav
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
-import com.byd.clusternav.modules.hal.BydHal
-import com.byd.clusternav.navigation.BoundedNavigationOutputWorker
-import com.byd.clusternav.navigation.NavigationFrame
-import com.byd.clusternav.navigation.NavigationFrameContent
-import com.byd.clusternav.navigation.NavigationFrameDelivery
-import com.byd.clusternav.navigation.NavigationOutputTarget
-import com.byd.clusternav.navigation.NavigationSourceIdentity
-import com.byd.clusternav.navigation.OutputAdapterConfig
-import com.byd.clusternav.navigation.OutputSubmission
+import com.byd.clusternav.contracts.SpeedLimitSource
+import com.byd.clusternav.navigation.NoopSpeedSignPort
+import com.byd.clusternav.navigation.SpeedSignLifecycleCoordinator
+import com.byd.clusternav.navigation.SpeedSignOutput
 
 /**
- * Bounded owner for the speed-sign (ADAS traffic limit) cluster output.
+ * Android lifecycle facade for the typed speed-sign coordinator.
  *
- * Owns: one single-thread bounded executor, generation counter, dedup, typed HAL result.
- * Generation-fence: [clear] increments generation → any queued positive write is stale and skipped.
- *
- * v1.03 T2 fix: Dedup tracks APPLIED state (last successfully delivered limit), not enqueued
- * intent. A failed delivery does not pollute dedup — the next push with the same value will
- * correctly re-attempt delivery.
- *
- * Lifecycle: always enabled once created. [clear] sends 0 to HAL. [push] deduplicates by value.
+ * T7 is deliberately disabled at the vehicle boundary: cluster and HUD are distinct NOOP ports.
+ * Source/master/output events and clear fencing execute normally, but no frame can become a HAL,
+ * property, shell, or candidate write before a separately field-proven T11 profile exists.
  */
-class NavigationSpeedSignOwner(private val appContext: Context) : AutoCloseable {
+class NavigationSpeedSignOwner private constructor(private val appContext: Context) : AutoCloseable {
+    private val processEpoch = SystemClock.elapsedRealtimeNanos().coerceAtLeast(1L)
+    private val coordinator = SpeedSignLifecycleCoordinator(
+        clusterPort = NoopSpeedSignPort(SpeedSignOutput.CLUSTER),
+        hudPort = NoopSpeedSignPort(SpeedSignOutput.HUD),
+        monotonicNowMs = SystemClock::elapsedRealtime,
+    ).also { it.onProcessRestart(processEpoch) }
 
-    // Applied-state dedup: only updated AFTER successful HAL write.
-    private val dedupLock = Any()
-    private var appliedLimit: Int? = null
-
-    private val worker = BoundedNavigationOutputWorker(
-        NavigationOutputTarget.SPEED_SIGN,
-        "speed-sign-hal-delivery",
-        NavigationFrameDelivery { frame ->
-            val limit = frame.content.distanceMeters ?: 0 // encode limit in distanceMeters field
-            val rc = if (limit > 0) {
-                BydHal.writeSpeedLimit(appContext, limit)
-            } else {
-                BydHal.clearSpeedLimit(appContext)
-            }
-            Log.i(TAG, "speed-sign limit=$limit → $rc")
-            // Commit applied state only on successful delivery (no exception thrown).
-            synchronized(dedupLock) {
-                appliedLimit = if (limit > 0) limit else null
-            }
-        },
-        OutputAdapterConfig(queueCapacity = 4, deliveryDeadlineMs = 200L),
-        System::currentTimeMillis,
-        initiallyEnabled = true
-    )
-
-    private var sequence = 1L
-
-    /**
-     * Push a speed limit value. Deduplicates by APPLIED state — only writes HAL when the
-     * last successfully delivered value differs from the requested value.
-     * @param limitKph speed limit in km/h, or null to clear.
-     */
-    fun push(limitKph: Int?): OutputSubmission {
-        synchronized(dedupLock) {
-            if (limitKph == appliedLimit) return OutputSubmission.ACCEPTED
-        }
-        val effectiveLimit = if (limitKph != null && limitKph > 0) limitKph else 0
-        return worker.submit(limitFrame(effectiveLimit))
+    fun syncFromPrefs() {
+        onSourceSelected(Prefs.speedLimitSource(appContext))
+        onOutputEnabled(SpeedSignOutput.CLUSTER, Prefs.lane(appContext))
+        onOutputEnabled(SpeedSignOutput.HUD, Prefs.hud(appContext))
+        onMasterEnabled(Prefs.enabled(appContext))
     }
 
-    /**
-     * Clear the speed-sign display. Generation-fence: increments worker generation,
-     * invalidating any queued positive writes before issuing the clear.
-     */
-    fun clear() {
-        synchronized(dedupLock) { appliedLimit = null }
-        worker.stopSession() // increments generation, cancels pending, clears cache
-        worker.setEnabled(true)
-        worker.submit(limitFrame(0))
-        Log.i(TAG, "speed-sign clear (generation fence)")
+    fun onMasterEnabled(enabled: Boolean) {
+        coordinator.onMasterEnabled(enabled)
     }
 
-    private fun limitFrame(limitKph: Int): NavigationFrame = NavigationFrame(
-        sessionId = "speed-sign-direct",
-        source = OWNER_SOURCE,
-        sequence = sequence++,
-        receivedAtEpochMs = System.currentTimeMillis(),
-        content = NavigationFrameContent(
-            maneuverCode = null,
-            maneuverText = null,
-            distanceMeters = limitKph, // encoded: 0 = clear, >0 = limit value
-            roadName = null,
-            etaEpochMs = null,
-            routeRemainingMeters = null,
-            routeRemainingSeconds = null,
-            arrivalClock = null,
-        )
-    )
+    fun onSourceSelected(source: SpeedLimitSource) {
+        coordinator.onSourceSelected(source)
+    }
 
-    override fun close() = worker.close()
+    fun onOutputEnabled(output: SpeedSignOutput, enabled: Boolean) {
+        coordinator.onOutputEnabled(output, enabled)
+    }
+
+    fun onSpeedLimit(
+        source: SpeedLimitSource,
+        valueKph: Int,
+        observedAtMonotonicMs: Long = SystemClock.elapsedRealtime(),
+    ): Boolean = coordinator.onSpeedLimit(source, valueKph, observedAtMonotonicMs, processEpoch)
+
+    fun onProviderDisconnected(source: SpeedLimitSource) {
+        coordinator.onProviderDisconnected(source)
+    }
+
+    fun onSourceStopped(source: SpeedLimitSource) {
+        coordinator.onSourceStopped(source)
+    }
+
+    override fun close() {
+        coordinator.close()
+    }
 
     companion object {
-        private const val TAG = "NavigationSpeedSignOwner"
-        private val OWNER_SOURCE = NavigationSourceIdentity("com.byd.clusternav", "SpeedSign Owner")
+        private const val TAG = "NavigationSpeedSign"
+        @Volatile private var instance: NavigationSpeedSignOwner? = null
+
+        fun get(context: Context): NavigationSpeedSignOwner = instance ?: synchronized(this) {
+            instance ?: NavigationSpeedSignOwner(context.applicationContext).also {
+                instance = it
+                it.syncFromPrefs()
+                Log.i(TAG, "typed lifecycle active with independent NOOP cluster/HUD ports")
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -13,9 +14,14 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- liệt kê app cho picker "Chiếu app lên cụm". API29 không lọc; thêm để chắc trên API30+ (app sideload cá nhân). -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <!-- Official custom AppWidgetHost binding flow; the user still confirms each provider at runtime. -->
-    <uses-permission android:name="android.permission.BIND_APPWIDGET" />
+    <!-- Personal sideloaded app manager intentionally enumerates the full installed catalog. -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <!-- BYD privileged deployment may grant host binding; runtime still uses user-confirmed binding. -->
+    <uses-permission
+        android:name="android.permission.BIND_APPWIDGET"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- allowBackup=false: app lưu ADB private key (adb.key/adb.pub) trong filesDir — key này grant shell
          localhost:5555. Bật backup sẽ để `adb backup`/auto-backup rút key ra ngoài → tắt để không lộ. -->
@@ -108,17 +114,12 @@
              → KHÔNG còn phải mở app hay disallow→allow tay để lấy lại nav. -->
         <receiver
             android:name=".RebindReceiver"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="com.byd.clusternav.REBIND_WATCHDOG" />
-                <action android:name="com.byd.clusternav.TEST_SPEED_LIMIT" />
-                <action android:name="com.byd.clusternav.TEST_ADAS_PROBE" />
-                <action android:name="com.byd.clusternav.TEST_ADAS_WRITE" />
-                <action android:name="com.byd.clusternav.TEST_ADAS_READ" />
-                <action android:name="com.byd.clusternav.TEST_ADAS_MASS" />
             </intent-filter>
         </receiver>
 
