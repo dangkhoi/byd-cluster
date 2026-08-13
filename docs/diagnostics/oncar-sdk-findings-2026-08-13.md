@@ -97,3 +97,19 @@ platform private key exists in any artifact (only the public `auto_api@byd.com` 
 public Android debug key in the SDK), so "sign to get the perm" is not possible — current approach stays.
 
 **Docs:** SDK scan report → `docs/specs/hud-keepalive-interp-log-1.15.html` (J1/J2) · `docs/diagnostics/byd-sdk-v1.0.5-scan.html` (SDK).
+
+---
+
+## Session results — 2026-08-13 evening (ran on 1.15, shipped 1.16)
+
+Live over adb (`<vehicle-ip>`), car parked at home.
+
+1. **OTA OK** — ClusterNav auto-updated to **1.15 (versionCode 115)**; drive-home log `nav_log_1786617743666.csv` is 1.15 format (8058 rows).
+2. **`screenRead_m` was empty (0/8058)** — root cause: ClusterNav's `NavAccessibilityService` was **declared but not enabled** (only BYD vrassistant + systemui were in `enabled_accessibility_services`). **Fixed live**: appended the service + set `accessibility_enabled=1`; `dumpsys accessibility` now shows `ClusterNav — booster` bound → the next GMaps drive will populate the ground-truth column. *(Revert: remove that service from the secure setting. Better: self-grant it in-app over dadb, like the 1.13 notification-listener grant.)*
+3. **Interp bias measured** (n=3239 moving, turn-approach <2000 m): `mean(display − GMaps-notification) = −34.5 m`, `mean(projected − GMaps) = −16 m`; histogram of `display − GMaps` piles at **−10 / −25 / −100** = exactly the `quantizeDisplay` **floor** buckets → the cluster reads *less* than Google.
+4. **Shipped 1.16**: `quantizeDisplay` floor → **round** (nearest bucket) — removes the floor half of the bias. FACTOR (the −16 m interpolation part) left for next drive once the screen-read ground-truth is in.
+5. **navopen getraw cross-check**: the nav guidance registers (`43E0003A`, `43F01010`/`43F01018`, `43FA1008`, `43F020xx`, `setting 4C10E015`) all return **−10011** = write-only / not gettable (nav also idle while parked). Can't read-validate — must write and look at the cluster.
+
+### Queued for the next drive
+- **Validate round + tune FACTOR**: drive with GMaps nav (accessibility now on) → `adb pull … nav_log_*.csv` → `python3 scripts/analyze-nav-distance-log.py …`. Expect `screenRead_m` populated now; confirm `display − screen` bias shrank, and read `projected − screen` to set FACTOR (raise toward 1.0 if projected still reads low).
+- **ETA/mileage id render test** (needs eyes on the cluster while navigating): with GMaps nav active, `setraw instr 43F02028 <m>` (mileage), `43F02010`/`43F02018` (ETA h/m); watch the centre. getraw won't help (write-only); no restore needed (ClusterNav overwrites the next frame).
