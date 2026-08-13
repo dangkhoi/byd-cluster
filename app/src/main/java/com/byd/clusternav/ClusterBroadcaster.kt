@@ -142,8 +142,11 @@ object ClusterBroadcaster {
         val frame = AmapFrameBuilder.buildGuidanceFrame(withArrow, byd, road, segOverride, hasDist) ?: return
         // LOG cự ly (bắt vụ nhảy số): thô GMaps vs nội suy vs hiển thị
         runCatching {
+            val srM = TurnDistanceInterpolator.lastRefined()
+            val srAge = if (srM >= 0 && TurnDistanceInterpolator.lastRefinedAt() > 0L)
+                SystemClock.elapsedRealtime() - TurnDistanceInterpolator.lastRefinedAt() else -1L
             NavDistanceLog.record(rawMeters, rawSeg, segOverride,
-                TurnDistanceInterpolator.closingRate(), SpeedProvider.mps(), s.road, lastCleanRoad + "|" + s.maneuverText)
+                TurnDistanceInterpolator.closingRate(), SpeedProvider.mps(), srM, srAge, s.road, lastCleanRoad + "|" + s.maneuverText)
         }
         send(ctx, frame)
         // VẾT icon rẽ (lỗi đo 2026-07-30: "rẽ trái mà cụm hiện thẳng mãi", không lần ra lớp nào sai):

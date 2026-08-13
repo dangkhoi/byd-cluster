@@ -48,4 +48,25 @@ class TurnDistanceInterpolatorTest {
         TurnDistanceInterpolator.clearAnchor()
         assertEquals(-1, TurnDistanceInterpolator.project(10.0, 2000L))
     }
+
+    @Test fun `refine ghi lại ground-truth đọc-màn cho log (kể cả chưa anchor)`() {
+        assertEquals(-1, TurnDistanceInterpolator.lastRefined())
+        TurnDistanceInterpolator.refine(250, 1234L)          // chưa anchor: không snap nhưng VẪN ghi ground-truth
+        assertEquals(250, TurnDistanceInterpolator.lastRefined())
+        assertEquals(1234L, TurnDistanceInterpolator.lastRefinedAt())
+    }
+
+    @Test fun `refine âm không đè ground-truth đã ghi`() {
+        TurnDistanceInterpolator.refine(180, 1000L)
+        TurnDistanceInterpolator.refine(-1, 2000L)           // đọc-màn thất bại → giữ giá trị cũ
+        assertEquals(180, TurnDistanceInterpolator.lastRefined())
+        assertEquals(1000L, TurnDistanceInterpolator.lastRefinedAt())
+    }
+
+    @Test fun `reset xoá ground-truth đọc-màn`() {
+        TurnDistanceInterpolator.refine(180, 1000L)
+        TurnDistanceInterpolator.reset()
+        assertEquals(-1, TurnDistanceInterpolator.lastRefined())
+        assertEquals(0L, TurnDistanceInterpolator.lastRefinedAt())
+    }
 }
