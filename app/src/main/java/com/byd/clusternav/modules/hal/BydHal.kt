@@ -151,16 +151,24 @@ object BydHal {
         return runCatching { true to "rc=${setInt(dev, id, value)}" }.getOrElse { false to root(it) }
     }
 
-    /** Ghi 1 frame nav IN-PROCESS lên cụm (status=2 + icon/khoảng-cách/tên-đường) qua bypass-context. Trả tóm tắt rc.
-     *  Dùng chung bởi module inprochal + AutotestActivity (đặt ở infra để không module nào bị couple). */
-    fun writeNavFrame(ctx: Context, icon: Int, segMeters: Int, road: String): String {
+    /** SET_NAVI_SCREEN_STATUS_SET (0x4C10E015 · BYDAutoSettingDevice) chọn CHẾ ĐỘ hiển thị nav trên cụm =
+     *  đúng cái menu OEM "Đơn giản / Màn hình nhỏ / Toàn màn hình / OFF" (mở khoá 2026-08-13). Giá trị:
+     *  ⚠️ CHƯA map chắc trên xe — navopen dùng 3 (rc=0, ứng viên "Toàn màn hình"), AmapService reset = 3.
+     *  Cần sweep 0/1/2/3 on-car để chốt value = "Đơn giản" (Giữa+ETA). Default 3 = value đã-proven rc=0. */
+    const val NAV_SCREEN_MODE_ON = 3
+
+    /** Ghi 1 frame nav IN-PROCESS lên cụm (status=2 + chọn mode nav-screen + icon/khoảng-cách/tên-đường) qua
+     *  bypass-context. Đây là CƠ CHẾ THẬT tạo "Giữa + ETA" (khớp navopen), KHÁC ch1000 op39 (no-op trên xe này).
+     *  [screenMode] = giá trị SET_NAVI_SCREEN_STATUS_SET (xem [NAV_SCREEN_MODE_ON]). Trả tóm tắt rc.
+     *  Owner hợp lệ DUY NHẤT: [com.byd.clusternav.NavigationHudOwner] (giữ ownership boundary — xem PhysicalHudOwnershipTest). */
+    fun writeNavFrame(ctx: Context, icon: Int, segMeters: Int, road: String, screenMode: Int = NAV_SCREEN_MODE_ON): String {
         val sys = systemBypassContext()
         val instr = device(INSTRUMENT, sys, bypass(ctx)) ?: return "InstrumentDevice null (không ghi được)"
         val setting = device(SETTING, sys, bypass(ctx))
         val rc = StringBuilder()
         fun w(name: String, v: Int) { featureId(name)?.let { id -> rc.append(" $name=").append(runCatching { setInt(instr, id, v) }.getOrElse { root(it) }) } }
         w("INSTRUMENT_SEND_NAVI_STATUS_SET", 2)
-        featureId("SET_NAVI_SCREEN_STATUS_SET")?.let { id -> setting?.let { s -> rc.append(" NAVI_SCREEN=").append(runCatching { setInt(s, id, 3) }.getOrElse { e -> root(e) }) } }
+        featureId("SET_NAVI_SCREEN_STATUS_SET")?.let { id -> setting?.let { s -> rc.append(" NAVI_SCREEN=").append(runCatching { setInt(s, id, screenMode) }.getOrElse { e -> root(e) }) } }
         w("INSTRUMENT_GUIDE_INFO_SIMPLE_SET", icon)
         w("INSTRUMENT_FRONT_CROSSING_DISTANCE_SET", segMeters)
         featureId("INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_SET")?.let { id -> rc.append(" PATHNAME=").append(runCatching { setBytes(instr, id, road.toByteArray(Charsets.UTF_16LE)) }.getOrElse { e -> root(e) }) }

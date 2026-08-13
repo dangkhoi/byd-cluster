@@ -2,6 +2,7 @@ package com.byd.clusternav
 
 import com.byd.clusternav.navigation.NavParse
 import com.byd.clusternav.navigation.SourceArbiter
+import com.byd.clusternav.modules.clustercast.simplified.SimpleCastRuntime
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -31,6 +32,9 @@ object NavRepository {
     private val main = Handler(Looper.getMainLooper())
     private val lock = Any()
     @Volatile private var coordinator: NavigationSessionCoordinator? = null
+
+    /** Owns the cluster center-nav HAL writer (Giữa+ETA). Created with the coordinator; stopped on nav stop. */
+    @Volatile private var hudOwner: NavigationHudOwner? = null
 
     fun connect(context: Context, permission: NavigationPermission): NavigationSessionCoordinator = synchronized(lock) {
         coordinator ?: createCoordinator(context.applicationContext).also { runtime ->
@@ -73,12 +77,16 @@ object NavRepository {
     fun setOutputEnabled(context: Context, target: NavigationOutputTarget, enabled: Boolean) {
         connect(context, permission()).setOutputEnabled(target, enabled)
         if (!enabled && target == NavigationOutputTarget.HUD) ClusterBroadcaster.stopHud(context)
-        if (!enabled && target == NavigationOutputTarget.CLUSTER_LANE) ClusterBroadcaster.stopLane(context)
+        if (target == NavigationOutputTarget.CLUSTER_LANE) {
+            // Cluster center-nav HAL owner follows the cluster-lane toggle (same surface concern).
+            if (enabled) hudOwner?.start() else { ClusterBroadcaster.stopLane(context); hudOwner?.stop() }
+        }
     }
 
     fun stop(context: Context) {
         synchronized(lock) { coordinator }?.stopSession()
         ClusterBroadcaster.stop(context)
+        hudOwner?.stop()
         SourceArbiter.clear()
         publish(NavState())
     }
@@ -94,12 +102,34 @@ object NavRepository {
     fun removeListener(listener: (NavState) -> Unit) { listeners -= listener }
 
     private fun createCoordinator(context: Context): NavigationSessionCoordinator {
-        val lane = ClusterLaneAdapter(NavigationFrameDelivery { ClusterBroadcaster.emitLane(context, it.toNavState()) })
+        val appCtx = context.applicationContext
+        val owner = NavigationHudOwner(appCtx).also { it.start() }
+        hudOwner = owner
+        val lane = ClusterLaneAdapter(NavigationFrameDelivery { frame ->
+            ClusterBroadcaster.emitLane(context, frame.toNavState())
+            // Cluster CENTER "Giữa + ETA" via the proven HAL path (SET_NAVI_SCREEN_STATUS + GUIDE_INFO_SIMPLE) —
+            // replaces the no-op ch1000 op39. TWO-TRACK: only in nav-only mode (Cast master OFF); when Cast is ON
+            // the Cast track owns the cluster surface and we must not fight it. Broadcast heartbeat keeps content
+            // fresh; this write sets/holds the OEM nav-screen MODE (Đơn giản/full) the broadcast alone cannot.
+            if (navOnlyMode(appCtx)) {
+                owner.push(
+                    icon = frame.content.maneuverCode ?: 11,
+                    segMeters = frame.content.distanceMeters ?: -1,
+                    hudRoad = frame.content.roadName.orEmpty(),
+                )
+            }
+        })
         val hud = HudAdapter(NavigationFrameDelivery { ClusterBroadcaster.emitHud(context, it.toNavState()) })
         return NavigationSessionCoordinator(
             PersistentNavigationFrameStore(PreferencesPersistence(context)), lane, hud,
         )
     }
+
+    /** TWO-TRACK gate: cluster center-nav HAL write only when the Cast master switch is OFF (persisted flag,
+     *  a user config — not live cast-control state), keeping the Navigation and Cast tracks decoupled. */
+    private fun navOnlyMode(appContext: Context): Boolean = runCatching {
+        !SimpleCastRuntime.coordinator(appContext).prefs.castEnabled()
+    }.getOrDefault(true)
 
     private fun NavigationFrame.toNavState() = NavState(
         active = true,

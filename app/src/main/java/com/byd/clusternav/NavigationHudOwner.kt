@@ -13,7 +13,13 @@ import com.byd.clusternav.navigation.OutputAdapterConfig
 import com.byd.clusternav.navigation.OutputSubmission
 
 /**
- * Bounded owner for the HUD (CAN instrument) nav output.
+ * Bounded owner for the CLUSTER center simple-nav output (BYDAuto INSTRUMENT + SETTING HAL).
+ *
+ * This is the PROVEN "Giữa + ETA" path (matches navopen): per frame it sets
+ * INSTRUMENT_SEND_NAVI_STATUS_SET=2, SET_NAVI_SCREEN_STATUS_SET=[screenMode] (the OEM
+ * "Đơn giản/Toàn màn hình" cluster-nav mode), and the INSTRUMENT_GUIDE_INFO_SIMPLE_SET
+ * icon/distance/road. It is NOT the windshield HUD (that needs dealer coding 0x38B00030 and
+ * stays UNKNOWN in HudMirrorController). Named "Hud" for historical reasons.
  *
  * Owns: one single-thread bounded executor, generation counter, dedup state, typed HAL result.
  * The shared `hudExec` in ClusterBroadcaster is replaced by this owner's internal worker.
@@ -38,14 +44,25 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
         NavigationOutputTarget.HUD,
         "hud-hal-delivery",
         NavigationFrameDelivery { frame ->
-            val icon = frame.content.maneuverCode ?: 11
-            val seg = frame.content.distanceMeters ?: -1
-            val road = frame.content.roadName ?: ""
-            val rc = BydHal.writeNavFrame(appContext, icon, seg, road)
-            Log.i(TAG, "HUD icon=$icon seg=$seg road='$road' → $rc")
-            // Commit applied state only on successful delivery (no exception thrown).
-            synchronized(dedupLock) {
-                appliedIcon = icon; appliedSeg = seg; appliedRoad = road
+            val c = frame.content
+            val isClear = c.distanceMeters == null && c.roadName == null && (c.maneuverCode ?: 0) == 0
+            if (isClear) {
+                val rc = BydHal.clearNavFrame(appContext)
+                Log.i(TAG, "cluster-nav CLEAR → $rc")
+                synchronized(dedupLock) {
+                    appliedIcon = Int.MIN_VALUE; appliedSeg = Int.MIN_VALUE; appliedRoad = ""
+                }
+            } else {
+                val icon = c.maneuverCode ?: 11
+                val seg = c.distanceMeters ?: -1
+                val road = c.roadName ?: ""
+                val mode = Prefs.navClusterScreenMode(appContext)
+                val rc = BydHal.writeNavFrame(appContext, icon, seg, road, mode)
+                Log.i(TAG, "cluster-nav icon=$icon seg=$seg road='$road' mode=$mode → $rc")
+                // Commit applied state only on successful delivery (no exception thrown).
+                synchronized(dedupLock) {
+                    appliedIcon = icon; appliedSeg = seg; appliedRoad = road
+                }
             }
         },
         OutputAdapterConfig(queueCapacity = 4, deliveryDeadlineMs = 200L),

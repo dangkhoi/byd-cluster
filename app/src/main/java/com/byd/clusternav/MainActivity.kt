@@ -139,6 +139,22 @@ class MainActivity : Activity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
+        // Chế độ hiển thị nav trên CỤM — ghi SET_NAVI_SCREEN_STATUS_SET (0x4C10E015) qua NavigationHudOwner
+        // (đọc pref mỗi frame → áp dụng LIVE khi đang dẫn). ⚠️ value↔menu OEM chưa map chắc: dò trên xe rồi chốt.
+        val clusterModeSpinner = findViewById<android.widget.Spinner>(R.id.spinner_cluster_mode)
+        val clusterModes = arrayOf("Đơn giản (Giữa + ETA)", "Toàn màn hình", "Màn hình nhỏ", "OFF")
+        val clusterModeValues = intArrayOf(
+            Prefs.NAV_SCREEN_SIMPLE, Prefs.NAV_SCREEN_FULL, Prefs.NAV_SCREEN_SMALL, Prefs.NAV_SCREEN_OFF,
+        )
+        clusterModeSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, clusterModes)
+        clusterModeSpinner.setSelection(clusterModeValues.indexOf(Prefs.navClusterScreenMode(this)).coerceAtLeast(0))
+        clusterModeSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                Prefs.setNavClusterScreenMode(this@MainActivity, clusterModeValues[pos])
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
         // Nav trên cụm chỉ còn op 39 "Giữa + ETA" (owner chốt 2026-08-12) — bỏ nút chọn mode + nút test.
         // Chỉ còn dòng trạng thái op39 (ASSERTED / Cast đang bật / chưa gửi được) để chẩn đoán.
         navClusterStatus.bind()
