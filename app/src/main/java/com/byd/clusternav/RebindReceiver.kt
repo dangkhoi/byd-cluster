@@ -33,6 +33,10 @@ class RebindReceiver : BroadcastReceiver() {
         when (action) {
             Intent.ACTION_BOOT_COMPLETED -> {
                 scheduleWatchdog(context)
+                // I5 (1.14, owner): mở xe = TỰ MỞ APP luôn (không chỉ nút nổi). Dùng lại đường launch của
+                // relaunch-after-update (được miễn trừ background-activity-start nhờ SYSTEM_ALERT_WINDOW). Nút
+                // nổi do castBootWork lo — chỉ start khi Cast đang BẬT.
+                launchHome(context)
                 castBootWork(context, automation = true)
             }
             Intent.ACTION_LOCKED_BOOT_COMPLETED -> {
@@ -47,7 +51,7 @@ class RebindReceiver : BroadcastReceiver() {
                 // our process was replaced. Background-activity-start is allowed here because the app
                 // holds SYSTEM_ALERT_WINDOW (the overlay/bubble permission) — the standard A10
                 // exemption; best-effort (runCatching) if the grant is missing.
-                relaunchAfterUpdate(context)
+                launchHome(context)
             }
         }
     }
@@ -65,7 +69,15 @@ class RebindReceiver : BroadcastReceiver() {
             try {
                 val app = context.applicationContext
                 // V2 CastAndroidLifecycle.rehydrate removed — simplified coordinator active
-                runCatching { startOptedInBubble(app) }.onFailure { Log.e(TAG, "bubble restore failed", it) }
+                // I5 (1.14): nút nổi chỉ khi Cast BẬT (owner: "nếu có enable cast cluster thì mới start nút nổi").
+                // Trước đây start vô điều kiện rồi FloatingBubbleService tự đứng xuống nếu Cast off — nay gate hẳn.
+                runCatching {
+                    if (com.byd.clusternav.modules.clustercast.simplified.SimpleCastRuntime
+                            .coordinator(app).prefs.castEnabled()
+                    ) {
+                        startOptedInBubble(app)
+                    }
+                }.onFailure { Log.e(TAG, "bubble restore failed", it) }
                 if (automation) {
                     runCatching {
                         com.byd.clusternav.modules.clustercast.CastAutomationService.recordAndEnqueue(app)
@@ -95,20 +107,21 @@ class RebindReceiver : BroadcastReceiver() {
     }
 
     /**
-     * Bring the app back to the foreground after a self-update (MY_PACKAGE_REPLACED). Uses the
-     * package's own launcher intent (Home / MainActivity) with NEW_TASK; CLEAR_TOP so a stale task
-     * isn't stacked. Best-effort: background activity-start needs the SYSTEM_ALERT_WINDOW exemption,
-     * so this may be a no-op if the overlay grant is absent — it never throws.
+     * Bring the app to the foreground (Home / MainActivity). Used both on car BOOT_COMPLETED (I5 1.14:
+     * auto-open on start, per owner) and after a self-update (MY_PACKAGE_REPLACED). Uses the package's own
+     * launcher intent with NEW_TASK; CLEAR_TOP so a stale task isn't stacked. Best-effort: background
+     * activity-start needs the SYSTEM_ALERT_WINDOW exemption, so this may be a no-op if the overlay grant is
+     * absent — it never throws.
      */
-    private fun relaunchAfterUpdate(context: Context) {
+    private fun launchHome(context: Context) {
         runCatching {
             val app = context.applicationContext
             val launch = app.packageManager.getLaunchIntentForPackage(app.packageName)
                 ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 ?: Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             app.startActivity(launch)
-            Log.i(TAG, "relaunch after update requested")
-        }.onFailure { Log.e(TAG, "relaunch after update failed", it) }
+            Log.i(TAG, "launch Home requested")
+        }.onFailure { Log.e(TAG, "launch Home failed", it) }
     }
     companion object {
         private const val TAG = "NavRebind"

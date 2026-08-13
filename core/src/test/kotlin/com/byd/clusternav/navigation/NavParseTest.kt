@@ -24,7 +24,7 @@ class NavParseTest {
         assertEquals(1200, NavParse.quantizeDisplay(1234))   // >=1km: bước 100
         assertEquals(325, NavParse.quantizeDisplay(347))     // 300..999: bước 25
         assertEquals(150, NavParse.quantizeDisplay(156))     // 100..299: bước 10
-        assertEquals(45, NavParse.quantizeDisplay(47))       // <100: bước 5
+        assertEquals(40, NavParse.quantizeDisplay(47))       // <100: bước 10 (I3 1.14)
         assertEquals(-1, NavParse.quantizeDisplay(-1))       // âm giữ nguyên
     }
 

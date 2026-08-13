@@ -1,46 +1,79 @@
 # ClusterNav — Hướng dẫn sử dụng
 
-> Phiên bản: 0.99 — Cluster Cast đơn giản hoá
+> Phiên bản: **1.13** (versionCode 113). Dự án cá nhân thử nghiệm trên BYD DiLink 3.0 (Android 10). Không liên kết với BYD.
 
-## Cách dùng Cluster Cast
+ClusterNav có **hai hệ thống độc lập** trên cùng một app:
 
-### Mở app = cụm sẵn sàng ngay
+1. **Navigation + HUD** — đưa chỉ dẫn Google Maps / Waze / VietMap lên **cụm đồng hồ** (làn nav + "Giữa + ETA").
+2. **Cluster Cast** — chiếu app đang mở lên cụm đồng hồ.
 
-Khi bạn mở ClusterNav, projection tự kích hoạt — cụm đồng hồ sẵn sàng nhận nội dung ngay lập tức.
+Mặc định **cả hai đều TẮT** khi mở app lần đầu — mở app lên không tự đụng gì vào xe. Bật cái nào thì dùng cái đó.
 
-### Chiếu app lên cụm
+---
 
-- **Chạm nút nổi** (floating button) → app đang mở trên màn chính được chiếu lên cụm đồng hồ.
-- **Chạm lại nút nổi** → trả app về màn chính, cụm quay lại trạng thái chờ.
+## 1. Navigation + HUD
 
-### CarPlay / Android Auto
+### Bật lần đầu
+1. Mở ClusterNav → gạt công tắc **"Navigation + HUD"** sang BẬT.
+2. Lần đầu app tự xin **quyền đọc thông báo** ngay trong app (không cần laptop/ADB): nó cấp quyền qua ADB nội bộ (loopback). Nếu xe hiện hộp thoại **"Allow USB debugging?"**, bấm **Allow** một lần (chỉ lần đầu).
+3. Xong → app kết nối nguồn dẫn đường. Mở Google Maps / Waze / VietMap và dẫn đường như bình thường.
 
-- Luôn chiếu **toàn màn hình** (full-screen).
-- Không resize, không chia đôi.
+> Trước 1.13, bấm "Cấp quyền" hay hiện *"Hệ thống IVI không hỗ trợ hoạt động này"* vì head-unit không mở được màn Cài đặt "Truy cập thông báo". 1.13 bỏ hẳn đường đó: quyền notification là **quyền ADB**, nên app tự cấp qua ADB nội bộ. Màn Cài đặt chỉ còn là phương án dự phòng cuối.
 
-### App thường
+### Chế độ hiển thị trên cụm
+Chọn ở ô **"Chế độ hiển thị trên cụm"**:
+- **Đơn giản (Giữa + ETA)** — chỉ dẫn ở giữa cụm kèm ETA.
+- **Toàn màn hình** / **Màn hình nhỏ** / **OFF**.
 
-- Có thể chiếu **toàn màn hình** hoặc **chia đôi** (split).
-- Cho phép chỉnh kích thước vùng chiếu.
+> ⚠️ Con số nào ứng với mục nào của menu OEM còn đang dò trên xe — cứ thử từng chế độ và nhìn cụm.
 
-### Tắt app
+### Nút trên card
+- **Nguồn dẫn đường** — Tự động / Google Maps / Waze.
+- **Nguồn tốc độ + cảnh báo** — VietMap / Waze.
+- **Cấp quyền / kết nối lại** — cấp quyền (nếu thiếu) hoặc kết nối lại nguồn dẫn đường.
+- **Dừng toàn bộ** — dừng đẩy cụm.
 
-Khi tắt ClusterNav, cụm đồng hồ tự động trở về hiển thị đồng hồ mặc định.
+Tắt công tắc **Navigation + HUD** → cụm về đồng hồ. Quyền đã cấp vẫn giữ qua khởi động lại, nên lần sau bật lại không phải cấp lại.
+
+---
+
+## 2. Cluster Cast
+
+Gạt công tắc **"Cluster Cast"** sang BẬT (mặc định TẮT — khi tắt, cụm vẫn hiện dẫn đường + HUD như thường).
+
+- **Chạm nút nổi** (bong bóng) → chiếu app đang mở lên cụm đồng hồ.
+- **Chạm lại** → trả app về màn chính, cụm về chờ.
+- **CarPlay / Android Auto** — luôn chiếu **toàn màn hình**, không resize.
+- **App thường** — chiếu **toàn màn hình** hoặc **chia đôi** (trái/phải), chỉnh được kích thước.
+- Cần quyền **vẽ overlay** một lần (để hiện nút nổi).
+
+Tắt ClusterNav → cụm tự về đồng hồ mặc định.
+
+---
+
+## 3. Nút vật lý → Trợ lý giọng nói *(tuỳ chọn, mặc định TẮT)*
+
+Gán một nút vật lý (vô-lăng / táp-lô) + cử chỉ để mở trợ lý giọng nói. **Không đổi chức năng gốc của nút** — app chỉ "bắt" đúng tổ hợp bạn cấu hình, các phím khác đi qua như thường.
+
+1. Gạt **"Nút vật lý → Trợ lý giọng nói"** sang BẬT. App tự bật dịch vụ **Hỗ trợ (Accessibility)** qua ADB nội bộ (nếu chưa bật) — cũng có thể cần bấm **Allow USB debugging** lần đầu.
+2. Chọn **Nút**: chọn từ danh sách ứng viên, hoặc **"Học phím…"** rồi bấm chính nút vật lý muốn dùng trên xe (app ghi lại keycode).
+3. Chọn **Cử chỉ**: **Nhấn** hay **Nhấn giữ**.
+4. Chọn **Mở trợ lý**: **Google / Gemini**, **BYD 小迪**, hoặc **Nhận dạng giọng nói**.
+
+> Không biết chắc nút phát ra mã gì? Dùng **"Học phím…"** rồi bấm nút trên xe. Lên xe test nếu chưa ăn thì học lại / đổi cử chỉ.
+
+---
 
 ## Tóm tắt
 
 | Thao tác | Kết quả |
 |----------|---------|
-| Mở ClusterNav | Cụm sẵn sàng (projection tự mở) |
-| Chạm nút nổi | Chiếu app đang mở lên cụm |
-| Chạm lại nút nổi | Trả app về, cụm chờ |
+| Mở ClusterNav | Không đụng xe (mọi thứ mặc định TẮT) |
+| Bật Navigation + HUD | Tự cấp quyền notification (qua ADB) + kết nối; chỉ dẫn lên cụm |
+| Chọn "Chế độ hiển thị trên cụm" | Đổi kiểu nav trên cụm (Giữa+ETA / Toàn / Nhỏ / OFF) |
+| Bật Cluster Cast + chạm nút nổi | Chiếu app đang mở lên cụm; chạm lại để về |
+| Bật "Nút vật lý → Trợ lý" | Bấm nút đã gán → mở trợ lý giọng nói |
 | Tắt ClusterNav | Cụm về đồng hồ |
-
-## Navigation + HUD
-
-ClusterNav cũng hỗ trợ một nguồn dẫn đường duy nhất với hai đầu ra độc lập:
-- **Cluster-lane** — hiển thị lane guidance trên cụm đồng hồ.
-- **HUD** — hiển thị thông tin dẫn đường trên head-up display.
 
 ## Lưu ý
 
@@ -50,47 +83,80 @@ ClusterNav cũng hỗ trợ một nguồn dẫn đường duy nhất với hai �
 
 # ClusterNav — User Guide (English)
 
-> Version: 0.99 — Simplified Cluster Cast
+> Version: **1.13** (versionCode 113). Personal hobby experiment on BYD DiLink 3.0 (Android 10). Not affiliated with BYD.
 
-## Using Cluster Cast
+ClusterNav has **two independent systems** in one app:
 
-### Open app = cluster ready instantly
+1. **Navigation + HUD** — puts Google Maps / Waze / VietMap guidance on the **instrument cluster** (lane + "Giữa + ETA" centre).
+2. **Cluster Cast** — casts the foreground app onto the cluster.
 
-When you open ClusterNav, projection activates automatically — the cluster display is ready to receive content immediately.
+Both are **OFF by default** on first launch — opening the app touches nothing on the car. Turn on what you need.
 
-### Cast an app to the cluster
+---
 
-- **Tap the floating button** → the app currently open on the main screen is cast to the cluster display.
-- **Tap the floating button again** → return the app to the main screen, cluster goes back to standby.
+## 1. Navigation + HUD
 
-### CarPlay / Android Auto
+### First-time enable
+1. Open ClusterNav → flip the **"Navigation + HUD"** switch ON.
+2. The first time, the app grants **notification access** in-app (no laptop/ADB): it grants the permission over local ADB (loopback). If the car shows an **"Allow USB debugging?"** dialog, tap **Allow** once (first time only).
+3. Done → the app connects to the navigation source. Open Google Maps / Waze / VietMap and navigate as usual.
 
-- Always cast **full-screen**.
-- No resize, no split.
+> Before 1.13, tapping "Grant" often showed *"Hệ thống IVI không hỗ trợ hoạt động này"* because the head unit can't open the Android "Notification access" settings screen. 1.13 drops that path: the notification permission is an **ADB permission**, so the app self-grants it over local ADB. The settings screen is now only a last-resort fallback.
 
-### Regular apps
+### Cluster display mode
+Pick in **"Cluster display mode"**:
+- **Đơn giản (Giữa + ETA)** — guidance centred with ETA.
+- **Full screen** / **Small** / **OFF**.
 
-- Can be cast **full-screen** or **split** (side-by-side).
-- Allows resizing the cast area.
+> ⚠️ Which value maps to which OEM menu entry is still being confirmed on-car — try each and watch the cluster.
 
-### Closing the app
+### Card buttons
+- **Navigation source** — Auto / Google Maps / Waze.
+- **Speed + alert source** — VietMap / Waze.
+- **Grant / reconnect** — grants the permission (if missing) or reconnects the source.
+- **Stop all** — stops pushing to the cluster.
 
-When you close ClusterNav, the cluster display automatically returns to showing the default clock.
+Turn the **Navigation + HUD** switch OFF → the cluster returns to the clock. The granted permission persists across reboots, so you won't need to re-grant next time.
+
+---
+
+## 2. Cluster Cast
+
+Flip the **"Cluster Cast"** switch ON (OFF by default — while off, the cluster still shows navigation + HUD normally).
+
+- **Tap the floating button** → cast the foreground app to the cluster.
+- **Tap again** → return the app to the main screen; cluster goes to standby.
+- **CarPlay / Android Auto** — always cast **full-screen**, no resize.
+- **Regular apps** — cast **full-screen** or **split** (left/right), resizable.
+- Requires the **draw-overlay** permission once (for the floating button).
+
+Close ClusterNav → the cluster returns to the default clock.
+
+---
+
+## 3. Physical button → Voice assistant *(optional, OFF by default)*
+
+Map a physical button (steering wheel / dashboard) + gesture to launch a voice assistant. It **does not change the button's native function** — the app only intercepts the exact combo you configure; every other key passes through.
+
+1. Flip **"Physical button → Voice assistant"** ON. The app enables the **Accessibility** service over local ADB (if not already on) — may also need **Allow USB debugging** the first time.
+2. Pick **Button**: choose a candidate from the list, or **"Learn key…"** then press the actual physical button on the car (the app records its keycode).
+3. Pick **Gesture**: **Press** or **Hold**.
+4. Pick **Open assistant**: **Google / Gemini**, **BYD 小迪**, or **Speech recognizer**.
+
+> Not sure which code your button emits? Use **"Learn key…"** and press it on the car. If it doesn't trigger on-car, re-learn or change the gesture.
+
+---
 
 ## Summary
 
 | Action | Result |
 |--------|--------|
-| Open ClusterNav | Cluster ready (projection auto-opens) |
-| Tap floating button | Cast foreground app to cluster |
-| Tap floating button again | Return app, cluster standby |
+| Open ClusterNav | Touches nothing (everything OFF by default) |
+| Enable Navigation + HUD | Self-grants notification access (over ADB) + connects; guidance on cluster |
+| Pick "Cluster display mode" | Change cluster nav style (centre+ETA / full / small / OFF) |
+| Enable Cluster Cast + tap floating button | Cast the foreground app to the cluster; tap again to return |
+| Enable "Physical button → Voice assistant" | Press the mapped button → open the voice assistant |
 | Close ClusterNav | Cluster returns to clock |
-
-## Navigation + HUD
-
-ClusterNav also supports a single navigation source with two independent outputs:
-- **Cluster-lane** — displays lane guidance on the cluster display.
-- **HUD** — displays navigation info on the head-up display.
 
 ## Disclaimer
 

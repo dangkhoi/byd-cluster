@@ -6,11 +6,14 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * WIRING contract for the in-app notification-access grant (on-car fix 2026-08-11).
+ * WIRING contract for the in-app notification-listener grant (updated 1.13).
  *
- * The head unit ships to end users WITHOUT a laptop/adb, so the app must open the system
- * "Notification access" screen itself. Runtime behavior needs Android, so — like the other
- * contract tests — this locks the wiring by reading the source.
+ * BYD DiLink3 (locked IVI) cannot open the system "Notification access" screen — startActivity is blocked
+ * and the system shows "Hệ thống IVI không hỗ trợ hoạt động này". The listener permission is an ADB
+ * permission (`settings secure enabled_notification_listeners`) the app grants itself over the dadb
+ * uid-shell (`NavConnect.selfGrant` → `cmd notification allow_listener`). The Settings screen stays only as
+ * a last-resort fallback. Runtime behavior needs Android, so — like the other contract tests — this locks
+ * the wiring by reading the source.
  */
 class NotificationAccessFlowContractTest {
 
@@ -19,9 +22,8 @@ class NotificationAccessFlowContractTest {
         return if (Files.exists(current.resolve("src"))) current.resolve(relative) else current.resolve("app").resolve(relative)
     }
 
-    private val main by lazy {
-        app("src/main/java/com/byd/clusternav/MainActivity.kt").toFile().readText()
-    }
+    private val main by lazy { app("src/main/java/com/byd/clusternav/MainActivity.kt").toFile().readText() }
+    private val navConnect by lazy { app("src/main/java/com/byd/clusternav/NavConnect.kt").toFile().readText() }
 
     private fun body(signature: String): String {
         val start = main.indexOf(signature)
@@ -34,34 +36,45 @@ class NotificationAccessFlowContractTest {
     }
 
     @Test
-    fun `reconnect button opens notification access when permission missing`() {
-        // The whole point: a real user (no adb) can reach the toggle. Grep proved this action was
-        // entirely absent before the fix.
-        assertTrue(main.contains("Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
-            "app opens the system Notification-access list")
-        val opener = body("private fun openNotificationAccessSettings()")
-        assertTrue(opener.contains("ACTION_NOTIFICATION_LISTENER_SETTINGS"), "list screen is a path")
-        assertTrue(
-            opener.contains("SDK_INT >= 30") && opener.contains("ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS"),
-            "API 30+ deep-links straight to ClusterNav's entry, guarded",
-        )
-        assertTrue(opener.contains("ACTION_APPLICATION_DETAILS_SETTINGS"), "app-details is the last fallback")
-    }
-
-    @Test
-    fun `button branches on permission and prompts when missing`() {
+    fun `button branches on permission — granted reconnects, missing self-grants via dadb`() {
         assertTrue(main.contains("if (notificationAccessGranted()) {"), "button checks the permission first")
-        assertTrue(main.contains("promptNotificationAccess()"), "missing → prompt + open settings")
         assertTrue(main.contains("NavConnect.reconnect(applicationContext)"), "granted → reconnect (rebind)")
+        assertTrue(
+            main.contains("NavConnect.selfGrant(applicationContext)"),
+            "missing → self-grant via dadb, NOT the dead-end settings screen",
+        )
     }
 
     @Test
-    fun `onResume auto-binds after returning from settings`() {
+    fun `self-grant uses the dadb allow_listener verb and rebinds`() {
+        assertTrue(navConnect.contains("fun selfGrant("), "NavConnect exposes selfGrant")
+        assertTrue(navConnect.contains("cmd notification allow_listener"), "self-grant runs the uid-shell allow_listener verb")
+        assertTrue(navConnect.contains("requestRebind("), "self-grant asks the system to rebind the listener")
+    }
+
+    @Test
+    fun `system settings screen kept only as a fallback`() {
+        val opener = body("private fun openNotificationAccessSettings()")
+        assertTrue(opener.contains("ACTION_NOTIFICATION_LISTENER_SETTINGS"), "list screen remains a fallback path")
+        assertTrue(opener.contains("ACTION_APPLICATION_DETAILS_SETTINGS"), "app-details is the last fallback")
+        assertTrue(main.contains("promptNotificationAccessFallback()"), "fallback dialog shown only when self-grant fails")
+    }
+
+    @Test
+    fun `onResume auto-binds after grant when enabled`() {
         val resume = body("override fun onResume()")
         assertTrue(
             resume.contains("notificationAccessGranted() && !NavNotificationListener.connected"),
-            "granted but not yet bound → force a bind on return",
+            "granted but not yet bound → force a bind",
         )
         assertTrue(resume.contains("NavConnect.ensureConnected(applicationContext)"), "binds via the dadb helper")
+    }
+
+    @Test
+    fun `startup touches no adb unless the master switch is on (Option B default-off)`() {
+        assertTrue(
+            main.contains("if (Prefs.enabled(this)) NavConnect.ensureConnected(applicationContext)"),
+            "onCreate only ensures connection when Navigation+HUD is enabled",
+        )
     }
 }
