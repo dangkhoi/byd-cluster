@@ -4,10 +4,15 @@
      ★ v0.36 BỎ flagRetrieveInteractiveWindows + flagReportViewIds: packageNames CHỈ lọc event được GỬI cho ta, nó
      KHÔNG thu hẹp phạm vi của cờ interactive-windows — cờ đó bắt system_server theo dõi/ tính lại vị trí MỌI cửa sổ
      trên MỌI display (Android 10 chạy 1 observer / display → đang chiếu là gấp đôi).
-     windows hay viewId. notificationTimeout 100→500ms: gộp bớt event khi bản đồ vẽ liên tục. -->
+     windows hay viewId. notificationTimeout 100→500ms: gộp bớt event khi bản đồ vẽ liên tục.
+     ★ 1.13 (T3) THÊM flagRequestFilterKeyEvents + canRequestFilterKeyEvents: để onKeyEvent nhận PHÍM VẬT LÝ
+     app-wide (nút vật lý → trợ lý giọng nói). Cờ này CHỈ định tuyến key event tới service — KHÔNG bắt theo dõi
+     cửa sổ nên KHÔNG tái diễn chi phí của interactive-windows đã bỏ ở v0.36. Key event không bị packageNames lọc. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRequestFilterKeyEvents"
+    android:canRequestFilterKeyEvents="true"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="500"
     android:packageNames="com.google.android.apps.maps,app.revanced.android.apps.maps"

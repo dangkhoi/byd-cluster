@@ -9,9 +9,16 @@ import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.byd.clusternav.Prefs
+import com.byd.clusternav.modules.voicekey.AssistantLauncher
+import com.byd.clusternav.voicekey.VoiceKeyAction
+import com.byd.clusternav.voicekey.VoiceKeyConfig
+import com.byd.clusternav.voicekey.VoiceKeyGesture
+import com.byd.clusternav.voicekey.VoiceKeyMatcher
+import com.byd.clusternav.voicekey.VoiceKeyTarget
 
 /**
  * BOOSTER TẦNG 1 — đọc UI dẫn đường GMaps ĐANG HIỆN trên màn để lấy cự ly tới rẽ CHÍNH XÁC, TƯƠI hơn noti
@@ -27,8 +34,12 @@ class NavAccessibilityService : AccessibilityService() {
     private var lastProcessed = 0L
     private val maps = setOf("com.google.android.apps.maps", "app.revanced.android.apps.maps")
 
+    // T3: nút vật lý → trợ lý giọng nói. Matcher thuần ở :core; service chỉ map KeyEvent + phóng intent.
+    private val voiceKeyMatcher = VoiceKeyMatcher()
+
     override fun onServiceConnected() {
         NavAccessibilitySource.connected = true
+        voiceKeyMatcher.reset()
         Log.i(TAG, "accessibility booster connected")
     }
 
@@ -38,6 +49,61 @@ class NavAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {}
+
+    /**
+     * T3 — nút vật lý → trợ lý giọng nói. Chỉ chạy khi service được cấp quyền hỗ trợ + config
+     * `canRequestFilterKeyEvents` + flag `flagRequestFilterKeyEvents` (xem nav_accessibility_config.xml).
+     *
+     * KHÔNG thay chức năng gốc: chỉ trả true (nuốt phím) cho đúng tổ hợp (keycode + cử chỉ) người dùng cấu
+     * hình — quyết định ở [VoiceKeyMatcher] (:core). Phím/khác → super (pass-through).
+     * "Học phím": nếu bật, ghi lại keycode nút vừa bấm (trên DOWN) rồi tự tắt cờ.
+     */
+    override fun onKeyEvent(event: KeyEvent?): Boolean {
+        event ?: return super.onKeyEvent(event)
+        val app = applicationContext
+
+        if (Prefs.voiceKeyLearn(app)) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                Prefs.setVoiceKeyCode(app, event.keyCode)
+                Prefs.setVoiceKeyLearn(app, false)
+                val name = KeyEvent.keyCodeToString(event.keyCode)
+                Log.i(TAG, "learned voice keycode=${event.keyCode} ($name)")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    runCatching {
+                        android.widget.Toast.makeText(app, "Đã gán nút: $name (${event.keyCode})", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            return true   // nuốt trong lúc học để không kích hoạt gì khác
+        }
+
+        if (!Prefs.voiceKeyEnabled(app)) return super.onKeyEvent(event)
+
+        val cfg = VoiceKeyConfig(
+            enabled = true,
+            keyCode = Prefs.voiceKeyCode(app),
+            gesture = if (Prefs.voiceKeyGesture(app) == 1) VoiceKeyGesture.HOLD else VoiceKeyGesture.PRESS,
+            target = when (Prefs.voiceKeyTarget(app)) {
+                1 -> VoiceKeyTarget.BYD_VOICE
+                2 -> VoiceKeyTarget.RECOGNIZER
+                else -> VoiceKeyTarget.ASSIST
+            },
+        )
+        val action = when (event.action) {
+            KeyEvent.ACTION_DOWN -> VoiceKeyAction.DOWN
+            KeyEvent.ACTION_UP -> VoiceKeyAction.UP
+            else -> VoiceKeyAction.OTHER
+        }
+        val decision = voiceKeyMatcher.onKey(
+            cfg, action, event.keyCode, event.downTime, event.eventTime, event.repeatCount,
+        )
+        if (decision.fire) {
+            Log.i(TAG, "voice-key fire → target=${cfg.target} key=${event.keyCode}")
+            runCatching { AssistantLauncher.launch(app, cfg.target) }
+                .onFailure { Log.e(TAG, "assistant launch failed", it) }
+        }
+        return if (decision.consume) true else super.onKeyEvent(event)
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return

@@ -64,6 +64,10 @@
                 android:textColor="@color/text_secondary" android:textSize="13sp" />
             <Spinner android:id="@+id/spinner_cluster_mode" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
+            <!-- I2 (1.14): toggle chạy chữ tên đường dài (marquee), mặc định BẬT. -->
+            <CheckBox android:id="@+id/cb_marquee" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min"
+                android:text="Chạy chữ tên đường dài (marquee)" android:textColor="@color/text_secondary" />
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="12dp" android:text="Nguồn tốc độ + cảnh báo (biển báo · camera)"
                 android:textColor="@color/text_secondary" android:textSize="13sp" />
@@ -206,6 +210,41 @@
             <Button android:id="@+id/btn_check_update" android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="14dp" android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
                 android:text="⬇ Kiểm tra cập nhật" android:textAllCaps="false" android:textColor="@color/brand" />
+        </LinearLayout>
+
+        <!-- T3 (1.13): Nút vật lý → Trợ lý giọng nói. KHÔNG thay chức năng gốc — chỉ "nuốt" đúng tổ hợp
+             (nút + cử chỉ) đã chọn (VoiceKeyMatcher). Mặc định TẮT. Nút = keycode ứng viên hoặc "Học phím…"
+             (bấm nút thật trên xe để gán). Cần service Hỗ trợ bật (tự cấp qua dadb khi bật công tắc). -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/gap" android:orientation="vertical"
+            android:background="@drawable/card_bg" android:padding="@dimen/card_pad">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:text="Nút vật lý → Trợ lý giọng nói" android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_status" android:fontFamily="sans-serif-medium" />
+                <Switch android:id="@+id/switch_voicekey_enabled" android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" android:text="Bật" android:textColor="@color/text_secondary"
+                    android:contentDescription="Bật hoặc tắt kích hoạt trợ lý bằng nút vật lý" />
+            </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="Gán một nút (vô-lăng/táp-lô) + cử chỉ để mở trợ lý giọng nói. Không đổi chức năng gốc của nút."
+                android:textColor="@color/text_secondary" android:textSize="@dimen/text_label" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:text="Nút" android:textColor="@color/text_secondary" android:textSize="13sp" />
+            <Spinner android:id="@+id/spinner_voicekey_button" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
+            <TextView android:id="@+id/txt_voicekey_current" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="4dp" android:text="Nút hiện tại: —" android:textColor="@color/text_secondary" android:textSize="12sp" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:text="Cử chỉ" android:textColor="@color/text_secondary" android:textSize="13sp" />
+            <Spinner android:id="@+id/spinner_voicekey_gesture" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:text="Mở trợ lý" android:textColor="@color/text_secondary" android:textSize="13sp" />
+            <Spinner android:id="@+id/spinner_voicekey_target" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
         </LinearLayout>
 
         <!-- VietMap HUD BLE Bridge — HIDDEN (hardware not supported, research pending) -->

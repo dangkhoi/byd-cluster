@@ -73,6 +73,17 @@ class MainActivity : Activity() {
                 Prefs.setLane(this, true)
                 NavRepository.setOutputEnabled(this, NavigationOutputTarget.CLUSTER_LANE, true)
                 speedSign.onOutputEnabled(SpeedSignOutput.CLUSTER, true)
+                // Option B (1.13): user chủ động bật → GIỜ mới đụng adb. Thiếu quyền → tự cấp qua dadb;
+                // đã có → chỉ ensure bind. (Mặc định TẮT nên onCreate không tự chạy nhánh này.)
+                if (notificationAccessGranted()) {
+                    NavConnect.ensureConnected(applicationContext)
+                } else {
+                    Toast.makeText(this, Lang.t("Đang cấp quyền đọc thông báo…", "Granting notification access…"), Toast.LENGTH_SHORT).show()
+                    NavConnect.selfGrant(applicationContext) { ok ->
+                        if (isFinishing) return@selfGrant
+                        if (ok) refresh() else promptNotificationAccessFallback()
+                    }
+                }
             } else {
                 NavRepository.stop(this)
             }
@@ -151,9 +162,20 @@ class MainActivity : Activity() {
         clusterModeSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
                 Prefs.setNavClusterScreenMode(this@MainActivity, clusterModeValues[pos])
+                // I4 (1.14): áp NGAY (re-assert 4→2) thay vì chờ reboot / frame kế bị dedup nuốt.
+                NavRepository.reapplyClusterMode(applicationContext)
             }
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
+
+        // I2 (1.14): toggle marquee (chạy chữ tên đường dài). Mặc định BẬT (Prefs.marquee=true).
+        findViewById<android.widget.CheckBox>(R.id.cb_marquee).also { cb ->
+            cb.isChecked = Prefs.marquee(this)
+            cb.setOnCheckedChangeListener { _, on -> Prefs.setMarquee(this, on) }
+        }
+
+        // ── T3 (1.13): Nút vật lý → Trợ lý giọng nói (switch + nút + cử chỉ + đích + học phím) ──
+        setupVoiceKeyControls()
 
         // Nav trên cụm chỉ còn op 39 "Giữa + ETA" (owner chốt 2026-08-12) — bỏ nút chọn mode + nút test.
         // Chỉ còn dòng trạng thái op39 (ASSERTED / Cast đang bật / chưa gửi được) để chẩn đoán.
@@ -164,10 +186,19 @@ class MainActivity : Activity() {
                 NavConnect.reconnect(applicationContext)
                 Toast.makeText(this, Lang.t("Đang kết nối lại nguồn dẫn đường…", "Reconnecting navigation source…"), Toast.LENGTH_SHORT).show()
             } else {
-                // Thiếu quyền đọc thông báo → mở màn hệ thống "Truy cập thông báo" (đường CHUẨN của
-                // Android, KHÔNG cần adb — dùng được cho bản release gửi người khác). Xem
-                // promptNotificationAccess(); listener bind lại tự động ở onResume() khi user quay về.
-                promptNotificationAccess()
+                // Quyền đọc thông báo là quyền ADB (settings secure enabled_notification_listeners) — KHÔNG cần
+                // màn Settings (IVI khoá không mở được → toast hệ thống "không hỗ trợ hoạt động này"). Cấp THẲNG
+                // qua dadb uid-shell (NavConnect.selfGrant, y như DashCast). Chỉ khi dadb lỗi mới hiện fallback.
+                Toast.makeText(this, Lang.t("Đang cấp quyền đọc thông báo…", "Granting notification access…"), Toast.LENGTH_SHORT).show()
+                NavConnect.selfGrant(applicationContext) { ok ->
+                    if (isFinishing) return@selfGrant
+                    if (ok) {
+                        Toast.makeText(this, Lang.t("Đã cấp quyền — đã kết nối nguồn dẫn đường.", "Access granted — navigation connected."), Toast.LENGTH_SHORT).show()
+                        refresh()
+                    } else {
+                        promptNotificationAccessFallback()
+                    }
+                }
             }
         }
         findViewById<Button>(R.id.btn_nav_stop).setOnClickListener {
@@ -182,7 +213,9 @@ class MainActivity : Activity() {
             UpdateFlow.start(this) { text, _ -> btn.text = text }
         }
 
-        NavConnect.ensureConnected(applicationContext)
+        // Option B (1.13): chỉ đụng adb khi Navigation+HUD đang BẬT. Mặc định TẮT → mở app KHÔNG chạy dadb
+        // (tránh đua nhiều client dadb + popup Allow khi user chưa cần nav). Bật công tắc mới grant+connect.
+        if (Prefs.enabled(this)) NavConnect.ensureConnected(applicationContext)
         runCatching { RebindReceiver.scheduleWatchdog(applicationContext) }
         // Nút nổi + chiếu cụm chỉ khởi động khi master switch "Cluster Cast" đang BẬT (MẶC ĐỊNH TẮT —
         // nav-only là mặc định; cụm giữ native + nav hiện ngay, không projection/cong/đen). Tắt Cast ⇒
@@ -203,7 +236,7 @@ class MainActivity : Activity() {
         // Quay lại từ màn "Truy cập thông báo": vừa bật quyền nhưng listener chưa bind (firmware BYD
         // bỏ qua requestRebind) → ép bind qua dadb. Chỉ chạy khi ĐÃ có quyền mà CHƯA bound (rẻ, không
         // đụng nav đang chạy tốt).
-        if (notificationAccessGranted() && !NavNotificationListener.connected) {
+        if (Prefs.enabled(this) && notificationAccessGranted() && !NavNotificationListener.connected) {
             NavConnect.ensureConnected(applicationContext)
         }
         cast.onResume()
@@ -253,6 +286,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.btn_reconnect_nav).visibility =
             if (permission != NavigationPermission.GRANTED) View.VISIBLE else View.GONE
         navClusterStatus.refresh()
+        updateVoiceKeyLabel()
     }
 
     private fun View.tint(color: Int) {
@@ -307,23 +341,35 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Mở màn hệ thống "Truy cập thông báo" để user tự bật ClusterNav — đường CHUẨN Android, KHÔNG cần
-     * adb, nên bản release gửi người khác vẫn dùng được. Kèm hướng dẫn ngắn; listener bind lại tự động
-     * ở onResume() khi user quay về (ép qua dadb vì firmware BYD bỏ qua requestRebind).
+     * FALLBACK khi tự cấp quyền qua dadb THẤT BẠI (thường vì chưa bấm "Allow USB debugging" trên xe lần
+     * đầu). Cho THỬ LẠI selfGrant, hoặc mở màn Settings hệ thống để bật tay (một số máy IVI không có màn này
+     * → openNotificationAccessSettings tự toast hướng dẫn). Đây KHÔNG còn là đường chính: đường chính là
+     * NavConnect.selfGrant (cấp qua dadb), gọi khi bấm nút / bật công tắc lúc thiếu quyền.
      */
-    private fun promptNotificationAccess() {
+    private fun promptNotificationAccessFallback() {
+        if (isFinishing) return
         android.app.AlertDialog.Builder(this)
-            .setTitle(Lang.t("Cần quyền đọc thông báo", "Notification access needed"))
+            .setTitle(Lang.t("Chưa cấp được quyền", "Couldn't grant access"))
             .setMessage(
                 Lang.t(
-                    "ClusterNav cần quyền “Truy cập thông báo” để đọc chỉ dẫn từ Google Maps / Waze / VietMap.\n\n" +
-                        "Bấm “Mở cài đặt” → tìm ClusterNav trong danh sách → bật lên → quay lại app.",
-                    "ClusterNav needs “Notification access” to read guidance from Google Maps / Waze / VietMap.\n\n" +
-                        "Tap “Open settings” → find ClusterNav in the list → turn it on → return to the app.",
+                    "Chưa tự cấp được quyền đọc thông báo qua ADB nội bộ. Lần đầu cần bật gỡ lỗi USB: khi màn " +
+                        "xe hiện hộp thoại “Allow USB debugging?”, bấm Allow rồi Thử lại.\n\nHoặc mở cài đặt hệ " +
+                        "thống để bật ClusterNav thủ công (một số máy không có màn này).",
+                    "Couldn't self-grant notification access over local ADB. First time, allow USB debugging: " +
+                        "when the car screen shows “Allow USB debugging?”, tap Allow, then Retry.\n\nOr open " +
+                        "system settings to enable ClusterNav manually (some units lack this screen).",
                 ),
             )
-            .setNegativeButton(Lang.t("Hủy", "Cancel"), null)
-            .setPositiveButton(Lang.t("Mở cài đặt", "Open settings")) { _, _ -> openNotificationAccessSettings() }
+            .setPositiveButton(Lang.t("Thử lại", "Retry")) { _, _ ->
+                Toast.makeText(this, Lang.t("Đang cấp quyền…", "Granting…"), Toast.LENGTH_SHORT).show()
+                NavConnect.selfGrant(applicationContext) { ok ->
+                    if (isFinishing) return@selfGrant
+                    if (ok) refresh()
+                    else Toast.makeText(this, Lang.t("Vẫn chưa được — kiểm tra hộp thoại Allow trên xe.", "Still failed — check the Allow dialog on the car."), Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNeutralButton(Lang.t("Mở cài đặt", "Open settings")) { _, _ -> openNotificationAccessSettings() }
+            .setNegativeButton(Lang.t("Đóng", "Close"), null)
             .show()
     }
 
@@ -359,6 +405,98 @@ class MainActivity : Activity() {
             ),
             Toast.LENGTH_LONG,
         ).show()
+    }
+
+    // ── T3: Nút vật lý → Trợ lý giọng nói ───────────────────────────────────────────────────────
+    // Ứng viên keycode cho nút voice/steering (Android chuẩn). "Học phím" = sentinel -1: bấm nút THẬT trên
+    // xe để gán keycode chưa biết (owner: dùng keymap Dashcast/OpenBYD, không dò lại — nếu không khớp thì học).
+    private val voiceKeyLearnSentinel = -1
+    private val voiceKeyButtons: List<Pair<String, Int>> = listOf(
+        "Trợ lý giọng nói (VOICE_ASSIST · 231)" to 231,
+        "Trợ lý (ASSIST · 219)" to 219,
+        "Play/Pause (85)" to 85,
+        "Bài trước (PREVIOUS · 88)" to 88,
+        "Bài sau (NEXT · 87)" to 87,
+        "Headset hook (79)" to 79,
+        "Gọi (CALL · 5)" to 5,
+        "Tìm kiếm (SEARCH · 84)" to 84,
+        "Học phím… (bấm nút trên xe)" to voiceKeyLearnSentinel,
+    )
+
+    private fun updateVoiceKeyLabel() {
+        val current = findViewById<TextView>(R.id.txt_voicekey_current) ?: return
+        val kc = Prefs.voiceKeyCode(this)
+        current.text = Lang.t("Nút hiện tại: ", "Current button: ") + android.view.KeyEvent.keyCodeToString(kc) + " ($kc)"
+    }
+
+    private fun setupVoiceKeyControls() {
+        val vkSwitch = findViewById<Switch>(R.id.switch_voicekey_enabled)
+        val btnSpinner = findViewById<android.widget.Spinner>(R.id.spinner_voicekey_button)
+        val gestureSpinner = findViewById<android.widget.Spinner>(R.id.spinner_voicekey_gesture)
+        val targetSpinner = findViewById<android.widget.Spinner>(R.id.spinner_voicekey_target)
+
+        vkSwitch.isChecked = Prefs.voiceKeyEnabled(this)
+        vkSwitch.setOnCheckedChangeListener { _, on ->
+            Prefs.setVoiceKeyEnabled(this, on)
+            // Cần service Hỗ trợ bật thì onKeyEvent mới nhận phím. Bật qua dadb (như selfGrant) nếu chưa bật.
+            if (on && !accessibilityBoosterGranted()) {
+                Toast.makeText(this, Lang.t("Đang bật dịch vụ Hỗ trợ…", "Enabling accessibility service…"), Toast.LENGTH_SHORT).show()
+                NavConnect.grantAccessibility(applicationContext) { ok ->
+                    if (isFinishing) return@grantAccessibility
+                    Toast.makeText(
+                        this,
+                        if (ok) Lang.t("Đã bật. Bấm nút đã gán để mở trợ lý.", "Enabled. Press the mapped button to open the assistant.")
+                        else Lang.t("Chưa bật được Hỗ trợ — bấm Allow USB debugging trên xe rồi thử lại, hoặc bật tay ở Cài đặt > Hỗ trợ.", "Couldn't enable accessibility — tap Allow USB debugging on the car and retry, or enable it in Settings > Accessibility."),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
+
+        btnSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceKeyButtons.map { it.first })
+        val vkBtnInitialPos = voiceKeyButtons.indexOfFirst { it.second == Prefs.voiceKeyCode(this) }.coerceAtLeast(0)
+        btnSpinner.setSelection(vkBtnInitialPos)
+        updateVoiceKeyLabel()
+        // Spinner fires onItemSelected once automatically on first layout. A LEARNED keycode that isn't in
+        // the candidate list makes the spinner fall back to position 0, and that automatic callback would
+        // overwrite the learned code with candidate[0] (231) on every reopen — losing exactly the custom
+        // keycode "Học phím" exists to capture. Ignore only the initial programmatic callback.
+        var vkBtnFirstCallback = true
+        btnSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                if (vkBtnFirstCallback) {
+                    vkBtnFirstCallback = false
+                    if (pos == vkBtnInitialPos) return   // skip the automatic initial selection
+                }
+                val kc = voiceKeyButtons[pos].second
+                if (kc == voiceKeyLearnSentinel) {
+                    Prefs.setVoiceKeyLearn(this@MainActivity, true)
+                    Toast.makeText(this@MainActivity, Lang.t("Bấm nút vật lý muốn dùng trên xe…", "Press the physical button you want…"), Toast.LENGTH_LONG).show()
+                    if (!accessibilityBoosterGranted()) NavConnect.grantAccessibility(applicationContext)
+                } else {
+                    Prefs.setVoiceKeyCode(this@MainActivity, kc)
+                    Prefs.setVoiceKeyLearn(this@MainActivity, false)   // a concrete pick cancels any pending learn
+                    updateVoiceKeyLabel()
+                }
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        val gestures = arrayOf(Lang.t("Nhấn", "Press"), Lang.t("Nhấn giữ", "Hold"))
+        gestureSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, gestures)
+        gestureSpinner.setSelection(Prefs.voiceKeyGesture(this).coerceIn(0, 1))
+        gestureSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) { Prefs.setVoiceKeyGesture(this@MainActivity, pos) }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        val targets = arrayOf("Google / Gemini", "BYD 小迪 (autovoice)", Lang.t("Nhận dạng giọng nói", "Speech recognizer"))
+        targetSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, targets)
+        targetSpinner.setSelection(Prefs.voiceKeyTarget(this).coerceIn(0, 2))
+        targetSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) { Prefs.setVoiceKeyTarget(this@MainActivity, pos) }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
     }
 
     private fun tryStartActivity(intent: Intent): Boolean =

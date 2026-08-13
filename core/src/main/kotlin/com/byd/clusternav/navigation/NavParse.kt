@@ -23,7 +23,7 @@ object NavParse {
         m >= 1000 -> (m / 100) * 100   // >1km: bước 100m = 0.1km (đúng độ phân giải chuỗi "x.x km")
         m >= 300 -> (m / 25) * 25       // 300m-1km: bước 25m (cũ 50m → nhảy to)
         m >= 100 -> (m / 10) * 10       // 100-300m: bước 10m
-        else -> (m / 5) * 5             // <100m: bước 5m
+        else -> (m / 10) * 10          // <100m: bước 10m (I3 1.14: khớp Google 10m → bớt lệch cụm vs Maps)
     }
 
     /** "250 m" / "1.2 km" / "1,2 km" -> mét (int). -1 nếu không đọc được. */

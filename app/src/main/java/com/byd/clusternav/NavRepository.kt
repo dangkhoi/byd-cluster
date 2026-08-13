@@ -91,6 +91,11 @@ object NavRepository {
         publish(NavState())
     }
 
+    /** I4 (1.14): áp NGAY chế độ hiển thị cụm vừa đổi ở UI (re-assert qua owner). No-op nếu chưa có phiên/owner. */
+    fun reapplyClusterMode(context: Context) {
+        hudOwner?.reapply()
+    }
+
     fun snapshot(context: Context, interaction: InteractionContext = InteractionContext.UNKNOWN): NavigationUiState =
         connect(context, permission()).also { it.refreshFreshness() }.snapshot(interaction)
 
@@ -113,7 +118,12 @@ object NavRepository {
             // fresh; this write sets/holds the OEM nav-screen MODE (Đơn giản/full) the broadcast alone cannot.
             if (navOnlyMode(appCtx)) {
                 owner.push(
-                    icon = frame.content.maneuverCode ?: 11,
+                    // I1 (1.14): INSTRUMENT_GUIDE_INFO_SIMPLE_SET (đường HUD) đọc bảng mã CAN (Maneuver.toHudIcon:
+                    // trái=1, phải=2), KHÔNG phải mã AMAP (toAmapIcon: trái=2, phải=3 — dùng cho LÀN CỤM qua broadcast
+                    // AUTONAVI ở emitLane phía trên). Trước 1.14 bắn maneuverCode (AMAP) vào feature CAN → HUD đọc lệch
+                    // 1 nấc → lật trái↔phải (cụm vẫn đúng vì đi đường broadcast riêng). Bắn toHudIcon(); fallback
+                    // 11 = đi thẳng (CAN). ON-CAR: xác nhận cụm "Giữa+ETA" vẫn đúng sau đổi này.
+                    icon = frame.content.maneuver?.toHudIcon() ?: 11,
                     segMeters = frame.content.distanceMeters ?: -1,
                     hudRoad = frame.content.roadName.orEmpty(),
                 )

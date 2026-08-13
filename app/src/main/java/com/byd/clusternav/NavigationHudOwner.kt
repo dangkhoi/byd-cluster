@@ -57,11 +57,22 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
                 val seg = c.distanceMeters ?: -1
                 val road = c.roadName ?: ""
                 val mode = Prefs.navClusterScreenMode(appContext)
-                val rc = BydHal.writeNavFrame(appContext, icon, seg, road, mode)
-                Log.i(TAG, "cluster-nav icon=$icon seg=$seg road='$road' mode=$mode → $rc")
-                // Commit applied state only on successful delivery (no exception thrown).
-                synchronized(dedupLock) {
-                    appliedIcon = icon; appliedSeg = seg; appliedRoad = road
+                if (mode == Prefs.NAV_SCREEN_OFF) {
+                    // I4 (1.14): chế độ OFF = TẮT nav giữa cụm ⇒ status=4 (clearNavFrame), KHÔNG ghi screen=0
+                    // (vô tác dụng trên xe — owner báo). Làn cụm (strip) do broadcast riêng nên không bị đụng;
+                    // OFF chỉ tắt overlay "Giữa+ETA".
+                    val rc = BydHal.clearNavFrame(appContext)
+                    Log.i(TAG, "cluster-nav mode=OFF → clear → $rc")
+                    synchronized(dedupLock) {
+                        appliedIcon = Int.MIN_VALUE; appliedSeg = Int.MIN_VALUE; appliedRoad = ""
+                    }
+                } else {
+                    val rc = BydHal.writeNavFrame(appContext, icon, seg, road, mode)
+                    Log.i(TAG, "cluster-nav icon=$icon seg=$seg road='$road' mode=$mode → $rc")
+                    // Commit applied state only on successful delivery (no exception thrown).
+                    synchronized(dedupLock) {
+                        appliedIcon = icon; appliedSeg = seg; appliedRoad = road
+                    }
                 }
             }
         },
@@ -118,6 +129,28 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
             )
         )
         return worker.submit(frame)
+    }
+
+    /**
+     * I4 (1.14): áp NGAY chế độ hiển thị cụm vừa đổi, không chờ reboot / frame kế (frame kế thường bị dedup
+     * nuốt vì icon/seg/road không đổi khi đỗ). Ép re-assert status 4→2: gửi CLEAR (status=4) rồi đẩy lại
+     * frame đang hiện (status=2 + mode MỚI đọc trong delivery) trên luồng worker (FIFO) để OEM đọc lại
+     * nav-screen mode. No-op nếu chưa hiện gì. ON-CAR: xác nhận có tránh được reboot (nếu OEM vẫn chỉ áp lúc
+     * mở phiên thì đây là best-effort — xem handoff).
+     */
+    fun reapply() {
+        val icon: Int
+        val seg: Int
+        val road: String
+        synchronized(dedupLock) {
+            if (appliedIcon == Int.MIN_VALUE) return   // chưa hiện nav → không cần re-assert
+            icon = appliedIcon
+            seg = appliedSeg
+            road = appliedRoad
+            appliedIcon = Int.MIN_VALUE                // bust dedup để push() bên dưới KHÔNG bị nuốt
+        }
+        worker.submit(clearFrame())                    // status=4 (end)
+        push(icon, if (seg < 0) -1 else seg, road)     // status=2 + mode mới
     }
 
     private fun clearFrame(): NavigationFrame = NavigationFrame(

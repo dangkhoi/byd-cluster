@@ -21,7 +21,11 @@ object Prefs {
     private fun sp(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
-    fun enabled(ctx: Context): Boolean = sp(ctx).getBoolean(K_ENABLED, true)
+    // ★ 1.13 (Option B, owner 2026-08-13): MẶC ĐỊNH TẮT. Mở app KHÔNG đụng adb/dadb lúc khởi động (tránh đua
+    // nhiều client dadb + tránh popup "Allow USB debugging" khi user chưa cần nav). Chỉ khi user gạt công tắc
+    // BẬT mới tự cấp quyền notification (NavConnect.selfGrant) + kết nối. Quyền đã cấp PERSIST qua reboot nên
+    // các lần bật sau không phải chạy adb lại (listener tự bind; RebindReceiver lo phần khởi động lại).
+    fun enabled(ctx: Context): Boolean = sp(ctx).getBoolean(K_ENABLED, false)
     fun setEnabled(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_ENABLED, v).apply()
 
     fun sourceMode(ctx: Context): Int = sp(ctx).getInt(K_SOURCE, AUTO)
@@ -37,10 +41,10 @@ object Prefs {
     // Nav-on-cluster: op 39 "simple navigation" (Giữa + ETA) là chế độ DUY NHẤT (owner chốt 2026-08-12).
     // Bỏ hẳn biến thể "nhỏ/ở trên" (không dò được opcode trên xe) + nút chọn mode + nút test trên UI.
 
-    // ★ 2026-08-12 (owner): MẶC ĐỊNH TẮT marquee — tên đường trên cụm/op39 hiển thị ĐỨNG IM (không chạy
-    // phải→trái). Tên dài được VIẾT TẮT (fitRoadName: "Nguyễn Hữu Cảnh"→"NHC") cho vừa ô ~7 ký tự thay vì
-    // cuộn cửa sổ theo scrollTick. Firmware cụm vốn hard-cut ~7 ký tự, không tự marquee → gửi tĩnh là đủ. Giữ toggle.
-    fun marquee(ctx: Context): Boolean = sp(ctx).getBoolean(K_MARQUEE, false)   // false = tên đường TĨNH (rút gọn)
+    // ★ 1.14 (owner on-car): MẶC ĐỊNH BẬT lại marquee — tên đường >~8 ký tự bị firmware cụm hard-cut, nên cho
+    // chạy cuộn PHẢI→TRÁI. Bước cuộn nay TÍNH THEO THỜI GIAN (ClusterBroadcaster.MARQUEE_STEP_MS, reset mỗi
+    // đường mới) → đều, chậm, MƯỢT (bản cũ tăng scrollTick không đều theo emission → dựt). Có toggle UI (cb_marquee).
+    fun marquee(ctx: Context): Boolean = sp(ctx).getBoolean(K_MARQUEE, true)    // true = chạy marquee mượt
     fun setMarquee(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_MARQUEE, v).apply()
 
     // Nav-on-cluster DISPLAY MODE — ghi SET_NAVI_SCREEN_STATUS_SET (0x4C10E015 · BYDAutoSettingDevice), đúng
@@ -87,6 +91,29 @@ object Prefs {
     // KHÔNG phải tăng tốc CPU — chỉ rút ngắn animation cho snappy. Tắt → app set lại 1.0.
     fun animOpt(ctx: Context): Boolean = sp(ctx).getBoolean("anim_opt", true)
     fun setAnimOpt(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("anim_opt", v).apply()
+
+    // ─── T3 (1.13): Nút vật lý → Trợ lý giọng nói ───────────────────────────────────────────────
+    // KHÔNG thay chức năng gốc của nút: NavAccessibilityService.onKeyEvent chỉ "nuốt" (consume) đúng tổ hợp
+    // (keycode + cử chỉ) đã cấu hình, còn lại pass-through. MẶC ĐỊNH TẮT. Lưu số nguyên (ordinal) để :core
+    // không phụ thuộc Android — service map sang VoiceKeyGesture/VoiceKeyTarget. Xem VoiceKeyMatcher (:core).
+    private const val K_VK_ENABLED = "voicekey_enabled"
+    private const val K_VK_KEYCODE = "voicekey_keycode"
+    private const val K_VK_GESTURE = "voicekey_gesture"
+    private const val K_VK_TARGET = "voicekey_target"
+    private const val K_VK_LEARN = "voicekey_learn"
+    const val VK_KEYCODE_DEFAULT = 231   // android.view.KeyEvent.KEYCODE_VOICE_ASSIST — ứng viên; "học phím" nếu xe khác
+
+    fun voiceKeyEnabled(ctx: Context): Boolean = sp(ctx).getBoolean(K_VK_ENABLED, false)
+    fun setVoiceKeyEnabled(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_VK_ENABLED, v).apply()
+    fun voiceKeyCode(ctx: Context): Int = sp(ctx).getInt(K_VK_KEYCODE, VK_KEYCODE_DEFAULT)
+    fun setVoiceKeyCode(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_VK_KEYCODE, v).apply()
+    fun voiceKeyGesture(ctx: Context): Int = sp(ctx).getInt(K_VK_GESTURE, 0)   // 0=PRESS (nhấn), 1=HOLD (nhấn giữ)
+    fun setVoiceKeyGesture(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_VK_GESTURE, v).apply()
+    fun voiceKeyTarget(ctx: Context): Int = sp(ctx).getInt(K_VK_TARGET, 0)     // 0=ASSIST, 1=BYD 小迪, 2=RECOGNIZER
+    fun setVoiceKeyTarget(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_VK_TARGET, v).apply()
+    /** "Học phím": khi BẬT, onKeyEvent kế tiếp ghi lại keycode nút vừa bấm rồi tự tắt cờ. */
+    fun voiceKeyLearn(ctx: Context): Boolean = sp(ctx).getBoolean(K_VK_LEARN, false)
+    fun setVoiceKeyLearn(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_VK_LEARN, v).apply()
 
     // Toggle theo module (key namespaced "mod_" — không thể đụng các key lõi ở trên). Mặc định TẮT
     // (experiment phải bật tay). Key mồ côi sau khi xoá module = dead data vô hại, không cần dọn.

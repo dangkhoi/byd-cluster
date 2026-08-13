@@ -22,6 +22,10 @@ object ClusterBroadcaster {
     // Existing cluster heartbeat remains exactly 400 ms; freshness is monotonic and session-scoped.
     private const val HEARTBEAT_MS = 400L
     private const val STALE_MS = 180_000L
+    // I2 (1.14): bước cuộn marquee TÍNH THEO THỜI GIAN cho ĐỀU + MƯỢT (bản cũ theo scrollTick tăng không đều
+    // theo emission = dựt). ~700ms/ký tự = chậm, đều; firmware chỉ re-render mỗi lần gửi (~400ms) nên đây là
+    // độ mượt tối đa khả dĩ với ô ký-tự cố định.
+    private const val MARQUEE_STEP_MS = 700L
     private val handler by lazy { Handler(Looper.getMainLooper()) }
 
     private data class LanePayload(
@@ -42,7 +46,7 @@ object ClusterBroadcaster {
     private var sessionSelectedAtEpochMs = 0L
     private var sourceSequence = 0L
     private var lastCleanRoad = ""
-    private var scrollTick = 0
+    private var roadShownAtMs = 0L    // I2 (1.14): mốc thời gian đường hiện tại xuất hiện → offset marquee tính từ đây (đều, bắt đầu từ đầu tên)
     private val hudController = HudMirrorController()
 
     private val emissionArbiter by lazy {
@@ -108,13 +112,17 @@ object ClusterBroadcaster {
         )
     }
 
-    /** Dựng frame với tên đường (marquee trượt theo scrollTick, hoặc TĨNH = tên đầy đủ) rồi gửi. Dùng chung cho emit + nhịp tim. */
+    /** Dựng frame với tên đường (marquee cuộn theo THỜI GIAN, hoặc TĨNH = tên đầy đủ) rồi gửi. Dùng chung cho emit + nhịp tim. */
     private fun sendFrame(ctx: Context, s: NavState, byd: Boolean) {
-        // marquee OFF (mặc định 2026-08-12): gửi tên đường ĐẦY ĐỦ đã clean — KHÔNG viết tắt, KHÔNG cắt phía app —
-        // để firmware cụm tự cắt theo ô của nó; owner xem trên xe ô hiện được bao nhiêu ký tự rồi mới quyết. marquee ON: cửa sổ trượt.
-        val road = if (Prefs.marquee(ctx))
-            NavFormat.roadWindow(lastCleanRoad, scrollTick, NavFormat.ROAD_MAX_UNITS)
-        else lastCleanRoad
+        // marquee ON (mặc định 1.14): cuộn cửa sổ ROAD_MAX_UNITS ký tự, offset theo THỜI GIAN từ lúc đường
+        // xuất hiện (roadShownAtMs) → đều/mượt, bắt đầu từ đầu tên. marquee OFF: gửi tên ĐẦY ĐỦ đã clean để
+        // firmware tự cắt. KHÔNG dùng scrollTick (tăng không đều theo emission = dựt — bug bản cũ owner báo).
+        val road = if (Prefs.marquee(ctx)) {
+            val tick = if (roadShownAtMs > 0L)
+                ((SystemClock.elapsedRealtime() - roadShownAtMs) / MARQUEE_STEP_MS).toInt()
+            else 0
+            NavFormat.roadWindow(lastCleanRoad, tick, NavFormat.ROAD_MAX_UNITS)
+        } else lastCleanRoad
         // PROJECT nội suy: cự ly trừ dần giữa 2 noti (hạ lag). Truyền tốc-độ-HAL THÔ vào project() — interpolator
         // tự ưu tiên closingRate (tự khử over-read) và chỉ dùng speed×SPEEDO_CORRECTION khi chưa có closingRate.
         // speed vẫn cần để clamp closingRate ([0, 1.2×v+3]) chống delta-noti lỗi. Tắt nội suy -> parse thô.
@@ -194,21 +202,19 @@ object ClusterBroadcaster {
         when (emission.kind) {
             AmapEmissionKind.SESSION_RESET -> {
                 lastCleanRoad = ""
-                scrollTick = 0
+                roadShownAtMs = 0L
                 sendResetFrames(payload.context)
             }
             AmapEmissionKind.SOURCE_FRAME -> {
                 val cleanRoad = NavFormat.cleanRoadName(payload.state.road)
                 if (cleanRoad != lastCleanRoad) {
                     lastCleanRoad = cleanRoad
-                    scrollTick = 0
+                    roadShownAtMs = SystemClock.elapsedRealtime()   // I2: reset mốc marquee → cuộn lại từ đầu tên mới
                 }
                 sendFrame(payload.context, payload.state, payload.byd)
-                scrollTick++
                 hudController.onCanonicalFrame(emission.token)
             }
             AmapEmissionKind.HEARTBEAT -> {
-                scrollTick++
                 sendFrame(payload.context, payload.state, payload.byd)
                 hudController.onCanonicalFrame(emission.token)
             }
@@ -218,7 +224,7 @@ object ClusterBroadcaster {
             }
             AmapEmissionKind.STOP -> {
                 lastCleanRoad = ""
-                scrollTick = 0
+                roadShownAtMs = 0L
                 TurnDistanceInterpolator.reset()
                 SourceArbiter.clear()
                 sendResetFrames(payload.context)
