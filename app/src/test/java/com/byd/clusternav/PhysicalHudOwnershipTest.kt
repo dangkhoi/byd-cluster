@@ -24,23 +24,27 @@ class PhysicalHudOwnershipTest {
     }
 
     @Test
-    fun `active runtime has no direct HUD writer and no speed candidate write path`() {
+    fun `cluster center-nav HAL write is single-owner and wired via NavRepository two-track`() {
         val controller = SourceRoots.text("src/main/java/com/byd/clusternav/HudMirrorController.kt")
         val broadcaster = SourceRoots.text("src/main/java/com/byd/clusternav/ClusterBroadcaster.kt")
         val speedOwner = SourceRoots.text("src/main/java/com/byd/clusternav/NavigationSpeedSignOwner.kt")
         val hal = SourceRoots.text("src/main/java/com/byd/clusternav/modules/hal/BydHal.kt")
+        val navRepo = SourceRoots.text("src/main/java/com/byd/clusternav/NavRepository.kt")
 
+        // Broadcast/lane feeder, HUD-mirror controller, speed owner must NOT touch the HAL directly.
         listOf(controller, broadcaster, speedOwner).forEach { text ->
             assertFalse(text.contains("BydHal"))
             assertFalse(text.contains("writeNavFrame"))
             assertFalse(text.contains("writeSpeedLimit"))
             assertFalse(text.contains("clearSpeedLimit"))
         }
+        // Cluster-lane broadcast path stays decoupled from the HAL owner (owner is driven from NavRepository).
         assertFalse(broadcaster.contains("NavigationHudOwner"))
         assertFalse(hal.contains("writeSpeedLimit"))
         assertFalse(hal.contains("clearSpeedLimit"))
         assertFalse(hal.contains("ADAS_TRAFFIC_LIMIT_SPEED_STATUS_PROMPT"))
 
+        // Ownership boundary preserved: ONLY NavigationHudOwner may call BydHal.writeNavFrame.
         val callers = Files.walk(SourceRoots.path("src/main/java/com/byd/clusternav")).use { paths ->
             paths.filter { Files.isRegularFile(it) && it.toString().endsWith(".kt") }
                 .filter { it.fileName.toString() != "NavigationHudOwner.kt" }
@@ -48,6 +52,15 @@ class PhysicalHudOwnershipTest {
                 .filter { it.toFile().readText().contains("BydHal.writeNavFrame") }
                 .toList()
         }
-        assertTrue(callers.isEmpty(), "direct HUD write must be unreachable: $callers")
+        assertTrue(callers.isEmpty(), "only NavigationHudOwner may call BydHal.writeNavFrame: $callers")
+
+        // 2026-08-13: the center-nav path IS now wired (was orphaned/fail-closed). NavRepository instantiates
+        // the owner and gates it two-track (Cast master OFF) so the app drives "Giữa + ETA" via the proven HAL
+        // path instead of the no-op ch1000 op39.
+        assertTrue(navRepo.contains("NavigationHudOwner"), "NavRepository must wire the cluster center-nav owner")
+        assertTrue(
+            navRepo.contains("navOnlyMode") && navRepo.contains("castEnabled"),
+            "cluster center-nav must be gated by the Cast-OFF two-track check",
+        )
     }
 }

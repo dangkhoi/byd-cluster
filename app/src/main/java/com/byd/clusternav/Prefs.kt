@@ -43,6 +43,19 @@ object Prefs {
     fun marquee(ctx: Context): Boolean = sp(ctx).getBoolean(K_MARQUEE, false)   // false = tên đường TĨNH (rút gọn)
     fun setMarquee(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_MARQUEE, v).apply()
 
+    // Nav-on-cluster DISPLAY MODE — ghi SET_NAVI_SCREEN_STATUS_SET (0x4C10E015 · BYDAutoSettingDevice), đúng
+    // menu OEM "Đơn giản / Màn hình nhỏ / Toàn màn hình / OFF" (mở khoá 2026-08-13 qua BydHal). op39 ch1000 KHÔNG
+    // đổi được cái này (no-op trên xe). NavigationHudOwner đọc pref này mỗi frame → selector áp dụng LIVE.
+    // ⚠️ value↔menu CHƯA map chắc trên xe: navopen=3 (rc=0, ứng viên "Toàn màn hình"); "Đơn giản" đoán=1 — dò trên xe.
+    // Default = FULL(3) = value đã-proven rc=0 (ít nhất hiện nav ở GIỮA thay vì dải nhỏ ở đỉnh).
+    const val NAV_SCREEN_OFF = 0
+    const val NAV_SCREEN_SIMPLE = 1       // "Đơn giản" (Giữa + ETA) — GUESS, verify on-car
+    const val NAV_SCREEN_SMALL = 2        // "Màn hình nhỏ" (dải ở đỉnh) — GUESS
+    const val NAV_SCREEN_FULL = 3         // "Toàn màn hình" — navopen/AmapService dùng 3 (rc=0)
+    private const val K_NAV_SCREEN_MODE = "nav_cluster_screen_mode"
+    fun navClusterScreenMode(ctx: Context): Int = sp(ctx).getInt(K_NAV_SCREEN_MODE, NAV_SCREEN_FULL)
+    fun setNavClusterScreenMode(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_NAV_SCREEN_MODE, v).apply()
+
     // Cluster-lane output is independently switchable while the shared Navigation session/HUD remain active.
     fun lane(ctx: Context): Boolean = sp(ctx).getBoolean("lane", true)
     fun setLane(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("lane", v).apply()
