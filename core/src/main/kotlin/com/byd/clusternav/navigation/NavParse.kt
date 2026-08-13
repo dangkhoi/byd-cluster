@@ -20,10 +20,14 @@ object NavParse {
      *  Bước nhỏ lại (so bản cũ 50/100m) → số trượt đều thay vì "đứng im rồi nhảy cục". */
     fun quantizeDisplay(m: Int): Int = when {
         m < 0 -> m
-        m >= 1000 -> (m / 100) * 100   // >1km: bước 100m = 0.1km (đúng độ phân giải chuỗi "x.x km")
-        m >= 300 -> (m / 25) * 25       // 300m-1km: bước 25m (cũ 50m → nhảy to)
-        m >= 100 -> (m / 10) * 10       // 100-300m: bước 10m
-        else -> (m / 10) * 10          // <100m: bước 10m (I3 1.14: khớp Google 10m → bớt lệch cụm vs Maps)
+        // J2 (1.16): LÀM TRÒN (round) thay vì floor. Đo trên xe (1.15, n=3239): floor khiến display thấp hơn
+        // Google ~34m trung bình (cụm hiện ÍT hơn Maps; histogram dồn ở -10/-25/-100 = đúng các bậc floor).
+        // Google làm tròn về bậc gần nhất → round khử bias-xuống của floor. (Bias nội suy proj−raw≈−16m còn
+        // lại chờ ground-truth screenRead lần lái sau để chỉnh FACTOR.)
+        m >= 1000 -> ((m + 50) / 100) * 100   // >1km: bậc 100m (0.1km)
+        m >= 300 -> ((m + 12) / 25) * 25       // 300m-1km: bậc 25m
+        m >= 100 -> ((m + 5) / 10) * 10        // 100-300m: bậc 10m
+        else -> ((m + 5) / 10) * 10            // <100m: bậc 10m
     }
 
     /** "250 m" / "1.2 km" / "1,2 km" -> mét (int). -1 nếu không đọc được. */

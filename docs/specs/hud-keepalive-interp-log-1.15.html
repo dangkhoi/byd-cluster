@@ -82,6 +82,7 @@ Approved in-chat 2026-08-13 pm — <i>"uhm ok đó, có hướng thì fix thôi,
 <h2 id="changelog"><span class="n">1</span>Changelog</h2>
 <table><thead><tr><th>Rev</th><th>Date</th><th>Change</th></tr></thead><tbody>
 <tr><td>v1</td><td>2026-08-13</td><td>Two on-car issues from the 1.14 drive investigated + root-caused by source read; approved in-chat; implementing off-car. J1 keep-alive + J2 comparison log. Recorded the "version 0.36" finding (see §2).</td></tr>
+<tr><td>v2</td><td>2026-08-13 pm</td><td>On-car 1.15 session: OTA confirmed; drive log shows <code>screenRead_m</code> empty — root cause the accessibility service was not enabled (enabled live over adb). Measured display bias −34.5 m vs Google (floor-quantize). Shipped <b>1.16</b>: <code>NavParse.quantizeDisplay</code> floor→round. FACTOR deferred to next drive (ground-truth now captured).</td></tr>
 </tbody></table>
 
 <h2 id="context"><span class="n">2</span>Context</h2>
