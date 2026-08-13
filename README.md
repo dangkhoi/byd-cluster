@@ -1,7 +1,7 @@
 # ClusterNav
 
 > [!CAUTION]
-> **CURRENT STATUS: `1.16` (versionCode 116) — OTA self-test build.** The complete JVM suite is green off-car and the release APK builds cleanly and is signed, with all test/instrument-write surfaces (the T10 probe harness) confined to the `vehicleTest` build type and **absent from the release APK** (verified with `aapt2` on this build). From `1.11` the owner publishes each plain `apk/ClusterNav-<ver>-release.apk` to `main` so the app self-updates **over-the-air (OTA)** onto the car for testing — no ADB/laptop needed. **This is the owner's own iterative on-car test channel, not a supported public release, and is separate from the formal exact-source `collectAuthorizedApk` / Stage-11 candidate process (which remains its own distinct gate).** It is a hobby experiment with no driving-safety, compatibility, reversibility, or production-readiness claim — install at your own risk. The archived `1.04` vehicle-test candidate stays **blocklisted** in the on-car scripts (it exported the T10 `TEST_ADAS_*` / `TEST_SPEED_LIMIT` surface); the current release exports none.
+> **CURRENT STATUS: `1.17` (versionCode 117) — OTA self-test build.** The complete JVM suite is green off-car and the release APK builds cleanly and is signed, with all test/instrument-write surfaces (the T10 probe harness) confined to the `vehicleTest` build type and **absent from the release APK** (verified with `aapt2` on this build). From `1.11` the owner publishes each plain `apk/ClusterNav-<ver>-release.apk` to `main` so the app self-updates **over-the-air (OTA)** onto the car for testing — no ADB/laptop needed. **This is the owner's own iterative on-car test channel, not a supported public release, and is separate from the formal exact-source `collectAuthorizedApk` / Stage-11 candidate process (which remains its own distinct gate).** It is a hobby experiment with no driving-safety, compatibility, reversibility, or production-readiness claim — install at your own risk. The archived `1.04` vehicle-test candidate stays **blocklisted** in the on-car scripts (it exported the T10 `TEST_ADAS_*` / `TEST_SPEED_LIMIT` surface); the current release exports none.
 
 ClusterNav is a personal hobby experiment by **Đăng Khôi · `dangkhoi`** for exploring navigation and cluster projection on BYD DiLink hardware. It is not affiliated with BYD and makes no driving-safety, compatibility, reversibility, or production-readiness claim.
 
@@ -16,7 +16,11 @@ The tracks may share one APK as packaging, but they must not share runtime contr
 
 ## Downloads and installation
 
-**Current version: 1.16 (versionCode 116).** `1.16` applies the first data-driven interp fix from on-car `1.15` logs:
+**Current version: 1.17 (versionCode 117).** `1.17` fixes the physical-button → Gemini path found on-car:
+
+- **"Google / Gemini" voice-key target opens Gemini directly** — it now launches the Gemini app (`com.google.android.apps.bard`, which brings up the in-car voice surface) instead of a generic `ACTION_ASSIST` intent that hit a chooser and opened Bluetooth on this head unit. Combined with a long-press-mic mapping (learn the button, gesture **Press** — the firmware emits a distinct code for the hold), the steering-wheel voice button can open Gemini while short-press still opens the car's own assistant. Enabling Gemini as the *system* assistant is a separate device setting; see `docs/diagnostics/gemini-assistant-voicekey-oncar-2026-08-13.md`.
+
+`1.16` applies the first data-driven interp fix from on-car `1.15` logs:
 
 - **Distance-to-turn now rounds like Google** — the cluster distance quantizer **rounds to the nearest step** instead of flooring. On-car data (n=3239 moving samples) showed flooring made the cluster read **~34 m less** than Google Maps (bias piled exactly on the floor buckets −10/−25/−100 m); rounding removes that downward half. The interpolation FACTOR is left unchanged pending the on-screen Google distance now being captured as ground-truth for the next tuning pass.
 
@@ -41,7 +45,7 @@ The tracks may share one APK as packaging, but they must not share runtime contr
 
 `1.12` earlier added the in-app **cluster nav-display mode selector** (Đơn giản / Toàn màn hình / Màn hình nhỏ / OFF) that drives the OEM nav-on-cluster setting (`SET_NAVI_SCREEN_STATUS_SET`, `0x4C10E015`) over the BYDAuto HAL, so navigation renders in the cluster **centre** ("Giữa + ETA") instead of only the small top strip — replacing the clusterDebug op39 path (a no-op for the centre view on this trim). The app self-updates **over-the-air**: it polls this repo's `apk/` folder on `main` for a newer `ClusterNav-<ver>-release.apk` and installs it via the on-device dadb loopback (`-r`, same signing key) — no ADB/laptop. To build the same release from source: `./gradlew :app:assembleRelease`. The formal exact-source vehicle candidate is a separate flow (the authorized `collectAuthorizedApk` pipeline; see the build context below).
 
-> ⚠️ The archived `apk/ClusterNav-1.04-v104-527589f2d16a-release.apk` predates the WARN-1 hardening and still exports the T10 `TEST_ADAS_*` / `TEST_SPEED_LIMIT` ADAS/instrument-write surface — **do not install it** (its SHA-256 is now blocklisted in the on-car install guard, which refuses it). The current `1.16` release built from `main` exports no test surface.
+> ⚠️ The archived `apk/ClusterNav-1.04-v104-527589f2d16a-release.apk` predates the WARN-1 hardening and still exports the T10 `TEST_ADAS_*` / `TEST_SPEED_LIMIT` ADAS/instrument-write surface — **do not install it** (its SHA-256 is now blocklisted in the on-car install guard, which refuses it). The current `1.17` release built from `main` exports no test surface.
 
 Features:
 - **Navigation + HUD** — one navigation source with independent cluster-lane and cluster-centre ("Giữa + ETA") outputs. Master switch **defaults OFF**; turning it on grants notification access in-app (over dadb) and connects.
