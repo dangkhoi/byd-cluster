@@ -23,6 +23,8 @@ object TurnDistanceInterpolator {
     private var lastOutAt = 0L
     private var jumpStreak = 0
     @Volatile private var lastSpeed = 0.0  // tốc độ lần project gần nhất (debug/closingRate)
+    @Volatile private var lastRefineSeg = -1  // J2: cự ly tới rẽ ĐỌC TRÊN MÀN GMaps gần nhất (ground-truth cho log); <0 = chưa có
+    @Volatile private var lastRefineAt = 0L   // J2: mốc (elapsedRealtime ms) của lần đọc-màn gần nhất; 0 = chưa có
 
     private const val FACTOR = 0.95        // bù over-read đồng hồ + đường cong; <1 → lùi bảo thủ (correction hướng xuống)
     private const val MAX_EXTRAPOLATE_MS = 6000L  // map trễ >6s → NGỪNG lùi (giữ số, không trôi về 0)
@@ -34,6 +36,10 @@ object TurnDistanceInterpolator {
     fun anchorMeters(): Int = baseline
     fun lastProjected(): Int = lastOut
     fun closingRate(): Double = lastSpeed * FACTOR   // tốc-độ-tiếp-cận hiệu dụng (debug/log)
+    /** J2: cự ly tới rẽ ĐỌC TRÊN MÀN GMaps gần nhất (ground-truth cho log so-sánh nội suy). -1 = chưa đọc được. */
+    fun lastRefined(): Int = lastRefineSeg
+    /** J2: mốc (elapsedRealtime ms) của lần đọc-màn gần nhất; 0 nếu chưa có (để tính tuổi mẫu). */
+    fun lastRefinedAt(): Long = lastRefineAt
 
     private fun cur(): Int = if (baseline < 0) -1 else (baseline - traveled).toInt().coerceAtLeast(0)
 
@@ -86,6 +92,7 @@ object TurnDistanceInterpolator {
     /** Tinh chỉnh bằng cự ly ĐỌC MÀN (accessibility) = ground-truth → snap baseline (như 1 noti tươi). */
     @Synchronized
     fun refine(seg: Int, nowMs: Long) {
+        if (seg >= 0) { lastRefineSeg = seg; lastRefineAt = nowMs }   // J2: GHI ground-truth đọc-màn cho log (kể cả khi chưa có baseline)
         if (seg < 0 || baseline < 0) return
         snapTo(seg, nowMs)
     }
@@ -93,6 +100,7 @@ object TurnDistanceInterpolator {
     @Synchronized
     fun reset() {
         baseline = -1; traveled = 0.0; lastT = 0L; key = ""; lastOut = -1; lastOutAt = 0L; jumpStreak = 0; lastSpeed = 0.0
+        lastRefineSeg = -1; lastRefineAt = 0L
     }
 
     /** Q5: frame chỉ-hướng → xoá track NHƯNG giữ key (khỏi coi noti sau là maneuver mới). */

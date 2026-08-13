@@ -1,9 +1,11 @@
 package com.byd.clusternav
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.byd.clusternav.modules.hal.BydHal
 import com.byd.clusternav.navigation.BoundedNavigationOutputWorker
+import com.byd.clusternav.navigation.HudKeepAlivePolicy
 import com.byd.clusternav.navigation.NavigationFrame
 import com.byd.clusternav.navigation.NavigationFrameContent
 import com.byd.clusternav.navigation.NavigationFrameDelivery
@@ -11,6 +13,11 @@ import com.byd.clusternav.navigation.NavigationOutputTarget
 import com.byd.clusternav.navigation.NavigationSourceIdentity
 import com.byd.clusternav.navigation.OutputAdapterConfig
 import com.byd.clusternav.navigation.OutputSubmission
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Bounded owner for the CLUSTER center simple-nav output (BYDAuto INSTRUMENT + SETTING HAL).
@@ -40,6 +47,14 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
     private var appliedSeg = Int.MIN_VALUE
     private var appliedRoad = ""
 
+    // J1 keep-alive: OEM HUD/centre tự blank nếu quá lâu không có frame mới (đoạn dài không rẽ). Nhịp tim nội bộ
+    // re-assert frame đã-applied (bypass dedup) — làn cụm có nhịp 400ms riêng, đường HAL này trước đây thì không.
+    private val keepAlive = HudKeepAlivePolicy()
+    private val keepAliveScheduler: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "hud-keepalive").apply { isDaemon = true } }
+    private val keepAliveLock = Any()
+    private var keepAliveTask: ScheduledFuture<*>? = null
+
     private val worker = BoundedNavigationOutputWorker(
         NavigationOutputTarget.HUD,
         "hud-hal-delivery",
@@ -52,6 +67,7 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
                 synchronized(dedupLock) {
                     appliedIcon = Int.MIN_VALUE; appliedSeg = Int.MIN_VALUE; appliedRoad = ""
                 }
+                keepAlive.onCleared()
             } else {
                 val icon = c.maneuverCode ?: 11
                 val seg = c.distanceMeters ?: -1
@@ -66,6 +82,7 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
                     synchronized(dedupLock) {
                         appliedIcon = Int.MIN_VALUE; appliedSeg = Int.MIN_VALUE; appliedRoad = ""
                     }
+                    keepAlive.onCleared()
                 } else {
                     val rc = BydHal.writeNavFrame(appContext, icon, seg, road, mode)
                     Log.i(TAG, "cluster-nav icon=$icon seg=$seg road='$road' mode=$mode → $rc")
@@ -73,6 +90,7 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
                     synchronized(dedupLock) {
                         appliedIcon = icon; appliedSeg = seg; appliedRoad = road
                     }
+                    keepAlive.onFrameWritten(SystemClock.elapsedRealtime())
                 }
             }
         },
@@ -81,13 +99,44 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
         initiallyEnabled = false
     )
 
-    private var sequence = 1L
+    private val sequenceGen = AtomicLong(1L)
 
     fun start() {
         worker.setEnabled(true)
+        synchronized(keepAliveLock) {
+            if (keepAliveTask == null) {
+                val interval = keepAlive.intervalMs()
+                keepAliveTask = keepAliveScheduler.scheduleWithFixedDelay(
+                    ::keepAliveTick, interval, interval, TimeUnit.MILLISECONDS,
+                )
+            }
+        }
+    }
+
+    /** Nhịp keep-alive: nếu đang hiện 1 frame và đã stale ≥ interval → re-assert (bypass dedup) để OEM không blank. */
+    private fun keepAliveTick() {
+        runCatching {
+            if (keepAlive.shouldReassert(SystemClock.elapsedRealtime())) resubmitApplied()
+        }.onFailure { Log.w(TAG, "keep-alive tick failed", it) }
+    }
+
+    /** Gửi lại frame đã-applied gần nhất THẲNG xuống worker (KHÔNG qua push() — dedup sẽ nuốt). No-op nếu chưa hiện gì. */
+    private fun resubmitApplied() {
+        val icon: Int
+        val seg: Int
+        val road: String
+        synchronized(dedupLock) {
+            if (appliedIcon == Int.MIN_VALUE) return
+            icon = appliedIcon
+            seg = appliedSeg
+            road = appliedRoad
+        }
+        worker.submit(guidanceFrame(icon, if (seg < 0) -1 else seg, road))
     }
 
     fun stop() {
+        synchronized(keepAliveLock) { keepAliveTask?.cancel(false); keepAliveTask = null }
+        keepAlive.onCleared()
         worker.setEnabled(false)
         synchronized(dedupLock) {
             appliedIcon = Int.MIN_VALUE; appliedSeg = Int.MIN_VALUE; appliedRoad = ""
@@ -112,24 +161,25 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
                 return OutputSubmission.ACCEPTED
             }
         }
-        val frame = NavigationFrame(
-            sessionId = "hud-direct",
-            source = OWNER_SOURCE,
-            sequence = sequence++,
-            receivedAtEpochMs = System.currentTimeMillis(),
-            content = NavigationFrameContent(
-                maneuverCode = icon,
-                maneuverText = null,
-                distanceMeters = if (segMeters >= 0) segMeters else null,
-                roadName = hudRoad.ifBlank { null },
-                etaEpochMs = null,
-                routeRemainingMeters = null,
-                routeRemainingSeconds = null,
-                arrivalClock = null,
-            )
-        )
-        return worker.submit(frame)
+        return worker.submit(guidanceFrame(icon, segMeters, hudRoad))
     }
+
+    private fun guidanceFrame(icon: Int, segMeters: Int, hudRoad: String): NavigationFrame = NavigationFrame(
+        sessionId = "hud-direct",
+        source = OWNER_SOURCE,
+        sequence = sequenceGen.getAndIncrement(),
+        receivedAtEpochMs = System.currentTimeMillis(),
+        content = NavigationFrameContent(
+            maneuverCode = icon,
+            maneuverText = null,
+            distanceMeters = if (segMeters >= 0) segMeters else null,
+            roadName = hudRoad.ifBlank { null },
+            etaEpochMs = null,
+            routeRemainingMeters = null,
+            routeRemainingSeconds = null,
+            arrivalClock = null,
+        )
+    )
 
     /**
      * I4 (1.14): áp NGAY chế độ hiển thị cụm vừa đổi, không chờ reboot / frame kế (frame kế thường bị dedup
@@ -156,7 +206,7 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
     private fun clearFrame(): NavigationFrame = NavigationFrame(
         sessionId = "hud-direct",
         source = OWNER_SOURCE,
-        sequence = sequence++,
+        sequence = sequenceGen.getAndIncrement(),
         receivedAtEpochMs = System.currentTimeMillis(),
         content = NavigationFrameContent(
             maneuverCode = 0,
@@ -170,7 +220,11 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
         )
     )
 
-    override fun close() = worker.close()
+    override fun close() {
+        synchronized(keepAliveLock) { keepAliveTask?.cancel(false); keepAliveTask = null }
+        keepAliveScheduler.shutdownNow()
+        worker.close()
+    }
 
     companion object {
         private const val TAG = "NavigationHudOwner"

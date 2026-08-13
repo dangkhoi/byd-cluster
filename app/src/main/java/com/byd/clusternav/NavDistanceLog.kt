@@ -20,14 +20,17 @@ object NavDistanceLog {
         runCatching {
             val f = File(ctx.applicationContext.getExternalFilesDir(null), "nav_log_${System.currentTimeMillis()}.csv")
             w = f.bufferedWriter().also {
-                it.appendLine("t_ms,rawGmaps_m,projected_m,display_m,closing_mps,speed_mps,road,key")
+                it.appendLine("t_ms,rawGmaps_m,projected_m,display_m,closing_mps,speed_mps,screenRead_m,screenRead_age_ms,road,key")
             }
             path = f.absolutePath
         }
     }
 
     @Synchronized
-    fun record(rawM: Int, projected: Int, display: Int, closing: Double, speed: Double, road: String, key: String) {
+    fun record(
+        rawM: Int, projected: Int, display: Int, closing: Double, speed: Double,
+        screenReadM: Int, screenReadAgeMs: Long, road: String, key: String,
+    ) {
         val ww = w ?: return
         runCatching {
             val L = Locale.US
@@ -35,6 +38,7 @@ object NavDistanceLog {
             val safeKey = key.replace(',', ' ').replace('\n', ' ')
             ww.append("${System.currentTimeMillis()},$rawM,$projected,$display,")
             ww.append("${String.format(L, "%.1f", closing)},${String.format(L, "%.1f", speed)},")
+            ww.append("$screenReadM,$screenReadAgeMs,")
             ww.appendLine("$safeRoad,$safeKey")
             ww.flush()
         }
