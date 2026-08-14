@@ -7,84 +7,54 @@ import org.junit.jupiter.api.Test
 
 class VoiceKeyMatcherTest {
 
-    private val KEY = 231
-
-    private fun cfg(
-        enabled: Boolean = true,
-        keyCode: Int = KEY,
-        gesture: VoiceKeyGesture = VoiceKeyGesture.PRESS,
-        target: VoiceKeyTarget = VoiceKeyTarget.ASSIST,
-    ) = VoiceKeyConfig(enabled, keyCode, gesture, target)
+    private val KEY = 328
+    private fun cfg(enabled: Boolean = true, keyCode: Int = KEY) = VoiceKeyConfig(enabled, keyCode)
 
     @Test
-    fun `disabled ignores everything`() {
-        val m = VoiceKeyMatcher(500)
-        assertEquals(VoiceKeyDecision.IGNORE, m.onKey(cfg(enabled = false), VoiceKeyAction.DOWN, KEY, 0, 0, 0))
-        assertEquals(VoiceKeyDecision.IGNORE, m.onKey(cfg(enabled = false), VoiceKeyAction.UP, KEY, 0, 10, 0))
+    fun `disabled ignores everything (native untouched)`() {
+        val m = VoiceKeyMatcher()
+        assertEquals(VoiceKeyDecision.IGNORE, m.onKey(cfg(enabled = false), VoiceKeyAction.DOWN, KEY, 0))
+        assertEquals(VoiceKeyDecision.IGNORE, m.onKey(cfg(enabled = false), VoiceKeyAction.UP, KEY, 0))
     }
 
     @Test
     fun `wrong keycode is ignored (never touches other buttons)`() {
-        val m = VoiceKeyMatcher(500)
-        assertEquals(VoiceKeyDecision.IGNORE, m.onKey(cfg(), VoiceKeyAction.DOWN, 99, 0, 0, 0))
-        assertEquals(VoiceKeyDecision.IGNORE, m.onKey(cfg(gesture = VoiceKeyGesture.HOLD), VoiceKeyAction.UP, 99, 0, 800, 0))
+        val m = VoiceKeyMatcher()
+        assertEquals(VoiceKeyDecision.IGNORE, m.onKey(cfg(), VoiceKeyAction.DOWN, 99, 0))
+        assertEquals(VoiceKeyDecision.IGNORE, m.onKey(cfg(), VoiceKeyAction.UP, 99, 0))
     }
 
     @Test
-    fun `press fires once on short release and consumes both edges`() {
-        val m = VoiceKeyMatcher(500)
-        val down = m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 0, 0, 0)
-        assertFalse(down.fire); assertTrue(down.consume)
-        val up = m.onKey(cfg(), VoiceKeyAction.UP, KEY, 0, 120, 0)
-        assertTrue(up.fire); assertTrue(up.consume)
+    fun `fires once on down and consumes the whole press`() {
+        val m = VoiceKeyMatcher()
+        val down = m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 100)
+        assertTrue(down.fire); assertTrue(down.consume)
+        val repeat = m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 100)   // auto-repeat, same press
+        assertFalse(repeat.fire); assertTrue(repeat.consume)
+        val up = m.onKey(cfg(), VoiceKeyAction.UP, KEY, 100)
+        assertFalse(up.fire); assertTrue(up.consume)                 // swallow the UP of our key
     }
 
     @Test
-    fun `press held too long does not fire but still consumes`() {
-        val m = VoiceKeyMatcher(500)
-        m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 0, 0, 0)
-        val up = m.onKey(cfg(), VoiceKeyAction.UP, KEY, 0, 900, 0)
-        assertFalse(up.fire); assertTrue(up.consume)
+    fun `fires regardless of hold duration (no 500ms gate)`() {
+        val m = VoiceKeyMatcher()
+        assertTrue(m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 0).fire) // long-held pulse still fires
+        assertFalse(m.onKey(cfg(), VoiceKeyAction.UP, KEY, 0).fire)  // late UP only consumed
     }
 
     @Test
-    fun `hold lets a short tap pass through untouched (no native override)`() {
-        val m = VoiceKeyMatcher(500)
-        val down = m.onKey(cfg(gesture = VoiceKeyGesture.HOLD), VoiceKeyAction.DOWN, KEY, 0, 0, 0)
-        assertEquals(VoiceKeyDecision.IGNORE, down)          // native sees DOWN
-        val up = m.onKey(cfg(gesture = VoiceKeyGesture.HOLD), VoiceKeyAction.UP, KEY, 0, 120, 0)
-        assertFalse(up.fire); assertFalse(up.consume)        // native sees UP → native tap intact
-    }
-
-    @Test
-    fun `hold fires on long release for a non-repeating key`() {
-        val m = VoiceKeyMatcher(500)
-        m.onKey(cfg(gesture = VoiceKeyGesture.HOLD), VoiceKeyAction.DOWN, KEY, 0, 0, 0)
-        val up = m.onKey(cfg(gesture = VoiceKeyGesture.HOLD), VoiceKeyAction.UP, KEY, 0, 700, 0)
-        assertTrue(up.fire); assertTrue(up.consume)
-    }
-
-    @Test
-    fun `hold fires once on repeat then swallows the rest of that press`() {
-        val m = VoiceKeyMatcher(500)
-        val g = VoiceKeyGesture.HOLD
-        assertEquals(VoiceKeyDecision.IGNORE, m.onKey(cfg(gesture = g), VoiceKeyAction.DOWN, KEY, 0, 0, 0))
-        assertEquals(VoiceKeyDecision.IGNORE, m.onKey(cfg(gesture = g), VoiceKeyAction.DOWN, KEY, 0, 300, 1)) // below threshold
-        val fired = m.onKey(cfg(gesture = g), VoiceKeyAction.DOWN, KEY, 0, 550, 2)
-        assertTrue(fired.fire); assertTrue(fired.consume)
-        val more = m.onKey(cfg(gesture = g), VoiceKeyAction.DOWN, KEY, 0, 800, 3)
-        assertFalse(more.fire); assertTrue(more.consume)     // already fired → swallow repeats
-        val up = m.onKey(cfg(gesture = g), VoiceKeyAction.UP, KEY, 0, 900, 0)
-        assertFalse(up.fire); assertTrue(up.consume)
+    fun `each distinct press fires again`() {
+        val m = VoiceKeyMatcher()
+        assertTrue(m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 100).fire)
+        m.onKey(cfg(), VoiceKeyAction.UP, KEY, 100)
+        assertTrue(m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 200).fire)  // new downTime → new press
     }
 
     @Test
     fun `reset lets the next press fire again`() {
-        val m = VoiceKeyMatcher(500)
-        m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 0, 0, 0)
-        assertTrue(m.onKey(cfg(), VoiceKeyAction.UP, KEY, 0, 100, 0).fire)
+        val m = VoiceKeyMatcher()
+        assertTrue(m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 100).fire)
         m.reset()
-        m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 1000, 1000, 0)
-        assertTrue(m.onKey(cfg(), VoiceKeyAction.UP, KEY, 1000, 1100, 0).fire)
+        assertTrue(m.onKey(cfg(), VoiceKeyAction.DOWN, KEY, 100).fire) // same downTime but reset cleared
     }
 }

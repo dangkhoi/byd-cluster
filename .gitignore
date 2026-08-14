@@ -42,6 +42,8 @@ keystore.properties
 *.db-journal
 *.db-shm
 *.db-wal
+# ─── Local dev quick-reference (machine paths + vehicle IP — LOCAL ONLY, never commit) ──
+DEV-LOCAL.md
 # ─── IDE / OS ─────────────────────────────────────────────
 .idea/
 *.iml
@@ -72,10 +74,8 @@ __pycache__/
 *.pyc
 # Local agent config (workspace steering/settings — not product source)
 .kiro/
-# APKs are build outputs / local evidence, not source. The 0.59 artifact predates this rule
-# and stays tracked; nothing new goes into history.
-apk/*.apk
-!apk/ClusterNav-0.59-release.apk
+# apk/ClusterNav-*-release.apk = kênh OTA self-test (README, từ 1.11): release-signed cùng key, TRACKED
+# để xe tự cập nhật (whitelist "!apk/ClusterNav-*-release.apk" ở đầu file). Debug/other .apk vẫn bị "*.apk" chặn.
 # Written by the authorized build; regenerated every time, so it is never source.
 docs/_handoff/vehicle-candidate.json
 # Attestation for an already-committed tree: the commit sha is the provenance, so this

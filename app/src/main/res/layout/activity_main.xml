@@ -229,7 +229,7 @@
             </LinearLayout>
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="Gán một nút (vô-lăng/táp-lô) + cử chỉ để mở trợ lý giọng nói. Không đổi chức năng gốc của nút."
+                android:text="Gán một nút (vô-lăng/táp-lô) để mở trợ lý giọng nói. Không đổi chức năng gốc của nút."
                 android:textColor="@color/text_secondary" android:textSize="@dimen/text_label" />
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="12dp" android:text="Nút" android:textColor="@color/text_secondary" android:textSize="13sp" />
@@ -237,10 +237,9 @@
                 android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
             <TextView android:id="@+id/txt_voicekey_current" android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="4dp" android:text="Nút hiện tại: —" android:textColor="@color/text_secondary" android:textSize="12sp" />
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginTop="12dp" android:text="Cử chỉ" android:textColor="@color/text_secondary" android:textSize="13sp" />
-            <Spinner android:id="@+id/spinner_voicekey_gesture" android:layout_width="match_parent"
-                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
+            <Button android:id="@+id/btn_voicekey_learn" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min"
+                android:text="Học phím mới…" android:contentDescription="Học một nút vật lý mới trên xe" />
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="12dp" android:text="Mở trợ lý" android:textColor="@color/text_secondary" android:textSize="13sp" />
             <Spinner android:id="@+id/spinner_voicekey_target" android:layout_width="match_parent"
