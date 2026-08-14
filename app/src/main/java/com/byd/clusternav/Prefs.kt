@@ -93,27 +93,54 @@ object Prefs {
     fun setAnimOpt(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("anim_opt", v).apply()
 
     // ─── T3 (1.13): Nút vật lý → Trợ lý giọng nói ───────────────────────────────────────────────
-    // KHÔNG thay chức năng gốc của nút: NavAccessibilityService.onKeyEvent chỉ "nuốt" (consume) đúng tổ hợp
-    // (keycode + cử chỉ) đã cấu hình, còn lại pass-through. MẶC ĐỊNH TẮT. Lưu số nguyên (ordinal) để :core
-    // không phụ thuộc Android — service map sang VoiceKeyGesture/VoiceKeyTarget. Xem VoiceKeyMatcher (:core).
+    // 1.19: KHÔNG thay chức năng gốc — onKeyEvent chỉ "nuốt" đúng keycode đã cấu hình, còn lại pass-through.
+    // Bỏ cử chỉ (Nhấn/Nhấn-giữ) vì nút short/long ra keycode khác nhau. Đích lưu STRING (package/sentinel);
+    // nút tự học lưu JSON. MẶC ĐỊNH TẮT. Xem VoiceKeyMatcher (:core).
     private const val K_VK_ENABLED = "voicekey_enabled"
     private const val K_VK_KEYCODE = "voicekey_keycode"
-    private const val K_VK_GESTURE = "voicekey_gesture"
-    private const val K_VK_TARGET = "voicekey_target"
+    private const val K_VK_TARGET = "voicekey_target"          // 1.19: STRING (package hoặc sentinel __ASSIST__/__RECOGNIZER__)
     private const val K_VK_LEARN = "voicekey_learn"
-    const val VK_KEYCODE_DEFAULT = 328   // nút mic vô-lăng NHẤN-GIỮ trên xe này (đo on-car 2026-08-13: long-press mic → keycode 328; nhấn ngắn = mã khác nên native giữ nguyên). "Học phím" nếu xe khác.
+    private const val K_VK_CUSTOM = "voicekey_custom_buttons"  // 1.19: JSON [{"n":name,"k":keycode}] nút tự học
+    const val VK_KEYCODE_DEFAULT = 328   // nút mic vô-lăng giữ trên xe này (đo on-car 2026-08-13). "Học phím mới" nếu xe khác.
+    const val VK_TARGET_ASSIST = "__ASSIST__"
+    const val VK_TARGET_RECOGNIZER = "__RECOGNIZER__"
+    const val VK_TARGET_DEFAULT = "ai.zalo.kiki.car"           // mặc định Kiki (khớp default cũ 0=Kiki)
 
     fun voiceKeyEnabled(ctx: Context): Boolean = sp(ctx).getBoolean(K_VK_ENABLED, false)
     fun setVoiceKeyEnabled(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_VK_ENABLED, v).apply()
     fun voiceKeyCode(ctx: Context): Int = sp(ctx).getInt(K_VK_KEYCODE, VK_KEYCODE_DEFAULT)
     fun setVoiceKeyCode(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_VK_KEYCODE, v).apply()
-    fun voiceKeyGesture(ctx: Context): Int = sp(ctx).getInt(K_VK_GESTURE, 0)   // 0=PRESS (nhấn), 1=HOLD (nhấn giữ)
-    fun setVoiceKeyGesture(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_VK_GESTURE, v).apply()
-    fun voiceKeyTarget(ctx: Context): Int = sp(ctx).getInt(K_VK_TARGET, 0)     // 0=Kiki (mặc định), 1=BYD 小迪, 2=RECOGNIZER, 3=Google/Gemini (ASSIST)
-    fun setVoiceKeyTarget(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_VK_TARGET, v).apply()
-    /** "Học phím": khi BẬT, onKeyEvent kế tiếp ghi lại keycode nút vừa bấm rồi tự tắt cờ. */
+
+    /** Đích mở khi bấm nút = package name hoặc sentinel. Migrate cấu hình cũ (int ordinal → string). */
+    fun voiceKeyTargetSpec(ctx: Context): String {
+        val p = sp(ctx)
+        return when (val raw = p.all[K_VK_TARGET]) {
+            is String -> raw
+            is Int -> (when (raw) { 1 -> "com.byd.autovoice"; 2 -> VK_TARGET_RECOGNIZER; 3 -> VK_TARGET_ASSIST; else -> VK_TARGET_DEFAULT })
+                .also { p.edit().putString(K_VK_TARGET, it).apply() }
+            else -> VK_TARGET_DEFAULT
+        }
+    }
+    fun setVoiceKeyTargetSpec(ctx: Context, spec: String) = sp(ctx).edit().putString(K_VK_TARGET, spec).apply()
+
+    /** "Học phím mới": khi BẬT, onKeyEvent kế tiếp bắt keycode nút vừa bấm rồi tự tắt cờ + báo Activity đặt tên. */
     fun voiceKeyLearn(ctx: Context): Boolean = sp(ctx).getBoolean(K_VK_LEARN, false)
     fun setVoiceKeyLearn(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_VK_LEARN, v).apply()
+
+    /** Nút tự học (tên, keycode) — lưu JSON để dropdown dựng lại + xoá được. */
+    fun voiceKeyCustomButtons(ctx: Context): List<Pair<String, Int>> = runCatching {
+        val arr = org.json.JSONArray(sp(ctx).getString(K_VK_CUSTOM, "[]"))
+        (0 until arr.length()).map { val o = arr.getJSONObject(it); o.getString("n") to o.getInt("k") }
+    }.getOrDefault(emptyList())
+    fun addVoiceKeyCustomButton(ctx: Context, name: String, code: Int) =
+        writeCustomButtons(ctx, voiceKeyCustomButtons(ctx).filterNot { it.second == code } + (name to code))
+    fun removeVoiceKeyCustomButton(ctx: Context, code: Int) =
+        writeCustomButtons(ctx, voiceKeyCustomButtons(ctx).filterNot { it.second == code })
+    private fun writeCustomButtons(ctx: Context, items: List<Pair<String, Int>>) {
+        val arr = org.json.JSONArray()
+        items.forEach { arr.put(org.json.JSONObject().put("n", it.first).put("k", it.second)) }
+        sp(ctx).edit().putString(K_VK_CUSTOM, arr.toString()).apply()
+    }
 
     // Toggle theo module (key namespaced "mod_" — không thể đụng các key lõi ở trên). Mặc định TẮT
     // (experiment phải bật tay). Key mồ côi sau khi xoá module = dead data vô hại, không cần dọn.

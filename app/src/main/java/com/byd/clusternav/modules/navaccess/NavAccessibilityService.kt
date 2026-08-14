@@ -14,11 +14,10 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.byd.clusternav.Prefs
 import com.byd.clusternav.modules.voicekey.AssistantLauncher
+import com.byd.clusternav.modules.voicekey.VoiceKeyLearnBus
 import com.byd.clusternav.voicekey.VoiceKeyAction
 import com.byd.clusternav.voicekey.VoiceKeyConfig
-import com.byd.clusternav.voicekey.VoiceKeyGesture
 import com.byd.clusternav.voicekey.VoiceKeyMatcher
-import com.byd.clusternav.voicekey.VoiceKeyTarget
 
 /**
  * BOOSTER TẦNG 1 — đọc UI dẫn đường GMaps ĐANG HIỆN trên màn để lấy cự ly tới rẽ CHÍNH XÁC, TƯƠI hơn noti
@@ -64,43 +63,26 @@ class NavAccessibilityService : AccessibilityService() {
 
         if (Prefs.voiceKeyLearn(app)) {
             if (event.action == KeyEvent.ACTION_DOWN) {
-                Prefs.setVoiceKeyCode(app, event.keyCode)
                 Prefs.setVoiceKeyLearn(app, false)
-                val name = KeyEvent.keyCodeToString(event.keyCode)
-                Log.i(TAG, "learned voice keycode=${event.keyCode} ($name)")
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    runCatching {
-                        android.widget.Toast.makeText(app, "Đã gán nút: $name (${event.keyCode})", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }
+                Log.i(TAG, "learned voice keycode=${event.keyCode} (${KeyEvent.keyCodeToString(event.keyCode)})")
+                VoiceKeyLearnBus.publish(event.keyCode)   // Activity (đang mở màn) hiện dialog đặt tên
             }
             return true   // nuốt trong lúc học để không kích hoạt gì khác
         }
 
         if (!Prefs.voiceKeyEnabled(app)) return super.onKeyEvent(event)
 
-        val cfg = VoiceKeyConfig(
-            enabled = true,
-            keyCode = Prefs.voiceKeyCode(app),
-            gesture = if (Prefs.voiceKeyGesture(app) == 1) VoiceKeyGesture.HOLD else VoiceKeyGesture.PRESS,
-            target = when (Prefs.voiceKeyTarget(app)) {
-                1 -> VoiceKeyTarget.BYD_VOICE
-                2 -> VoiceKeyTarget.RECOGNIZER
-                3 -> VoiceKeyTarget.ASSIST
-                else -> VoiceKeyTarget.KIKI   // 0 (mặc định) = Kiki (Zalo) — owner map nút mic 328 → Kiki
-            },
-        )
+        val cfg = VoiceKeyConfig(enabled = true, keyCode = Prefs.voiceKeyCode(app))
         val action = when (event.action) {
             KeyEvent.ACTION_DOWN -> VoiceKeyAction.DOWN
             KeyEvent.ACTION_UP -> VoiceKeyAction.UP
             else -> VoiceKeyAction.OTHER
         }
-        val decision = voiceKeyMatcher.onKey(
-            cfg, action, event.keyCode, event.downTime, event.eventTime, event.repeatCount,
-        )
+        val decision = voiceKeyMatcher.onKey(cfg, action, event.keyCode, event.downTime)
         if (decision.fire) {
-            Log.i(TAG, "voice-key fire → target=${cfg.target} key=${event.keyCode}")
-            runCatching { AssistantLauncher.launch(app, cfg.target) }
+            val spec = Prefs.voiceKeyTargetSpec(app)
+            Log.i(TAG, "voice-key fire → target=$spec key=${event.keyCode}")
+            runCatching { AssistantLauncher.launch(app, spec) }
                 .onFailure { Log.e(TAG, "assistant launch failed", it) }
         }
         return if (decision.consume) true else super.onKeyEvent(event)

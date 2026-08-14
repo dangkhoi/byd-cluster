@@ -276,6 +276,10 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        // Tránh rò Activity: VoiceKeyLearnBus là singleton (app-scoped) giữ lambda bắt `this`. Chỉ gỡ khi
+        // FINISH thật (đóng app) — KHÔNG gỡ lúc config-change (isFinishing=false) để listener mà onCreate
+        // của Activity mới vừa set không bị null oan. Genuine-finish thì không có Activity kế → gỡ = hết rò.
+        if (isFinishing) com.byd.clusternav.modules.voicekey.VoiceKeyLearnBus.setListener(null)
         cast.onDestroy()
         super.onDestroy()
     }
@@ -419,9 +423,10 @@ class MainActivity : Activity() {
     // Ứng viên keycode cho nút voice/steering. "Học phím" = sentinel -1: bấm nút THẬT trên xe để gán
     // keycode chưa biết. Nút mic vô-lăng trên xe này NHẤN-GIỮ = 328 (đo on-car 2026-08-13) → để sẵn làm
     // ứng viên đầu; nhấn ngắn phát mã KHÁC nên trợ lý gốc (小迪) giữ nguyên.
-    private val voiceKeyLearnSentinel = -1
-    private val voiceKeyButtons: List<Pair<String, Int>> = listOf(
-        "Nút mic vô-lăng — NHẤN GIỮ (328)" to 328,
+    // Preset keycode ứng viên (nút vô-lăng/táp-lô). Nút tự học thêm từ Prefs.voiceKeyCustomButtons.
+    // Nút mic vô-lăng xe này giữ = 328 (đo on-car 2026-08-13); nhấn ngắn ra mã KHÁC nên native (小迪) giữ nguyên.
+    private val voiceKeyPresets: List<Pair<String, Int>> = listOf(
+        "Nút mic vô-lăng — giữ (328)" to 328,
         "Trợ lý giọng nói (VOICE_ASSIST · 231)" to 231,
         "Trợ lý (ASSIST · 219)" to 219,
         "Play/Pause (85)" to 85,
@@ -430,8 +435,9 @@ class MainActivity : Activity() {
         "Headset hook (79)" to 79,
         "Gọi (CALL · 5)" to 5,
         "Tìm kiếm (SEARCH · 84)" to 84,
-        "Học phím… (bấm nút trên xe)" to voiceKeyLearnSentinel,
     )
+    /** Dropdown nút = preset + nút tự học (persist). */
+    private fun voiceKeyButtonList(): List<Pair<String, Int>> = voiceKeyPresets + Prefs.voiceKeyCustomButtons(this)
 
     private fun updateVoiceKeyLabel() {
         val current = findViewById<TextView>(R.id.txt_voicekey_current) ?: return
@@ -439,10 +445,35 @@ class MainActivity : Activity() {
         current.text = Lang.t("Nút hiện tại: ", "Current button: ") + android.view.KeyEvent.keyCodeToString(kc) + " ($kc)"
     }
 
+    /** (Re)nạp dropdown nút, chọn keycode [selectCode]. */
+    private fun rebuildVoiceKeyButtonSpinner(selectCode: Int = Prefs.voiceKeyCode(this)) {
+        val spinner = findViewById<android.widget.Spinner>(R.id.spinner_voicekey_button) ?: return
+        val list = voiceKeyButtonList()
+        spinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, list.map { it.first })
+        spinner.setSelection(list.indexOfFirst { it.second == selectCode }.coerceAtLeast(0))
+        updateVoiceKeyLabel()
+    }
+
+    /** Sau khi service bắt keycode mới: hỏi tên → lưu nút custom → nạp lại dropdown + chọn. */
+    private fun showLearnNameDialog(code: Int) {
+        if (isFinishing || isDestroyed) return
+        val default = android.view.KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_").replace('_', ' ')
+        val input = android.widget.EditText(this).apply { setText(default); setSelection(text.length) }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(Lang.t("Đặt tên nút (mã $code)", "Name this button (code $code)"))
+            .setView(input)
+            .setPositiveButton(Lang.t("Lưu", "Save")) { _, _ ->
+                val name = input.text.toString().ifBlank { default }
+                Prefs.addVoiceKeyCustomButton(this, "$name (mã $code)", code)
+                Prefs.setVoiceKeyCode(this, code)
+                rebuildVoiceKeyButtonSpinner(code)
+            }
+            .setNegativeButton(Lang.t("Huỷ", "Cancel"), null)
+            .show()
+    }
+
     private fun setupVoiceKeyControls() {
         val vkSwitch = findViewById<Switch>(R.id.switch_voicekey_enabled)
-        val btnSpinner = findViewById<android.widget.Spinner>(R.id.spinner_voicekey_button)
-        val gestureSpinner = findViewById<android.widget.Spinner>(R.id.spinner_voicekey_gesture)
         val targetSpinner = findViewById<android.widget.Spinner>(R.id.spinner_voicekey_target)
 
         vkSwitch.isChecked = Prefs.voiceKeyEnabled(this)
@@ -455,7 +486,7 @@ class MainActivity : Activity() {
                     if (isFinishing) return@grantAccessibility
                     Toast.makeText(
                         this,
-                        if (ok) Lang.t("Đã bật. Bấm nút đã gán để mở trợ lý.", "Enabled. Press the mapped button to open the assistant.")
+                        if (ok) Lang.t("Đã bật. Bấm nút đã gán để mở app.", "Enabled. Press the mapped button to open the app.")
                         else Lang.t("Chưa bật được Hỗ trợ — bấm Allow USB debugging trên xe rồi thử lại, hoặc bật tay ở Cài đặt > Hỗ trợ.", "Couldn't enable accessibility — tap Allow USB debugging on the car and retry, or enable it in Settings > Accessibility."),
                         Toast.LENGTH_LONG,
                     ).show()
@@ -463,56 +494,57 @@ class MainActivity : Activity() {
             }
         }
 
-        btnSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceKeyButtons.map { it.first })
-        val vkBtnInitialPos = voiceKeyButtons.indexOfFirst { it.second == Prefs.voiceKeyCode(this) }.coerceAtLeast(0)
-        btnSpinner.setSelection(vkBtnInitialPos)
-        updateVoiceKeyLabel()
-        // Spinner fires onItemSelected once automatically on first layout. A LEARNED keycode that isn't in
-        // the candidate list makes the spinner fall back to position 0, and that automatic callback would
-        // overwrite the learned code with candidate[0] on every reopen — losing exactly the custom keycode
-        // "Học phím" exists to capture. Ignore only the initial programmatic callback.
+        // Dropdown nút (preset + custom). Chọn 1 nút = đặt keycode đó.
+        rebuildVoiceKeyButtonSpinner()
+        val btnSpinner = findViewById<android.widget.Spinner>(R.id.spinner_voicekey_button)
+        val vkBtnInitialPos = voiceKeyButtonList().indexOfFirst { it.second == Prefs.voiceKeyCode(this) }.coerceAtLeast(0)
         var vkBtnFirstCallback = true
         btnSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
-                if (vkBtnFirstCallback) {
-                    vkBtnFirstCallback = false
-                    if (pos == vkBtnInitialPos) return   // skip the automatic initial selection
-                }
-                val kc = voiceKeyButtons[pos].second
-                if (kc == voiceKeyLearnSentinel) {
-                    Prefs.setVoiceKeyLearn(this@MainActivity, true)
-                    Toast.makeText(this@MainActivity, Lang.t("Bấm nút vật lý muốn dùng trên xe…", "Press the physical button you want…"), Toast.LENGTH_LONG).show()
-                    if (!accessibilityBoosterGranted()) NavConnect.grantAccessibility(applicationContext)
-                } else {
-                    Prefs.setVoiceKeyCode(this@MainActivity, kc)
-                    Prefs.setVoiceKeyLearn(this@MainActivity, false)   // a concrete pick cancels any pending learn
-                    updateVoiceKeyLabel()
-                }
+                if (vkBtnFirstCallback) { vkBtnFirstCallback = false; if (pos == vkBtnInitialPos) return }
+                val kc = voiceKeyButtonList().getOrNull(pos)?.second ?: return
+                Prefs.setVoiceKeyCode(this@MainActivity, kc)
+                updateVoiceKeyLabel()
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+        // Nhấn-giữ 1 mục để XOÁ nút tự học (preset không xoá).
+        btnSpinner.onItemLongClickListener = android.widget.AdapterView.OnItemLongClickListener { _, _, pos, _ ->
+            val item = voiceKeyButtonList().getOrNull(pos)
+            if (item != null && Prefs.voiceKeyCustomButtons(this).any { it.second == item.second }) {
+                Prefs.removeVoiceKeyCustomButton(this, item.second)
+                rebuildVoiceKeyButtonSpinner()
+                Toast.makeText(this, Lang.t("Đã xoá nút", "Button removed"), Toast.LENGTH_SHORT).show()
+                true
+            } else false
+        }
+
+        // Nút "Học phím mới" — NGOÀI dropdown: bấm → chờ bấm nút vật lý → hiện ô đặt tên.
+        findViewById<Button>(R.id.btn_voicekey_learn).setOnClickListener {
+            Prefs.setVoiceKeyLearn(this, true)
+            if (!accessibilityBoosterGranted()) NavConnect.grantAccessibility(applicationContext)
+            Toast.makeText(this, Lang.t("Giữ màn hình này mở rồi bấm nút vật lý muốn dùng…", "Keep this screen open, then press the physical button…"), Toast.LENGTH_LONG).show()
+        }
+
+        // Đích = 2 mục đặc biệt (ghim đầu) + toàn bộ app có launcher (reuse ClusterCast.listInstalledApps).
+        val targetSpecs: List<Pair<String, String>> = listOf(
+            Lang.t("Trợ lý mặc định hệ thống", "System default assistant") to Prefs.VK_TARGET_ASSIST,
+            Lang.t("Nhận dạng giọng nói", "Speech recognizer") to Prefs.VK_TARGET_RECOGNIZER,
+        ) + com.byd.clusternav.modules.clustercast.ClusterCast.listInstalledApps(this).map { it.label to it.pkg }
+        targetSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, targetSpecs.map { it.first })
+        val vkTgtInitialPos = targetSpecs.indexOfFirst { it.second == Prefs.voiceKeyTargetSpec(this) }.coerceAtLeast(0)
+        targetSpinner.setSelection(vkTgtInitialPos)
+        var vkTgtFirstCallback = true
+        targetSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                if (vkTgtFirstCallback) { vkTgtFirstCallback = false; if (pos == vkTgtInitialPos) return }
+                targetSpecs.getOrNull(pos)?.let { Prefs.setVoiceKeyTargetSpec(this@MainActivity, it.second) }
             }
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        val gestures = arrayOf(Lang.t("Nhấn", "Press"), Lang.t("Nhấn giữ", "Hold"))
-        gestureSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, gestures)
-        gestureSpinner.setSelection(Prefs.voiceKeyGesture(this).coerceIn(0, 1))
-        gestureSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) { Prefs.setVoiceKeyGesture(this@MainActivity, pos) }
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        }
-
-        // ⚠️ Thứ tự PHẢI khớp ordinal ở NavAccessibilityService.onKeyEvent: 0=Kiki, 1=BYD, 2=Recognizer, 3=Gemini.
-        val targets = arrayOf(
-            "Kiki (Zalo)",
-            "BYD 小迪 (autovoice)",
-            Lang.t("Nhận dạng giọng nói", "Speech recognizer"),
-            "Google / Gemini",
-        )
-        targetSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, targets)
-        targetSpinner.setSelection(Prefs.voiceKeyTarget(this).coerceIn(0, 3))
-        targetSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) { Prefs.setVoiceKeyTarget(this@MainActivity, pos) }
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        }
+        // Cầu học-phím: service bắt keycode → hiện dialog đặt tên (Activity foreground).
+        com.byd.clusternav.modules.voicekey.VoiceKeyLearnBus.setListener { code -> runOnUiThread { showLearnNameDialog(code) } }
     }
 
     private fun tryStartActivity(intent: Intent): Boolean =
