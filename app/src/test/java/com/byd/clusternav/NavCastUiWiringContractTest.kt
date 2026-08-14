@@ -126,6 +126,24 @@ class NavCastUiWiringContractTest {
         assertTrue(mainActivity.contains("Prefs.setAccBooster(this, true)"), "MainActivity enables the screen-read booster")
     }
 
+    @Test
+    fun `nav+HUD self-grants the accessibility booster so screenRead ground-truth is populated`() {
+        // 2026-08-14: enabled_accessibility_services lost ClusterNav's service after a reboot and the app
+        // had NO path to re-grant it — grantAccessibility was orphaned when the voice-key UI was removed —
+        // so two consecutive drives came back with an empty screenRead_m column (interp tuning blocked).
+        // Lock the wiring: turning Nav+HUD on, AND opening the app while it is already on, must self-grant
+        // the accessibility service over dadb when the grant is missing (mirrors the notification selfGrant).
+        assertTrue(mainActivity.contains("NavConnect.grantAccessibility("), "MainActivity self-grants the accessibility booster")
+        assertTrue(
+            mainActivity.contains("private fun accessibilityBoosterGranted()"),
+            "a local (no-dadb) grant check exists so we only escalate to dadb when actually missing",
+        )
+        assertTrue(
+            mainActivity.contains("if (!accessibilityBoosterGranted()) NavConnect.grantAccessibility("),
+            "the dadb grant is gated on the local check (no redundant session when already granted)",
+        )
+    }
+
     // ── Item 2: 9 split-ratio buttons replace the spinner ────────────────────
     @Test
     fun `both layouts replace the split-ratio spinner with the buttons container`() {

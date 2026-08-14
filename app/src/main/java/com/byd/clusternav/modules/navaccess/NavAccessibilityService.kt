@@ -86,7 +86,8 @@ class NavAccessibilityService : AccessibilityService() {
             target = when (Prefs.voiceKeyTarget(app)) {
                 1 -> VoiceKeyTarget.BYD_VOICE
                 2 -> VoiceKeyTarget.RECOGNIZER
-                else -> VoiceKeyTarget.ASSIST
+                3 -> VoiceKeyTarget.ASSIST
+                else -> VoiceKeyTarget.KIKI   // 0 (mặc định) = Kiki (Zalo) — owner map nút mic 328 → Kiki
             },
         )
         val action = when (event.action) {

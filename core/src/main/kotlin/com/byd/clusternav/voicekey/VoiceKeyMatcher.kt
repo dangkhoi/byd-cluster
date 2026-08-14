@@ -22,7 +22,7 @@ enum class VoiceKeyGesture { PRESS, HOLD }
 enum class VoiceKeyAction { DOWN, UP, OTHER }
 
 /** Đích kích hoạt. Tầng app (AssistantLauncher) ánh xạ sang intent thật. */
-enum class VoiceKeyTarget { ASSIST, BYD_VOICE, RECOGNIZER }
+enum class VoiceKeyTarget { ASSIST, BYD_VOICE, RECOGNIZER, KIKI }
 
 data class VoiceKeyConfig(
     val enabled: Boolean,

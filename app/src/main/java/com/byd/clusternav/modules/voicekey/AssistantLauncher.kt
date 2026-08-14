@@ -26,6 +26,10 @@ object AssistantLauncher {
     /** Google app (host Assistant/Gemini + VoiceInteractionService). */
     const val GOOGLE_PKG = "com.google.android.googlequicksearchbox"
 
+    /** Kiki (Zalo/VNG) — trợ lý giọng nói tiếng Việt cho ô-tô. Launch activity ai.zalo.kiki.auto.ui.CarMainActivity
+     *  (xác nhận trên xe 2026-08-14: `pm resolve-activity ai.zalo.kiki.car` → CarMainActivity). */
+    const val KIKI_PKG = "ai.zalo.kiki.car"
+
     fun launch(ctx: Context, target: VoiceKeyTarget): Boolean {
         val app = ctx.applicationContext
         val candidates: List<Intent> = when (target) {
@@ -49,6 +53,13 @@ object AssistantLauncher {
                 Intent(RecognizerIntent.ACTION_VOICE_SEARCH_HANDS_FREE),
                 Intent(RecognizerIntent.ACTION_WEB_SEARCH),
             )
+            VoiceKeyTarget.KIKI -> buildList {
+                // Mở THẲNG app Kiki (getLaunchIntentForPackage → ai.zalo.kiki.auto.ui.CarMainActivity, xác nhận
+                // resolve trên xe). Fallback VOICE_COMMAND/ASSIST setPackage(Kiki) phòng ROM đổi launcher entry.
+                app.packageManager.getLaunchIntentForPackage(KIKI_PKG)?.let { add(it) }
+                add(Intent(Intent.ACTION_VOICE_COMMAND).setPackage(KIKI_PKG))
+                add(Intent(Intent.ACTION_ASSIST).setPackage(KIKI_PKG))
+            }
         }
         for (intent in candidates) {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

@@ -115,14 +115,15 @@ object ClusterBroadcaster {
     /** Dựng frame với tên đường (marquee cuộn theo THỜI GIAN, hoặc TĨNH = tên đầy đủ) rồi gửi. Dùng chung cho emit + nhịp tim. */
     private fun sendFrame(ctx: Context, s: NavState, byd: Boolean) {
         // marquee ON (mặc định 1.14): cuộn cửa sổ ROAD_MAX_UNITS ký tự, offset theo THỜI GIAN từ lúc đường
-        // xuất hiện (roadShownAtMs) → đều/mượt, bắt đầu từ đầu tên. marquee OFF: gửi tên ĐẦY ĐỦ đã clean để
-        // firmware tự cắt. KHÔNG dùng scrollTick (tăng không đều theo emission = dựt — bug bản cũ owner báo).
+        // xuất hiện (roadShownAtMs) → đều/mượt, bắt đầu từ đầu tên. marquee OFF: gửi tên RÚT GỌN
+        // (NavFormat.fitRoadName, ví dụ "Trần Trọng Kim" → "T.T.Kim") thay vì để firmware hard-cut tên đầy đủ.
+        // KHÔNG dùng scrollTick (tăng không đều theo emission = dựt — bug bản cũ owner báo).
         val road = if (Prefs.marquee(ctx)) {
             val tick = if (roadShownAtMs > 0L)
                 ((SystemClock.elapsedRealtime() - roadShownAtMs) / MARQUEE_STEP_MS).toInt()
             else 0
             NavFormat.roadWindow(lastCleanRoad, tick, NavFormat.ROAD_MAX_UNITS)
-        } else lastCleanRoad
+        } else NavFormat.fitRoadName(lastCleanRoad)
         // PROJECT nội suy: cự ly trừ dần giữa 2 noti (hạ lag). Truyền tốc-độ-HAL THÔ vào project() — interpolator
         // tự ưu tiên closingRate (tự khử over-read) và chỉ dùng speed×SPEEDO_CORRECTION khi chưa có closingRate.
         // speed vẫn cần để clamp closingRate ([0, 1.2×v+3]) chống delta-noti lỗi. Tắt nội suy -> parse thô.

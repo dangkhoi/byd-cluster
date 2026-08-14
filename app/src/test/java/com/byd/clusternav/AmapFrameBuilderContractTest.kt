@@ -53,4 +53,30 @@ class AmapFrameBuilderContractTest {
         val falseIndex = reset.indexOf("STATE_STOP, false")
         assertTrue(trueIndex >= 0 && falseIndex > trueIndex, "reset must remain true then false")
     }
+
+    @Test
+    fun `marquee off abbreviates the road name via fitRoadName while marquee on still scrolls`() {
+        val broadcaster = SourceRoots.text("src/main/java/com/byd/clusternav/ClusterBroadcaster.kt")
+        val sendFrame = broadcaster.substring(
+            broadcaster.indexOf("private fun sendFrame"),
+            broadcaster.indexOf("fun emitHud"),
+        )
+        // Road selection branches on the marquee pref.
+        assertTrue(sendFrame.contains("if (Prefs.marquee(ctx))"), "sendFrame branches on the marquee pref")
+        // marquee ON → still scrolls a window of the cleaned FULL name (unchanged behaviour).
+        assertTrue(
+            sendFrame.contains("NavFormat.roadWindow(lastCleanRoad, tick, NavFormat.ROAD_MAX_UNITS)"),
+            "marquee ON keeps scrolling the road window",
+        )
+        // marquee OFF → sends the ABBREVIATED name (NavFormat.fitRoadName, e.g. 'Trần Trọng Kim' → 'T.T.Kim'),
+        // NOT the raw full cleaned name (which let the cluster firmware hard-cut it).
+        assertTrue(
+            sendFrame.contains("} else NavFormat.fitRoadName(lastCleanRoad)"),
+            "marquee OFF must abbreviate via NavFormat.fitRoadName",
+        )
+        assertFalse(
+            Regex("""}\s*else\s+lastCleanRoad\b""").containsMatchIn(sendFrame),
+            "marquee OFF must no longer send the raw full cleaned name",
+        )
+    }
 }
