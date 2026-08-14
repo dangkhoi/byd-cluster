@@ -101,7 +101,7 @@ object Prefs {
     private const val K_VK_GESTURE = "voicekey_gesture"
     private const val K_VK_TARGET = "voicekey_target"
     private const val K_VK_LEARN = "voicekey_learn"
-    const val VK_KEYCODE_DEFAULT = 231   // android.view.KeyEvent.KEYCODE_VOICE_ASSIST — ứng viên; "học phím" nếu xe khác
+    const val VK_KEYCODE_DEFAULT = 328   // nút mic vô-lăng NHẤN-GIỮ trên xe này (đo on-car 2026-08-13: long-press mic → keycode 328; nhấn ngắn = mã khác nên native giữ nguyên). "Học phím" nếu xe khác.
 
     fun voiceKeyEnabled(ctx: Context): Boolean = sp(ctx).getBoolean(K_VK_ENABLED, false)
     fun setVoiceKeyEnabled(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_VK_ENABLED, v).apply()
@@ -109,7 +109,7 @@ object Prefs {
     fun setVoiceKeyCode(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_VK_KEYCODE, v).apply()
     fun voiceKeyGesture(ctx: Context): Int = sp(ctx).getInt(K_VK_GESTURE, 0)   // 0=PRESS (nhấn), 1=HOLD (nhấn giữ)
     fun setVoiceKeyGesture(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_VK_GESTURE, v).apply()
-    fun voiceKeyTarget(ctx: Context): Int = sp(ctx).getInt(K_VK_TARGET, 0)     // 0=ASSIST, 1=BYD 小迪, 2=RECOGNIZER
+    fun voiceKeyTarget(ctx: Context): Int = sp(ctx).getInt(K_VK_TARGET, 0)     // 0=Kiki (mặc định), 1=BYD 小迪, 2=RECOGNIZER, 3=Google/Gemini (ASSIST)
     fun setVoiceKeyTarget(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_VK_TARGET, v).apply()
     /** "Học phím": khi BẬT, onKeyEvent kế tiếp ghi lại keycode nút vừa bấm rồi tự tắt cờ. */
     fun voiceKeyLearn(ctx: Context): Boolean = sp(ctx).getBoolean(K_VK_LEARN, false)

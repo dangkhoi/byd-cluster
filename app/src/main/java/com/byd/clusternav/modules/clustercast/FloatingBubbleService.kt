@@ -118,6 +118,9 @@ class FloatingBubbleService : Service() {
     private val refresh = object : Runnable {
         override fun run() {
             refreshBubbleState()
+            // TRIAL (2026-08-14): re-pin a cast app that an external trigger (e.g. Kiki starting GMaps
+            // navigation) pulled off the cluster. Cheap-gated + serial-executed inside the coordinator.
+            runCatching { SimpleCastRuntime.coordinator(applicationContext).repinEscapedCastApps() }
             if (!destroyed) handler.postDelayed(this, REFRESH_INTERVAL_MS)
         }
     }

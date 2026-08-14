@@ -72,9 +72,12 @@ class NotificationAccessFlowContractTest {
 
     @Test
     fun `startup touches no adb unless the master switch is on (Option B default-off)`() {
+        // 2026-08-14 (fix B): the one-liner became a guarded block that ALSO self-grants the accessibility
+        // booster — still only inside the master-switch guard, so startup stays adb-free when Nav+HUD is off.
         assertTrue(
-            main.contains("if (Prefs.enabled(this)) NavConnect.ensureConnected(applicationContext)"),
-            "onCreate only ensures connection when Navigation+HUD is enabled",
+            Regex("""if \(Prefs\.enabled\(this\)\) \{\s*NavConnect\.ensureConnected\(applicationContext\)""")
+                .containsMatchIn(main),
+            "onCreate only ensures connection inside the master-switch (Prefs.enabled) block",
         )
     }
 }

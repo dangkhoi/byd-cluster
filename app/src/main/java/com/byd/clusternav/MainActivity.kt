@@ -84,6 +84,13 @@ class MainActivity : Activity() {
                         if (ok) refresh() else promptNotificationAccessFallback()
                     }
                 }
+                // Bộ đọc màn GMaps (screenRead ground-truth cho tinh chỉnh nội suy) + nút vật lý → trợ lý
+                // cần accessibility service. Đây là quyền ADB (settings secure enabled_accessibility_services)
+                // → tự cấp qua dadb như notification, CHỈ khi chưa có (tránh phiên dadb thừa). Trước đây chỉ
+                // UI voice-key cấp; voice-key gỡ đi → grantAccessibility mồ côi → 2 chuyến screenRead RỖNG
+                // (đo 2026-08-14: enabled_accessibility_services mất service sau reboot). Wire vào công tắc
+                // Nav+HUD để tự lành sau mỗi state-reset.
+                if (!accessibilityBoosterGranted()) NavConnect.grantAccessibility(applicationContext)
             } else {
                 NavRepository.stop(this)
             }
@@ -174,7 +181,9 @@ class MainActivity : Activity() {
             cb.setOnCheckedChangeListener { _, on -> Prefs.setMarquee(this, on) }
         }
 
-        // ── T3 (1.13): Nút vật lý → Trợ lý giọng nói (switch + nút + cử chỉ + đích + học phím) ──
+        // ── Nút vật lý → Trợ lý giọng nói (switch + nút + cử chỉ + đích + học phím). Owner 2026-08-14:
+        // map nút mic vô-lăng (NHẤN-GIỮ = keycode 328) → Kiki (ai.zalo.kiki.car). Chỉ "nuốt" đúng tổ hợp,
+        // KHÔNG đổi chức năng gốc của nút. Service Hỗ trợ tự bật qua dadb khi bật công tắc. ──
         setupVoiceKeyControls()
 
         // Nav trên cụm chỉ còn op 39 "Giữa + ETA" (owner chốt 2026-08-12) — bỏ nút chọn mode + nút test.
@@ -215,7 +224,12 @@ class MainActivity : Activity() {
 
         // Option B (1.13): chỉ đụng adb khi Navigation+HUD đang BẬT. Mặc định TẮT → mở app KHÔNG chạy dadb
         // (tránh đua nhiều client dadb + popup Allow khi user chưa cần nav). Bật công tắc mới grant+connect.
-        if (Prefs.enabled(this)) NavConnect.ensureConnected(applicationContext)
+        if (Prefs.enabled(this)) {
+            NavConnect.ensureConnected(applicationContext)
+            // Reboot / state-reset xoá enabled_accessibility_services (đo 2026-08-14) → mở app khi Nav+HUD
+            // đã BẬT thì tự cấp lại (chỉ khi thiếu) để screenRead booster sống lại, không cần thao tác tay.
+            if (!accessibilityBoosterGranted()) NavConnect.grantAccessibility(applicationContext)
+        }
         runCatching { RebindReceiver.scheduleWatchdog(applicationContext) }
         // Nút nổi + chiếu cụm chỉ khởi động khi master switch "Cluster Cast" đang BẬT (MẶC ĐỊNH TẮT —
         // nav-only là mặc định; cụm giữ native + nav hiện ngay, không projection/cong/đen). Tắt Cast ⇒
@@ -334,12 +348,6 @@ class MainActivity : Activity() {
         NavigationOutputFailureReason.INTERNAL_CONTRACT_ERROR -> Lang.t("sai hợp đồng nội bộ", "internal contract error")
     }
 
-    /** Service trợ năng đã được hệ thống bật chưa — công tắc chỉ ghi tuỳ chọn, quyền thì do người dùng cấp. */
-    private fun accessibilityBoosterGranted(): Boolean {
-        val flat = Settings.Secure.getString(contentResolver, "enabled_accessibility_services") ?: return false
-        return flat.split(':').any { it.contains("com.byd.clusternav") }
-    }
-
     /**
      * FALLBACK khi tự cấp quyền qua dadb THẤT BẠI (thường vì chưa bấm "Allow USB debugging" trên xe lần
      * đầu). Cho THỬ LẠI selfGrant, hoặc mở màn Settings hệ thống để bật tay (một số máy IVI không có màn này
@@ -407,11 +415,13 @@ class MainActivity : Activity() {
         ).show()
     }
 
-    // ── T3: Nút vật lý → Trợ lý giọng nói ───────────────────────────────────────────────────────
-    // Ứng viên keycode cho nút voice/steering (Android chuẩn). "Học phím" = sentinel -1: bấm nút THẬT trên
-    // xe để gán keycode chưa biết (owner: dùng keymap Dashcast/OpenBYD, không dò lại — nếu không khớp thì học).
+    // ── Nút vật lý → Trợ lý giọng nói ───────────────────────────────────────────────────────────
+    // Ứng viên keycode cho nút voice/steering. "Học phím" = sentinel -1: bấm nút THẬT trên xe để gán
+    // keycode chưa biết. Nút mic vô-lăng trên xe này NHẤN-GIỮ = 328 (đo on-car 2026-08-13) → để sẵn làm
+    // ứng viên đầu; nhấn ngắn phát mã KHÁC nên trợ lý gốc (小迪) giữ nguyên.
     private val voiceKeyLearnSentinel = -1
     private val voiceKeyButtons: List<Pair<String, Int>> = listOf(
+        "Nút mic vô-lăng — NHẤN GIỮ (328)" to 328,
         "Trợ lý giọng nói (VOICE_ASSIST · 231)" to 231,
         "Trợ lý (ASSIST · 219)" to 219,
         "Play/Pause (85)" to 85,
@@ -459,8 +469,8 @@ class MainActivity : Activity() {
         updateVoiceKeyLabel()
         // Spinner fires onItemSelected once automatically on first layout. A LEARNED keycode that isn't in
         // the candidate list makes the spinner fall back to position 0, and that automatic callback would
-        // overwrite the learned code with candidate[0] (231) on every reopen — losing exactly the custom
-        // keycode "Học phím" exists to capture. Ignore only the initial programmatic callback.
+        // overwrite the learned code with candidate[0] on every reopen — losing exactly the custom keycode
+        // "Học phím" exists to capture. Ignore only the initial programmatic callback.
         var vkBtnFirstCallback = true
         btnSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
@@ -490,9 +500,15 @@ class MainActivity : Activity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        val targets = arrayOf("Google / Gemini", "BYD 小迪 (autovoice)", Lang.t("Nhận dạng giọng nói", "Speech recognizer"))
+        // ⚠️ Thứ tự PHẢI khớp ordinal ở NavAccessibilityService.onKeyEvent: 0=Kiki, 1=BYD, 2=Recognizer, 3=Gemini.
+        val targets = arrayOf(
+            "Kiki (Zalo)",
+            "BYD 小迪 (autovoice)",
+            Lang.t("Nhận dạng giọng nói", "Speech recognizer"),
+            "Google / Gemini",
+        )
         targetSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, targets)
-        targetSpinner.setSelection(Prefs.voiceKeyTarget(this).coerceIn(0, 2))
+        targetSpinner.setSelection(Prefs.voiceKeyTarget(this).coerceIn(0, 3))
         targetSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) { Prefs.setVoiceKeyTarget(this@MainActivity, pos) }
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
@@ -505,6 +521,17 @@ class MainActivity : Activity() {
     private fun notificationAccessGranted(): Boolean {
         val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
         val expected = ComponentName(this, NavNotificationListener::class.java)
+        return flat.split(':').any { ComponentName.unflattenFromString(it.trim()) == expected }
+    }
+
+    /**
+     * Accessibility booster (đọc màn GMaps → screenRead ground-truth) đã được bật chưa. Đọc THẲNG secure
+     * setting (mọi app đọc được — KHÔNG cần dadb), y như [notificationAccessGranted]. Chỉ khi thiếu mới gọi
+     * [NavConnect.grantAccessibility] (dadb) để append → tránh mở phiên dadb thừa mỗi lần bật Nav+HUD / mở app.
+     */
+    private fun accessibilityBoosterGranted(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_accessibility_services") ?: return false
+        val expected = ComponentName(this, com.byd.clusternav.modules.navaccess.NavAccessibilityService::class.java)
         return flat.split(':').any { ComponentName.unflattenFromString(it.trim()) == expected }
     }
 }

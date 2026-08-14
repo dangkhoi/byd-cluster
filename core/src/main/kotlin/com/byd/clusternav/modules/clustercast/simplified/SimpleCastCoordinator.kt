@@ -36,6 +36,14 @@ class SimpleCastCoordinator(
     /** Owns freeform task resize + per-app profile persistence/restore (R4/R5/R6). */
     private val geometry = CastGeometryController(shell, prefs, displayId) { msg -> log(msg) }
 
+    // TRIAL watchdog state (owner 2026-08-14): re-pin a cast app that an external trigger (e.g. Kiki
+    // starting GMaps navigation) pulled off the cluster. Debounce + cooldown so driving is never
+    // yanked on a transient am-stack parse gap.
+    private val repinMissStreak = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val repinCooldownUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val repinInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var lastRepinProbeAt = 0L
+
     private val _state = AtomicReference<SimpleCastState>(SimpleCastState.Off)
     val state: SimpleCastState get() = _state.get()
 
@@ -534,4 +542,76 @@ class SimpleCastCoordinator(
 
     /** Execute a shell command via the coordinator's transport. For PiP/appops management. */
     fun executeShell(command: String): ShellResult = shell.execute(command)
+
+    // ─── TRIAL: watchdog re-pin (owner 2026-08-14) ───────────────────────────
+    /**
+     * Re-pin a cast app that an external trigger pulled off the cluster.
+     *
+     * Symptom (owner): with GMaps + VietMap split-cast, asking Kiki to navigate with GMaps launches
+     * the GMaps nav activity on display 0, so its task migrates OFF the cluster and the slot goes
+     * black; VietMap (Kiki drives it inside its running cluster task) is unaffected. The coordinator
+     * is otherwise intent-driven and never re-pins an app that left on its own.
+     *
+     * Cheap gate on the CALLER thread (throttle + casting-state + in-flight), then the real probe
+     * runs on the serial executor so it never overlaps a user cast/stop. Safe by construction: it
+     * only ever re-casts a slot whose expected app is NOT on the cluster (slot already black) — it
+     * cannot move a correctly-placed app. Debounce (missing on two consecutive probes) + per-package
+     * cooldown keep the driving display from being yanked on a transient `am stack list` parse gap.
+     */
+    fun repinEscapedCastApps() {
+        val now = System.currentTimeMillis()
+        if (now - lastRepinProbeAt < REPIN_PROBE_MIN_INTERVAL_MS) return
+        val cur = state
+        if (cur !is SimpleCastState.CastingSplit && cur !is SimpleCastState.CastingFull) return
+        if (!repinInFlight.compareAndSet(false, true)) return
+        lastRepinProbeAt = now
+        executor.submit("repin-watchdog") {
+            try { doRepinEscapedCastApps() } finally { repinInFlight.set(false) }
+        }
+    }
+
+    private fun doRepinEscapedCastApps() {
+        val expected: List<Pair<String, ClusterSlotSide?>> = when (val cur = state) {
+            is SimpleCastState.CastingSplit -> buildList {
+                cur.left?.let { add(it.pkg to ClusterSlotSide.LEFT) }
+                cur.right?.let { add(it.pkg to ClusterSlotSide.RIGHT) }
+            }
+            is SimpleCastState.CastingFull ->
+                if (cur.appType == AppType.NORMAL) listOf(cur.targetPkg to null) else emptyList()
+            else -> emptyList()
+        }
+        if (expected.isEmpty()) return
+        val now = System.currentTimeMillis()
+        for ((pkg, side) in expected) {
+            if (pkg == "com.byd.clusternav") continue
+            if (geometry.isAppOnDisplay(pkg, displayId)) { repinMissStreak.remove(pkg); continue }
+            // Debounce: require MISSING on two consecutive probes (ignore transient parse gaps and the
+            // split-second while Kiki's own launch is in flight).
+            val streak = (repinMissStreak[pkg] ?: 0) + 1
+            repinMissStreak[pkg] = streak
+            if (streak < 2) { log("repin: $pkg not on cluster (streak=$streak) — waiting"); continue }
+            if (now < (repinCooldownUntil[pkg] ?: 0L)) { log("repin: $pkg cooling down"); continue }
+            log("repin: $pkg escaped cluster → re-cast to slot=$side (keep running task/nav)")
+            val leftPercent = prefs.splitRatioLeftPercent()
+            val ok = mover.castToCluster(
+                pkg = pkg, activity = null, displayId = displayId,
+                appType = AppType.NORMAL, slotSide = side, leftPercent = leftPercent,
+            )
+            repinCooldownUntil[pkg] = now + REPIN_COOLDOWN_MS
+            repinMissStreak.remove(pkg)
+            if (ok != null) {
+                geometry.applySavedProfile(pkg, if (side != null) CastProfile.of(side, leftPercent) else CastProfile.FULL)
+                log("repin: $pkg re-cast issued (slot=$side)")
+            } else {
+                log("repin: $pkg re-cast FAILED")
+            }
+        }
+    }
+
+    private companion object {
+        /** Min gap between watchdog probes (caller ticks ~2s; probe runs ~ every other tick). */
+        private const val REPIN_PROBE_MIN_INTERVAL_MS = 4_000L
+        /** After a re-pin, ignore the same package this long (avoid fighting a persistent external launch). */
+        private const val REPIN_COOLDOWN_MS = 10_000L
+    }
 }
