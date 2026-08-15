@@ -1,5 +1,6 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.navigation.ManeuverHold
 import com.byd.clusternav.navigation.NavArrivalGuard
 import com.byd.clusternav.navigation.NavFormat
 import com.byd.clusternav.navigation.NavParse
@@ -41,6 +42,10 @@ class NavNotificationListener : NotificationListenerService() {
      */
     private val arrivalGuard = NavArrivalGuard()
 
+    // Giữ hướng rẽ hợp lệ gần nhất TRONG PHIÊN (chống nháy HUD, owner 2026-08-15): 1 noti GMaps lỡ không đọc
+    // được arrow → dùng lại hướng trước thay vì rớt straight. Reset ở ranh giới phiên (đến nơi / gỡ noti).
+    @Volatile private var lastManeuverIcon: Int = -1
+
     /** Hệ thống THẢ binding (head-unit hay làm lúc chạy) → clear typed sources before teardown. */
     override fun onListenerDisconnected() {
         connected = false
@@ -50,6 +55,9 @@ class NavNotificationListener : NotificationListenerService() {
         // onNotificationRemoved: stop() + ClusterNavLaneWidget.onNavIdle() + log, bọc runCatching như các
         // nhánh teardown khác trong hàm này.
         runCatching {
+            // Ranh giới phiên = "rớt binding" (KDoc ManeuverHold + NavArrivalGuard): reset state per-phiên như
+            // nhánh onNotificationRemoved/arrival để tuyến MỚI sau rebind không kế thừa hướng rẽ / mốc cự ly cũ.
+            arrivalGuard.reset(); lastManeuverIcon = -1
             NavRepository.stop(applicationContext)
             ClusterNavLaneWidget.onNavIdle()
             Log.i(TAG, "binding thả -> stop authoritative session (nguồn dừng)")
@@ -118,7 +126,7 @@ class NavNotificationListener : NotificationListenerService() {
         }
         // CHỈ tắt cụm nếu app vừa-gỡ chính là nguồn đang giữ khoá — gỡ noti app nền KHÔNG tắt nav app đang dẫn.
         if (SourceArbiter.release(sbn.packageName)) {
-            arrivalGuard.reset()
+            arrivalGuard.reset(); lastManeuverIcon = -1
             NavRepository.stop(applicationContext)
             ClusterNavLaneWidget.onNavIdle()
             Log.i(TAG, "nguồn ${sbn.packageName} dừng -> stop authoritative session")
@@ -140,7 +148,7 @@ class NavNotificationListener : NotificationListenerService() {
         if (NavArrivalGuard.isArrivalText(title, text, big)) {
             // R3: "đã đến" cũng phải qua trọng tài — app NỀN báo đến KHÔNG được đè cụm đang do app khác giữ.
             if (!SourceArbiter.shouldFeed(sbn.packageName, Prefs.sourceMode(applicationContext), System.currentTimeMillis())) return
-            arrivalGuard.reset()
+            arrivalGuard.reset(); lastManeuverIcon = -1
             runCatching { TurnDistanceInterpolator.reset() }
             runCatching { NavRepository.stop(applicationContext) }
                 .onFailure { Log.e(TAG, "arrival stop failed", it) }
@@ -174,18 +182,21 @@ class NavNotificationListener : NotificationListenerService() {
 
         // v1.03: classify maneuver BEFORE creating the immutable frame so it carries the
         // final code through the typed boundary. No global arrow lookup needed later.
-        val classifiedIcon = manIcon.takeIf { it in 0..28 }
+        // Phân loại hướng rẽ frame NÀY (null = không đọc được: thiếu large-icon / chữ ký lệch ngưỡng / không verb).
+        val freshIcon = manIcon.takeIf { it in 0..28 }
             ?: com.byd.clusternav.navigation.ManeuverSignature.classify(arrow?.asPixelFrame())
             ?: com.byd.clusternav.navigation.NavFormat.maneuverVerbIcon(title.ifBlank { text })
             ?: com.byd.clusternav.navigation.ArrowClassifier.classify(arrow?.asPixelFrame())
-            ?: -1
+        // Chống nháy HUD: frame lỗi đọc → GIỮ hướng rẽ trước (không rớt -1 → straight); fresh hợp lệ → cập nhật mốc.
+        val classifiedIcon = ManeuverHold.resolve(freshIcon, lastManeuverIcon)
+        if (classifiedIcon in 0..28) lastManeuverIcon = classifiedIcon
 
         val state = NotificationParser.parse(sbn.packageName, title, text, sub, big, arrow, classifiedIcon) ?: return
 
         // R7/#2: route complete (route-remaining collapsed to ~0) → clear cụm thay vì heart-beat frame cũ.
         val routeRemainMeters = NavParse.parseEta(state.eta).first
         if (arrivalGuard.arrivedByRouteRemaining(routeRemainMeters.takeIf { it >= 0 })) {
-            arrivalGuard.reset()
+            arrivalGuard.reset(); lastManeuverIcon = -1
             runCatching { TurnDistanceInterpolator.reset() }
             runCatching { NavRepository.stop(applicationContext) }.onFailure { Log.e(TAG, "route-end stop failed", it) }
             ClusterNavLaneWidget.onNavIdle()

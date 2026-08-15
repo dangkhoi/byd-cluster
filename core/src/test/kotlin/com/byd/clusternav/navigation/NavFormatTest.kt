@@ -25,8 +25,9 @@ class NavFormatTest {
         assertEquals("Hầm Thủ Thiêm", NavFormat.cleanRoadName("Hầm Thủ Thiêm"))
     }
 
-    @Test fun `fitRoadName rút gọn về acronym khi quá dài`() {
-        assertEquals("NHC", NavFormat.fitRoadName("Nguyễn Hữu Cảnh"))
+    @Test fun `fitRoadName thang fallback — giữ từ cuối khi dạng chấm không vừa`() {
+        // "N.H.Cảnh"(8) > ROAD_MAX_UNITS(7) → "NHCảnh"(6) giữ "Cảnh", KHÔNG rớt thẳng "NHC".
+        assertEquals("NHCảnh", NavFormat.fitRoadName("Nguyễn Hữu Cảnh"))
     }
 
     @Test fun `fitRoadName giữ từ-loại hầm ở đầu`() {
@@ -41,9 +42,9 @@ class NavFormatTest {
         assertEquals(7, out.length)
     }
 
-    @Test fun `fitRoadName 'Võ Nguyên Giáp' @7 → acronym 'VNG' (dotted 'V_N_Giáp' là 8 gt 7)`() {
-        // dotted "V.N.Giáp" = 8 code-unit > 7 → rớt xuống acronym.
-        assertEquals("VNG", NavFormat.fitRoadName("Võ Nguyên Giáp", 7))
+    @Test fun `fitRoadName 'Võ Nguyên Giáp' @7 → 'VNGiáp' (chấm 8 gt 7 → dính-đầu giữ từ cuối)`() {
+        // dotted "V.N.Giáp"=8 > 7 → gluedLast "VNGiáp"=6 ≤ 7 (giữ "Giáp"), KHÔNG rớt "VNG".
+        assertEquals("VNGiáp", NavFormat.fitRoadName("Võ Nguyên Giáp", 7))
     }
 
     @Test fun `fitRoadName 'Võ Nguyên Giáp' @8 → dotted 'V_N_Giáp'`() {
@@ -52,9 +53,12 @@ class NavFormatTest {
         assertEquals(8, out.length)
     }
 
-    @Test fun `fitRoadName 'Nguyễn Hữu Cảnh' @7 → acronym 'NHC'`() {
-        // dotted "N.H.Cảnh" = 8 > 7 → acronym "NHC".
-        assertEquals("NHC", NavFormat.fitRoadName("Nguyễn Hữu Cảnh", 7))
+    @Test fun `fitRoadName 'Nguyễn Hữu Cảnh' — thang @8 chấm @7 @6 dính @5 acronym`() {
+        // Thang fallback owner 2026-08-15: dạng đọc-được-nhất còn vừa ngân sách; giữ TỪ CUỐI lâu nhất.
+        assertEquals("N.H.Cảnh", NavFormat.fitRoadName("Nguyễn Hữu Cảnh", 8))   // chấm(8) vừa 8
+        assertEquals("NHCảnh", NavFormat.fitRoadName("Nguyễn Hữu Cảnh", 7))      // chấm 8gt7 → dính giữ từ cuối(6)
+        assertEquals("NHCảnh", NavFormat.fitRoadName("Nguyễn Hữu Cảnh", 6))      // dính vừa đúng 6
+        assertEquals("NHC", NavFormat.fitRoadName("Nguyễn Hữu Cảnh", 5))         // dính 6gt5 → acronym(3)
     }
 
     @Test fun `fitRoadName 'Quốc lộ 1A' → 'QL1A' (viết tắt loại đường, cả @7 và default)`() {
@@ -92,12 +96,13 @@ class NavFormatTest {
     }
 
     @Test fun `fitRoadName NFC-normalizes NFD input — take(1) giữ dấu khi viết tắt`() {
-        // "Ông Ích Khiêm" >7 → acronym. Chữ đầu MANG DẤU (Ô, Í). take(1) trên NFD cắt base 'O'/'I'
-        // rời khỏi dấu kết hợp → mất dấu ("OIK"). Normalize NFC trước → giữ "ÔÍK" (dấu nguyên vẹn).
+        // "Ông Ích Khiêm" @7 >7 → thang xuống "dính-đầu + giữ từ cuối" = "ÔÍKhiêm". Chữ đầu MANG DẤU (Ô, Í):
+        // take(1) trên NFD cắt base 'O'/'I' rời dấu kết hợp → mất dấu. Normalize NFC trước → giữ "ÔÍ..." nguyên vẹn.
         val nfd = java.text.Normalizer.normalize("Ông Ích Khiêm", java.text.Normalizer.Form.NFD)
         val out = NavFormat.fitRoadName(nfd, 7)
         assertEquals(NavFormat.fitRoadName("Ông Ích Khiêm", 7), out)
-        assertEquals(3, out.length, "acronym 3 ký tự, mỗi ký tự 1 code-unit NFC")
+        assertEquals("ÔÍKhiêm", out)
+        assertEquals(7, out.length, "dính-đầu 'ÔÍ' + từ cuối 'Khiêm' = 7 code-unit NFC")
         assertTrue(java.text.Normalizer.isNormalized(out, java.text.Normalizer.Form.NFC))
         assertFalse(out.contains('O'), "KHÔNG thoái hoá về ASCII 'O' (mất dấu Ô)")
         assertFalse(out.contains('\u0302'), "không sót combining circumflex (U+0302)")

@@ -126,6 +126,11 @@ object NavRepository {
                     icon = frame.content.maneuver?.toHudIcon() ?: 11,
                     segMeters = frame.content.distanceMeters ?: -1,
                     hudRoad = frame.content.roadName.orEmpty(),
+                    // FULL DATA HUD (2026-08-15): ETA + thời gian/quãng đường còn lại — trước chỉ vào cụm qua broadcast,
+                    // giờ đẩy xuống đường HUD (writeNavFrame ghi domestic + oversea). null/-1 khi thiếu → writeNavFrame bỏ qua.
+                    routeSeconds = frame.content.routeRemainingSeconds ?: -1,
+                    routeMeters = frame.content.routeRemainingMeters ?: -1,
+                    arrivalClock = frame.content.arrivalClock,
                 )
             }
         })

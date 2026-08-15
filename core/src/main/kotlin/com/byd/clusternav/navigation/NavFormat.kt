@@ -79,7 +79,7 @@ object NavFormat {
         return s.replace(RE_WS, " ").trim().ifEmpty { road.trim() }
     }
 
-    /** Rút gọn cho ô cụm/HUD khi KHÔNG cuộn. "Nguyễn Hữu Cảnh"->"NHC"; "hầm X Y"->"hầm XY".
+    /** Rút gọn cho ô cụm/HUD khi KHÔNG cuộn. "Nguyễn Hữu Cảnh"->"NHCảnh" (thang giữ từ cuối); "hầm X Y"->"hầm XY".
      *  [maxUnits] = ngân sách UTF-16 code-unit (mặc định ô cụm [ROAD_MAX_UNITS]; HUD truyền [HUD_ROAD_MAX_UNITS]).
      *  Giữ default → caller cụm (roadWindow/marquee) KHÔNG đổi hành vi (backward-compat).
      *  NFC-normalize TRƯỚC khi đo length / take() / dựng dạng viết tắt (F8): buffer đích là BYTE, quan hệ
@@ -98,11 +98,16 @@ object NavFormat {
             return if (cand.length <= maxUnits) cand else cand.take(maxUnits)
         }
         if (words.size >= 2) {
-            val dotted = words.dropLast(1).joinToString("") { it.take(1) + "." } + words.last()
+            // THANG FALLBACK (owner 2026-08-15): chấm → dính-đầu+GIỮ-TỪ-CUỐI → acronym → cắt cứng.
+            // Chọn dạng ĐỌC ĐƯỢC NHẤT còn vừa ngân sách; giữ TỪ CUỐI (định danh) càng lâu càng tốt.
+            // "Nguyễn Hữu Cảnh" @7: "N.H.Cảnh"(8)>7 → "NHCảnh"(6) — trước đây rớt thẳng "NHC" (mất "Cảnh").
+            val dotted = words.dropLast(1).joinToString("") { it.take(1) + "." } + words.last()  // "T.T.Kim" / "N.H.Cảnh"
             if (dotted.length <= maxUnits) return dotted        // "Trần Trọng Kim" -> "T.T.Kim"
+            val gluedLast = words.dropLast(1).joinToString("") { it.take(1) } + words.last()      // "NHCảnh" / "VNGiáp"
+            if (gluedLast.length <= maxUnits) return gluedLast  // chấm không vừa nhưng vẫn giữ từ cuối
             val acronym = words.joinToString("") { it.take(1) }       // dài hơn -> "NHC"/"CMTT"
             if (acronym.length <= maxUnits) return acronym
-            return dotted.take(maxUnits)
+            return acronym.take(maxUnits)                       // bí quá (tên > maxUnits từ): cắt acronym
         }
         return s.take(maxUnits)
     }

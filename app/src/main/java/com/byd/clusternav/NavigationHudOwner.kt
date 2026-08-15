@@ -84,7 +84,12 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
                     }
                     keepAlive.onCleared()
                 } else {
-                    val rc = BydHal.writeNavFrame(appContext, icon, seg, road, mode)
+                    val rc = BydHal.writeNavFrame(
+                        appContext, icon, seg, road, mode,
+                        routeSeconds = c.routeRemainingSeconds ?: -1,
+                        routeMeters = c.routeRemainingMeters ?: -1,
+                        arrivalClock = c.arrivalClock,
+                    )
                     Log.i(TAG, "cluster-nav icon=$icon seg=$seg road='$road' mode=$mode → $rc")
                     // Commit applied state only on successful delivery (no exception thrown).
                     synchronized(dedupLock) {
@@ -189,17 +194,20 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
      * @param icon BYD turn-icon code (1–49)
      * @param segMeters raw distance in meters (-1 = no distance)
      * @param hudRoad abbreviated road name (already fitted to HUD budget)
+     * @param routeSeconds total remaining drive time in seconds (-1 = unknown); written to HUD remaining-time features
+     * @param routeMeters total remaining route distance in meters (-1 = unknown); written to HUD remaining-mileage
+     * @param arrivalClock ETA clock "H:MM" (null = unknown); written to HUD expected-arrival features
      */
-    fun push(icon: Int, segMeters: Int, hudRoad: String): OutputSubmission {
+    fun push(icon: Int, segMeters: Int, hudRoad: String, routeSeconds: Int = -1, routeMeters: Int = -1, arrivalClock: String? = null): OutputSubmission {
         synchronized(dedupLock) {
             if (icon == appliedIcon && segMeters == appliedSeg && hudRoad == appliedRoad) {
                 return OutputSubmission.ACCEPTED
             }
         }
-        return worker.submit(guidanceFrame(icon, segMeters, hudRoad))
+        return worker.submit(guidanceFrame(icon, segMeters, hudRoad, routeSeconds = routeSeconds, routeMeters = routeMeters, arrivalClock = arrivalClock))
     }
 
-    private fun guidanceFrame(icon: Int, segMeters: Int, hudRoad: String, sessionId: String = REAL_PUSH_SESSION): NavigationFrame = NavigationFrame(
+    private fun guidanceFrame(icon: Int, segMeters: Int, hudRoad: String, sessionId: String = REAL_PUSH_SESSION, routeSeconds: Int = -1, routeMeters: Int = -1, arrivalClock: String? = null): NavigationFrame = NavigationFrame(
         sessionId = sessionId,
         source = OWNER_SOURCE,
         sequence = sequenceGen.getAndIncrement(),
@@ -210,9 +218,9 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
             distanceMeters = if (segMeters >= 0) segMeters else null,
             roadName = hudRoad.ifBlank { null },
             etaEpochMs = null,
-            routeRemainingMeters = null,
-            routeRemainingSeconds = null,
-            arrivalClock = null,
+            routeRemainingMeters = if (routeMeters >= 0) routeMeters else null,
+            routeRemainingSeconds = if (routeSeconds >= 0) routeSeconds else null,
+            arrivalClock = arrivalClock,
         )
     )
 

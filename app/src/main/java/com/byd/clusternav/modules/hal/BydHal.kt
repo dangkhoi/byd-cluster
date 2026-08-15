@@ -157,21 +157,72 @@ object BydHal {
      *  Cần sweep 0/1/2/3 on-car để chốt value = "Đơn giản" (Giữa+ETA). Default 3 = value đã-proven rc=0. */
     const val NAV_SCREEN_MODE_ON = 3
 
+    /** RE 2026-08-15 (insight owner "mũi tên/cự ly/tên đường có tách domestic↔oversea"): CẢ HỌ guidance có bản
+     *  OVERSEA (export) song song domestic — suffix id TRÙNG, chỉ khác prefix 0x1F7 (oversea) vs 0x43F (domestic).
+     *  Xe export (Seal) đọc họ 0x1F7 → HUD KHÔNG lên gì khi app chỉ ghi 0x43F. Raw-id FALLBACK vì lớp reflect
+     *  `BYDAutoFeatureIds` (bản tmap) thiếu các tên oversea. Nguồn: DiCarServer Instrument.java / InstrumentMapper. */
+    const val EASY_NAVI_GUIDE_OVERSEA_ID = 0x1F701010   // mũi tên — INSTRUMENT_EASY_NAVI_GUIDE_INFOR_SET (~ GUIDE_INFO_SIMPLE)
+    const val CROSSING_DIST_OVERSEA_ID = 0x1F701018     // cự ly  — INSTRUMENT_DISTANCE_TARGET_HEAD_SET (~ FRONT_CROSSING_DISTANCE)
+    const val PATHNAME_OVERSEA_ID = 0x1F7A1008          // tên đường — INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_OVERASEA_SET (~ NEXT_PATHNAME)
+
     /** Ghi 1 frame nav IN-PROCESS lên cụm (status=2 + chọn mode nav-screen + icon/khoảng-cách/tên-đường) qua
      *  bypass-context. Đây là CƠ CHẾ THẬT tạo "Giữa + ETA" (khớp navopen), KHÁC ch1000 op39 (no-op trên xe này).
      *  [screenMode] = giá trị SET_NAVI_SCREEN_STATUS_SET (xem [NAV_SCREEN_MODE_ON]). Trả tóm tắt rc.
      *  Owner hợp lệ DUY NHẤT: [com.byd.clusternav.NavigationHudOwner] (giữ ownership boundary — xem PhysicalHudOwnershipTest). */
-    fun writeNavFrame(ctx: Context, icon: Int, segMeters: Int, road: String, screenMode: Int = NAV_SCREEN_MODE_ON): String {
+    fun writeNavFrame(
+        ctx: Context, icon: Int, segMeters: Int, road: String, screenMode: Int = NAV_SCREEN_MODE_ON,
+        routeSeconds: Int = -1, routeMeters: Int = -1, arrivalClock: String? = null,
+    ): String {
         val sys = systemBypassContext()
         val instr = device(INSTRUMENT, sys, bypass(ctx)) ?: return "InstrumentDevice null (không ghi được)"
         val setting = device(SETTING, sys, bypass(ctx))
         val rc = StringBuilder()
         fun w(name: String, v: Int) { featureId(name)?.let { id -> rc.append(" $name=").append(runCatching { setInt(instr, id, v) }.getOrElse { root(it) }) } }
+        // Ghi 1 feature INT theo TÊN (reflect BYDAutoFeatureIds), FALLBACK raw-id cho các tên OVERSEA vắng trong lớp reflect.
+        fun wi(name: String, rawId: Int, v: Int, tag: String) {
+            (featureId(name) ?: rawId).let { id -> rc.append(" $tag=").append(runCatching { setInt(instr, id, v) }.getOrElse { root(it) }) }
+        }
         w("INSTRUMENT_SEND_NAVI_STATUS_SET", 2)
         featureId("SET_NAVI_SCREEN_STATUS_SET")?.let { id -> setting?.let { s -> rc.append(" NAVI_SCREEN=").append(runCatching { setInt(s, id, screenMode) }.getOrElse { e -> root(e) }) } }
         w("INSTRUMENT_GUIDE_INFO_SIMPLE_SET", icon)
         w("INSTRUMENT_FRONT_CROSSING_DISTANCE_SET", segMeters)
         featureId("INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_SET")?.let { id -> rc.append(" PATHNAME=").append(runCatching { setBytes(instr, id, road.toByteArray(Charsets.UTF_16LE)) }.getOrElse { e -> root(e) }) }
+        // THỬ NGHIỆM (2026-08-15, insight owner): guidance có bản OVERSEA (export) song song domestic (suffix id trùng,
+        // prefix 0x1F7 vs 0x43F). Xe export (Seal) đọc họ 0x1F7 → HUD không lên GÌ khi app chỉ ghi 0x43F. Ghi THÊM
+        // bản oversea cho mũi tên + cự ly + tên đường (KHÔNG bỏ domestic). Feature hiển thị → ghi lành tính; null-safe;
+        // fallback raw-id (BYDAutoFeatureIds thiếu tên oversea). Xác nhận trên xe: HUD export lên mũi tên/cự ly/tên chưa.
+        (featureId("INSTRUMENT_EASY_NAVI_GUIDE_INFOR_SET") ?: EASY_NAVI_GUIDE_OVERSEA_ID).let { id ->
+            rc.append(" GUIDE_OVERSEA=").append(runCatching { setInt(instr, id, icon) }.getOrElse { e -> root(e) })
+        }
+        (featureId("INSTRUMENT_DISTANCE_TARGET_HEAD_SET") ?: CROSSING_DIST_OVERSEA_ID).let { id ->
+            rc.append(" DIST_OVERSEA=").append(runCatching { setInt(instr, id, segMeters) }.getOrElse { e -> root(e) })
+        }
+        (featureId("INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_OVERASEA_SET") ?: PATHNAME_OVERSEA_ID).let { id ->
+            rc.append(" PATHNAME_OVERSEA=").append(runCatching { setBytes(instr, id, road.toByteArray(Charsets.UTF_16LE)) }.getOrElse { e -> root(e) })
+        }
+        // FULL DATA HUD (2026-08-15, owner "ghi hết data lên HUD, domestic + oversea"): thời-gian-còn-lại (giờ/phút/
+        // giây/ngày), quãng-đường-còn-lại, giờ-tới (ETA) — CHƯA từng ghi lên HUD (trước chỉ vào CỤM qua broadcast).
+        // Ghi vào CẢ 2 họ; CHỈ khi có giá trị hợp lệ (bỏ qua lúc keep-alive/absent để không xoá trắng số đang hiện).
+        // Toàn feature HIỂN THỊ (không phải switch) → lành tính. Id: DiCarServer Instrument.java (0x43F dom / 0x1F7 oversea).
+        if (routeSeconds >= 0) {
+            val d = routeSeconds / 86400; val h = (routeSeconds % 86400) / 3600
+            val m = (routeSeconds % 3600) / 60; val s = routeSeconds % 60
+            wi("INSTRUMENT_NAVI_TRIP_INFO_HOUR_SET", 0x43F02010, h, "RT_H");   wi("INSTRUMENT_REMAIN_DRIVE_TIME_HOUR_SET", 0x1F702010, h, "RT_HO")
+            wi("INSTRUMENT_NAVI_TRIP_INFO_MINUTE_SET", 0x43F02018, m, "RT_M"); wi("INSTRUMENT_REMAIN_DRIVE_TIME_MINUTE_SET", 0x1F702018, m, "RT_MO")
+            wi("INSTRUMENT_NAVI_TRIP_REMAINING_SECOND_SET", 0x43F0201E, s, "RT_S"); wi("INSTRUMENT_REMAIN_DRIVE_TIME_SECOND_SET", 0x1F70201E, s, "RT_SO")
+            wi("INSTRUMENT_REMAIN_DRIVING_TIME_DAY_SET", 0x43F02024, d, "RT_D")   // day: domestic only (oversea không có ô ngày riêng)
+        }
+        if (routeMeters >= 0) {
+            wi("INSTRUMENT_NAVI_TRIP_INFO_MILEAGE_SET", 0x43F02028, routeMeters, "MILE"); wi("INSTRUMENT_REMAIN_MILEAGE_SET", 0x1F702028, routeMeters, "MILE_O")
+        }
+        arrivalClock?.split(":")?.let { p ->
+            p.getOrNull(0)?.trim()?.toIntOrNull()?.let { h ->
+                wi("INSTRUMENT_EXPECTED_ARRIVE_HOUR_SET", 0x43F09018, h, "ETA_H"); wi("INSTRUMENT_EXPECT_ARRIVAL_TIME_HOUR_SET", 0x1F705018, h, "ETA_HO")
+            }
+            p.getOrNull(1)?.trim()?.toIntOrNull()?.let { m ->
+                wi("INSTRUMENT_EXPECTED_ARRIVE_MINUTE_SET", 0x43F09020, m, "ETA_M"); wi("INSTRUMENT_EXPECT_ARRIVAL_TIME_MINUTE_SET", 0x1F705020, m, "ETA_MO")
+            }
+        }
         return rc.toString().trim()
     }
 
