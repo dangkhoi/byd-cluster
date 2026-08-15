@@ -1,6 +1,9 @@
 package com.byd.clusternav
 
 import com.byd.clusternav.carexec.LocalDeviceShell
+import com.byd.clusternav.carexec.LocalShellText
+import com.byd.clusternav.modules.navaccess.AccessibilityRebind
+import dadb.AdbKeyPair
 import android.content.ComponentName
 import android.content.Context
 import android.os.Handler
@@ -20,9 +23,14 @@ import android.util.Log
 object NavConnect {
     private const val TAG = "NavConnect"
     private const val COMP = "com.byd.clusternav/com.byd.clusternav.NavNotificationListener"
-    private const val ACC_COMP = "com.byd.clusternav/com.byd.clusternav.modules.navaccess.NavAccessibilityService"
     private val reconnecting = java.util.concurrent.atomic.AtomicBoolean(false)   // single-flight: tap dồn dập / ensure trùng → 1 chu kỳ disallow→allow
     private val grantingAcc = java.util.concurrent.atomic.AtomicBoolean(false)    // single-flight cho grantAccessibility (dadb read-modify-write)
+
+    // Force-rebind toggle timings (post-reboot ENABLED-but-NOT-BOUND heal). SETTLE lets a JUST-written enable
+    // bind naturally first (fresh grants usually self-bind) so we don't toggle needlessly; TOGGLE_PAUSE is the
+    // brief gap between the remove and the re-add that makes the framework observe the OUT state and rebind.
+    private const val REBIND_SETTLE_MS = 1200L
+    private const val REBIND_TOGGLE_PAUSE_MS = 800L
 
     /** Reconnect NGAY qua dadb (chạy nền). An toàn gọi nhiều lần. */
     fun reconnect(ctx: Context) {
@@ -79,6 +87,10 @@ object NavConnect {
      * khoá có thể không mở/không bật được, nhưng `settings put secure enabled_accessibility_services` từ uid
      * shell thì được. ĐỌC-SỬA-GHI để KHÔNG đá văng service hỗ trợ khác đang bật (append, không overwrite).
      *
+     * Sau khi enable, còn VERIFY service BOUND thật (`dumpsys accessibility` "Bound services", không chỉ
+     * "Enabled") rồi FORCE-REBIND bằng toggle nếu enabled-nhưng-chưa-bound — chữa bug sau reboot (voice-key +
+     * screen-read chết) mà không cần toggle tay. Xem [forceRebindIfNeeded].
+     *
      * @param onResult gọi trên MAIN thread: true nếu phiên dadb chạy được (đã append + bật accessibility).
      */
     fun grantAccessibility(ctx: Context, onResult: ((Boolean) -> Unit)? = null) {
@@ -97,17 +109,79 @@ object NavConnect {
                 val keyPair = AdbKeys.ensure(app)
                 LocalDeviceShell.session(keyPair) { sh ->
                     val cur = sh("settings get secure enabled_accessibility_services").output.trim()
-                    val has = cur.split(':').any { it.trim() == ACC_COMP }
+                    val has = cur.split(':').any { it.trim() == AccessibilityRebind.ACC_COMP }
                     if (!has) {
-                        val next = if (cur.isBlank() || cur == "null") ACC_COMP else "$cur:$ACC_COMP"
+                        val next = if (cur.isBlank() || cur == "null") AccessibilityRebind.ACC_COMP else "$cur:${AccessibilityRebind.ACC_COMP}"
                         sh("settings put secure enabled_accessibility_services $next")
                     }
                     sh("settings put secure accessibility_enabled 1")
                     Log.i(TAG, "grantAccessibility xong (đã có sẵn=$has)")
+                    // ENABLED ≠ BOUND: sau reboot service liệt kê trong enabled_accessibility_services nhưng
+                    // KHÔNG chạy (không ở "Bound services") → onKeyEvent/booster chết. Ép rebind trên CÙNG phiên.
+                    forceRebindIfNeeded(keyPair, sh)
                     true
                 } ?: false
             }.getOrElse { Log.e(TAG, "grantAccessibility qua dadb LỖI (popup Allow chưa bấm?)", it); false }
         } finally { grantingAcc.set(false) }
+    }
+
+    /**
+     * FORCE-REBIND accessibility service khi ENABLED-nhưng-CHƯA-BOUND (trạng thái sau reboot: có trong
+     * enabled_accessibility_services nhưng vắng khỏi `dumpsys accessibility` "Bound services", nên
+     * onServiceConnected không chạy → onKeyEvent + screen-read chết). Chạy trên CÙNG phiên dadb với các lệnh
+     * enable ở trên (đã trong single-flight [grantingAcc]).
+     *
+     * An toàn (chạy trên xe owner qua OTA):
+     *  - CHỈ toggle khi xác nhận enabled-nhưng-chưa-bound. Đã bound → [AccessibilityRebind.accessibilityRebindWrites]
+     *    trả rỗng → KHÔNG làm gì (không flicker). Settle trước để enable vừa ghi kịp bind tự nhiên (tránh toggle thừa).
+     *  - Chuỗi lệnh: remove (bỏ ClusterNav, GIỮ OEM services) → pause → re-add + accessibility_enabled 1.
+     *  - KHÔNG BAO GIỜ để danh sách ở trạng thái REMOVED: nếu đã remove mà re-add chưa xong (sleep bị interrupt /
+     *    shell ném), `finally` re-add lại về trạng thái an toàn — thử trên CHÍNH phiên trước, nếu phiên đó đã
+     *    chết thì mở PHIÊN MỚI để re-add (adbd loopback vẫn sống, chỉ 1 kết nối rớt), nên setting không bao giờ
+     *    kẹt ở trạng thái removed dù phiên đứt giữa toggle. Mọi lỗi được catch/log, không làm văng app.
+     */
+    private fun forceRebindIfNeeded(keyPair: AdbKeyPair, sh: (String) -> LocalShellText) {
+        // Let a fresh enable bind on its own first; only the post-reboot state needs the forced toggle.
+        runCatching { Thread.sleep(REBIND_SETTLE_MS) }.onFailure { Thread.currentThread().interrupt(); return }
+        val current = sh("settings get secure enabled_accessibility_services").output.trim()
+        val bound = AccessibilityRebind.isClusterNavBound(sh("dumpsys accessibility").output)
+        val writes = AccessibilityRebind.accessibilityRebindWrites(current, bound)
+        if (writes.isEmpty()) { Log.i(TAG, "accessibility đã BOUND — không toggle (tránh flicker)"); return }
+
+        val remove = writes.first()
+        val reAdd = writes.drop(1)   // [re-add danh sách đầy đủ, accessibility_enabled 1] = trạng thái AN TOÀN cuối
+        var inRemovedState = false
+        try {
+            Log.i(TAG, "accessibility ENABLED nhưng CHƯA BOUND → toggle ép rebind")
+            // Arm recovery BEFORE issuing the remove: if sh(remove) executes on-device but then throws while
+            // reading the response, `finally` must still re-add (re-adding when the remove never landed is a
+            // harmless idempotent write). This closes the last never-leave-removed window.
+            inRemovedState = true
+            sh(remove)
+            Thread.sleep(REBIND_TOGGLE_PAUSE_MS)
+            reAdd.forEach { sh(it) }; inRemovedState = false
+            val reboundOk = AccessibilityRebind.isClusterNavBound(sh("dumpsys accessibility").output)
+            Log.i(TAG, "accessibility force-rebind xong: bound=$reboundOk")
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Log.e(TAG, "accessibility rebind bị interrupt giữa toggle", e)
+        } finally {
+            // NEVER leave enabled_accessibility_services in the REMOVED state — re-add on any partial failure.
+            if (inRemovedState) {
+                // First try on the SAME session. If that session is the very thing that broke (the common
+                // cause of getting here), re-adding on it throws too — so fall back to a FRESH dadb session.
+                // The loopback adbd is still up (only this one connection died), so the fresh re-add lands and
+                // the setting is never left removed — not merely self-healed on the next grant.
+                val recoveredSameSession = runCatching { reAdd.forEach { sh(it) } }.isSuccess
+                if (recoveredSameSession) {
+                    Log.w(TAG, "accessibility rebind: khôi phục RE-ADDED (an toàn) sau lỗi")
+                } else {
+                    val freshOk = LocalDeviceShell.session(keyPair) { s2 -> reAdd.forEach { s2(it) }; true } ?: false
+                    if (freshOk) Log.w(TAG, "accessibility rebind: khôi phục RE-ADDED qua phiên MỚI (an toàn)")
+                    else Log.e(TAG, "accessibility rebind: khôi phục re-add THẤT BẠI cả phiên cũ lẫn phiên MỚI")
+                }
+            }
+        }
     }
 
     /**

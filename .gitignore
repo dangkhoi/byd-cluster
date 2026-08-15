@@ -90,3 +90,8 @@ oncar-carexec-*/ui-review-*/
 scripts/vehicle/*.png
 scripts/vehicle/doorA_*.txt
 scripts/vehicle/doorB_*.txt
+
+# Vehicle drive telemetry (nav_log CSV + cluster screenshots) — road-name column reveals the
+# owner's real commute route (location PII); the repo is public/OTA. Keep raw logs LOCAL only.
+# Aggregate analysis lives in docs/diagnostics/*.md (no route), which IS committed.
+docs/diagnostics/nav-logs/

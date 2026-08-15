@@ -151,6 +151,32 @@ class NavFormatTest {
         assertNull(NavFormat.maneuverVerbIcon("blah blah"))
     }
 
+    @Test fun `Track B — maneuverVerbIcon merge nhập-làn ra đi-thẳng 9 (KHÔNG chếch phải)`() {
+        // Bug owner: "nhập làn / merge" từng hiện mũi tên rẽ/chếch PHẢI. 0..28 không có glyph merge → 9 = đi thẳng.
+        assertEquals(9, NavFormat.maneuverVerbIcon("nhập làn"))
+        assertEquals(9, NavFormat.maneuverVerbIcon("Nhập làn vào Tôn Đức Thắng"))
+        assertEquals(9, NavFormat.maneuverVerbIcon("merge"))
+        // "merge left onto X": nhánh merge phải xét TRƯỚC turn ("left onto") → 9, KHÔNG phải 2 (rẽ trái).
+        assertEquals(9, NavFormat.maneuverVerbIcon("merge left onto Highway 1"))
+    }
+
+    @Test fun `Track B — maneuverVerbIcon tunnel-hầm ra 16 (glyph sắp vào hầm)`() {
+        assertEquals(16, NavFormat.maneuverVerbIcon("vào hầm"))
+        assertEquals(16, NavFormat.maneuverVerbIcon("đường hầm"))
+        assertEquals(16, NavFormat.maneuverVerbIcon("enter tunnel"))
+        // Rẽ có ưu tiên hơn hầm: "rẽ phải vào hầm" phải giữ rẽ phải (3), không đè thành hầm.
+        assertEquals(3, NavFormat.maneuverVerbIcon("rẽ phải vào hầm X"))
+    }
+
+    @Test fun `Track B — roundaboutExit rút số nhánh cho ROUNG_ABOUT_NUM (encode vòng-xuyến lối-ra N)`() {
+        // NavFormat cấp SỐ nhánh; AmapFrameBuilder ép NEW_ICON 11 + putExtra ROUNG_ABOUT_NUM=N → AmapService
+        // remap CAN 25..34 (RHT/CCW lối ra N). Đây là nguồn dữ liệu cho glyph "lối ra thứ N".
+        assertEquals(3, NavFormat.roundaboutExit("Đi vào vòng xuyến và ra ở lối ra thứ 3"))
+        assertEquals(2, NavFormat.roundaboutExit("At the roundabout, take the 2nd exit"))
+        assertEquals(1, NavFormat.roundaboutExit("take the 1st exit"))
+        assertEquals(-1, NavFormat.roundaboutExit("đi thẳng"))   // không có số → -1 → builder gửi NEW_ICON thường
+    }
+
     @Test fun `maneuverToAmapIcon fallback đi thẳng`() {
         assertEquals(9, NavFormat.maneuverToAmapIcon("chuỗi không có động từ"))
     }

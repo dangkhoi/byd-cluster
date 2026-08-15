@@ -130,3 +130,61 @@ ClusterNav giả lập pair/handshake với VietMap để lấy:
 ### Deliverable
 - `core/.../hud/VietMapBtBridge.kt` — pair + read speed limit + nav
 - Hiển thị lên cluster overlay hoặc expose qua broadcast cho HUD riêng
+
+---
+
+## 4. Display cự ly: bỏ bậc 25 m ở dải 300 m–1 km → số tròn như GMaps
+
+> Added 2026-08-14 PM (owner note, phiên phân tích chuyến lái về). **Làm sau, không gấp.**
+
+### Triệu chứng
+- Cụm thỉnh thoảng hiện số lẻ kiểu **725 m** → nhìn kỳ. GMaps toàn số **tròn** (10/20/50 m hoặc "0,7 km").
+
+### Nguồn (đã neo code)
+- `core/src/main/kotlin/com/byd/clusternav/navigation/NavParse.kt` → `quantizeDisplay()`:
+  ```kotlin
+  m >= 1000 -> ((m + 50) / 100) * 100   // >1km: bậc 100m  (OK, tròn)
+  m >= 300  -> ((m + 12) / 25)  * 25     // 300m–1km: bậc 25m  ← THỦ PHẠM (725 = 29×25)
+  m >= 100  -> ((m + 5)  / 10)  * 10     // 100–300m: bậc 10m  (OK)
+  else      -> ((m + 5)  / 10)  * 10     // <100m: bậc 10m     (OK)
+  ```
+- Chỉ dải **300 m–1 km (bậc 25 m)** tạo số lẻ (725/775…). Các dải khác đã tròn.
+
+### Lưu ý (đừng nhầm với report)
+- **KHÔNG phải lỗi độ chính xác.** Report `docs/diagnostics/interp-factor-drive-analysis-2026-08-14-pm.md` cho `display − screen` median **0** — tức số ĐÚNG ~giá trị. Đây thuần **thẩm mỹ/banding**: bậc 25 m sinh số nhìn lẻ so với banding của GMaps. (Sai số ±25 ở dải này là thiểu số, đối xứng → không dời median, nhưng mắt vẫn thấy 725 kỳ.)
+
+### Cần làm (off-car, không cần xe)
+1. Xác định GMaps phát bậc nào ở 300 m–1 km bằng **cột `screenRead_m` của log đã có** (`docs/diagnostics/nav-logs/commute-2026-08-14-pm.csv`) — 50 m? 100 m? hay đổi sang "0,x km"?
+2. Đổi nhánh `m >= 300` cho khớp: ứng viên (a) bậc **50 m** (700/750/800); (b) chuyển **km 1 chữ số thập phân** ("0,7 km") ở ≥ ngưỡng nào đó; (c) khác — theo dữ liệu bước 1.
+3. Chỉ sửa nhánh 25 m; **giữ nguyên** các dải đã validate. Update `NavParseTest.kt`.
+
+---
+
+## 5. Mũi tên rẽ: GMaps đa dạng hơn cụm — "mình lấy thiếu" hay "HAL chỉ nhận số ít"?
+
+> Added 2026-08-14 PM (owner note). **Làm sau.** Cần RE + 1 lần đo trên xe.
+
+### Triệu chứng
+- GMaps có **nhiều** loại mũi tên (fork, roundabout nhiều nhánh, slight/sharp, merge, ramp, keep left/right…). Cụm mình hiển thị **ít** loại hơn. Nghi 1 trong 2: **(a)** ta map thiếu / collapse nhiều loại về 1 icon; **(b)** HAL/AMAP của xe chỉ render được số ít loại.
+
+### Kiến trúc liên quan (đã neo code)
+- `core/.../navigation/Maneuver.kt` — enum **Maneuver trung lập**; 2 encoder: `toAmapIcon()` (làn cụm, AMAP NEW_ICON 0..28) + `toHudIcon()` (HUD, mã CAN).
+- `core/.../navigation/ManeuverRegistry.kt` — **38 chữ ký maneuver GMaps** (tự sinh từ Open BYD 2.3 `w40.java`).
+- `core/.../navigation/ManeuverSignature.kt` — classify frame (Hamming ≤18 bit) → tên → AMAP.
+- `app/.../IconResource.kt` (`NAME_TO_AMAP`) + `core/.../navigation/NavFormat.kt` (`maneuverVerbIcon`, map từ chữ).
+- `app/.../AmapFrameBuilder.kt` — NEW_ICON index **0..28**; HAL tự remap CAN qua **`TurnIdMapToCAN`**.
+
+### Cần làm
+1. **Off-car — đếm diversity mỗi tầng:** distinct outputs của `Maneuver` enum & `toAmapIcon()`; số icon phân biệt trong 38 signatures (`ManeuverRegistry`); tập AMAP NEW_ICON 0..28 thực sự dùng. Tìm chỗ **mất diversity** (enum thiếu? mapping collapse nhiều→1? hay trần 0..28?).
+2. **RE (`~/Library/Caches/clusternav-re/`)**: đọc `AmapService` + `TurnIdMapToCAN` xem CAN table cụm render **được** bao nhiêu icon, loại nào bị gộp/rớt.
+3. **On-car (sau, 1 lần):** cho GMaps phát loại mũi tên "lạ" (fork/roundabout-N/merge) → `getraw` xem cụm nhận mã nào + có render không.
+4. **Kết luận & hành động:** nếu (a) ta thiếu/collapse mà HAL có → **enrich mapping** (thêm Maneuver + toAmapIcon/toHudIcon, giữ hợp đồng "một quyết định, hai đầu ra" trong `ManeuverTest`). Nếu (b) trần HAL → **document giới hạn thiết bị** (không sửa được), liệt kê loại nào cụm không có.
+
+### Ví dụ thực tế (2026-08-14, owner gửi ảnh on-car)
+- **GMaps**: icon **merge / nhập làn** (mũi tên thẳng + 1 nhánh nhập từ dưới-trái) → "Tôn Đức Thắng", 1,1 km.
+- **Cụm**: hiện **mũi tên rẽ/chếch PHẢI** — không phải merge → cảm nhận SAI hướng.
+- **Root (đã trace code):** enum `Maneuver` KHÔNG có MERGE/FORK/RAMP — **cố ý gộp merge/fork → SLIGHT** (comment `Maneuver.kt`). Cụ thể `ManeuverSignature.kt:230` `name.contains("merge") -> 5` (=SLIGHT_RIGHT, AMAP icon 5); `IconResource.kt` `merge_left→4, merge_right→5`. ⇒ cụm vẽ icon 5 = mũi tên phải.
+- **Nhận xét:** merge ≈ "đi thẳng khi có đường nhập" → map sang SLIGHT_RIGHT (rẽ phải) là lựa chọn **tệ**; nếu chưa có glyph merge riêng, map `merge → STRAIGHT(9)/CONTINUE(20)` đã trông đúng hơn hẳn.
+- **Fix 2 tầng:**
+  1. **(nhanh, off-car)** đổi rule `merge → STRAIGHT/CONTINUE` thay vì slight-right ở `ManeuverSignature` + `IconResource` (+ test). Ít nhất hết cảnh "merge hiện thành rẽ phải".
+  2. **(đúng)** RE bảng **AMAP NEW_ICON 0..28** (`AmapService`/`TurnIdMapToCAN`) tìm glyph **merge/fork/ramp** riêng → thêm `Maneuver.MERGE` (+ `toAmapIcon`/`toHudIcon`) map thẳng; nếu 0..28 KHÔNG có glyph merge → giữ STRAIGHT (xác nhận HAL trần cho merge).

@@ -53,10 +53,17 @@
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:label="ClusterNav Projection" />
 
+        <!-- resizeableActivity + configChanges + landscape: tránh size-compat (letterbox đen + scale) khi mở
+             dưới launcher tuỳ biến / DPI khác (vd dudu) — mirror ClusterNavActivity. VERIFY on-car (câu B): mở
+             Chẩn đoán xem còn size-compat không. Nếu dudu chạy app trong khung KHÔNG landscape → cân nhắc bỏ
+             screenOrientation. Xem docs/diagnostics/dudu-mainactivity-sizecompat-2026-08-14.md. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/app_name">
+            android:label="@string/app_name"
+            android:screenOrientation="landscape"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|screenLayout|density|smallestScreenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

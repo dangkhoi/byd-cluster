@@ -24,13 +24,14 @@ object IconResource {
         "sharp_right" to 7, "sharp_left" to 6,
         "u_turn_right" to 8, "u_turn_left" to 8, "uturn_right" to 8, "uturn_left" to 8,
         "u_turn" to 8, "uturn" to 8,
-        "merge_right" to 5, "merge_left" to 4,
-        "ramp_right" to 5, "ramp_left" to 4,
+        "merge_right" to 9, "merge_left" to 9,   // Track B: merge = ĐI THẲNG (0..28 không có glyph merge; sửa bug owner "merge → rẽ phải"). Trước: 5/4.
+        "ramp_right" to 5, "ramp_left" to 4,      // ramp = tách làn nhẹ ≈ chếch (đã đúng — Track B giữ)
         "fork_right" to 5, "fork_left" to 4,
         "exit_right" to 3, "exit_left" to 2,
         "destination" to 15, "arrive" to 15, "finish" to 15, "flag" to 15,
+        "tunnel" to 16,   // Track B: sắp vào hầm (NEW_ICON 16 → CAN 49). On-car verify GMaps expose "tunnel" resource name qua NavArrowLog small_amap/sig_name.
         "depart" to 9, "start" to 9,   // bước đầu = đi thẳng ra đường (KHÔNG map 1 = glyph "ghim + xe")
-        "straight" to 9, "continue" to 20, "merge" to 5,
+        "straight" to 9, "continue" to 20, "merge" to 9,   // Track B: generic merge → 9 (đi thẳng). Trước: 5.
         "arrow_right" to 3, "arrow_left" to 2,
         "turn_right" to 3, "turn_left" to 2,
         "_right" to 3, "_left" to 2,        // generic cuối cùng

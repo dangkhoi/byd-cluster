@@ -1,7 +1,9 @@
 package com.byd.clusternav
 
+import com.byd.clusternav.navigation.Maneuver
 import java.nio.file.Files
 import java.nio.file.Path
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -36,5 +38,28 @@ class HudManeuverEncodingTest {
             navRepo.contains("icon = frame.content.maneuverCode"),
             "owner.push must NOT feed the AMAP maneuverCode into the CAN HUD feature (that mirrors L/R)",
         )
+    }
+
+    /**
+     * Track B (2026-08-14): the enriched Maneuver values must encode to the correct CAN turn-id on the HUD
+     * (values from RE docs/diagnostics/re-maneuver-icon-tables-2026-08-14.md §2 = TurnIdMapToCAN[toAmapIcon]).
+     * The HUD write path (asserted above) feeds these through Maneuver.toHudIcon(), so locking the codes here
+     * guards the windshield-HUD glyph for every new maneuver the classifiers can now emit.
+     */
+    @Test
+    fun `Track B new maneuver values encode to the correct CAN HUD ids`() {
+        assertEquals(11, Maneuver.MERGE.toHudIcon())            // no merge glyph → straight
+        assertEquals(3, Maneuver.RAMP_LEFT.toHudIcon())         // ramp ≈ slight-left
+        assertEquals(5, Maneuver.RAMP_RIGHT.toHudIcon())
+        assertEquals(3, Maneuver.FORK_LEFT.toHudIcon())
+        assertEquals(5, Maneuver.FORK_RIGHT.toHudIcon())
+        assertEquals(3, Maneuver.KEEP_LEFT.toHudIcon())
+        assertEquals(5, Maneuver.KEEP_RIGHT.toHudIcon())
+        assertEquals(10, Maneuver.UTURN_RIGHT.toHudIcon())      // U-turn right (CAN 10)
+        assertEquals(24, Maneuver.ROUNDABOUT_EXIT.toHudIcon())  // drive out of roundabout (CAN 24)
+        assertEquals(49, Maneuver.TUNNEL.toHudIcon())           // enter tunnel (CAN 49)
+        assertEquals(46, Maneuver.SERVICE_AREA.toHudIcon())     // service area (CAN 46)
+        assertEquals(47, Maneuver.TOLL.toHudIcon())             // toll station (CAN 47)
+        assertEquals(45, Maneuver.WAYPOINT.toHudIcon())         // waypoint arrival (CAN 45)
     }
 }

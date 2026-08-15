@@ -58,6 +58,10 @@ object NavFormat {
     private val RE_ARRIVE = Regex("đến nơi|den noi|điểm đến|diem den|arrive|destination")
     private val RE_STRAIGHT = Regex("đi thẳng|di thang|go straight|^straight")
     private val RE_CONTINUE = Regex("tiếp tục|tiep tuc|continue|theo đường|theo duong|follow")
+    // Track B (2026-08-14): merge/nhập làn — 0..28 KHÔNG có glyph merge → ĐI THẲNG (9), KHÔNG chếch phải (sửa bug owner).
+    private val RE_MERGE = Regex("nhập làn|nhap lan|merge")
+    // Track B: sắp vào hầm — NEW_ICON 16 → CAN 49. On-car verify GMaps expose token qua NavArrowLog small_amap/sig_name.
+    private val RE_TUNNEL = Regex("hầm|tunnel|đường hầm")
     private val RE_RAB_EXIT = Regex("""(?:lối ra|loi ra|nhánh|nhanh|exit|(?:take|at) the)\s*(?:thứ|thu)?\s*(\d+)""")
     private val RE_RAB_ORD = Regex("""(\d+)\s*(?:st|nd|rd|th)\s+exit""")
     private val RE_DIACRITICS = Regex("\\p{InCombiningDiacriticalMarks}+")
@@ -122,6 +126,7 @@ object NavFormat {
     fun maneuverVerbIcon(text: String): Int? {
         val t = text.lowercase()
         return when {
+            RE_MERGE.containsMatchIn(t) -> 9      // Track B: merge/nhập làn → đi thẳng. TRƯỚC turn/slight ("merge left onto" không được ăn nhánh rẽ).
             RE_UTURN.containsMatchIn(t) -> 8
             RE_SHARP_L.containsMatchIn(t) -> 6
             RE_SHARP_R.containsMatchIn(t) -> 7
@@ -129,6 +134,7 @@ object NavFormat {
             RE_SLIGHT_R.containsMatchIn(t) -> 5
             RE_TURN_L.containsMatchIn(t) -> 2
             RE_TURN_R.containsMatchIn(t) -> 3
+            RE_TUNNEL.containsMatchIn(t) -> 16    // Track B: sắp vào hầm (→ CAN 49). SAU turn (giữ rẽ), TRƯỚC straight/continue (ưu tiên glyph hầm khi đi thẳng vào hầm).
             RE_ROUNDABOUT.containsMatchIn(t) -> 11
             RE_ARRIVE.containsMatchIn(t) -> 15
             RE_STRAIGHT.containsMatchIn(t) -> 9
