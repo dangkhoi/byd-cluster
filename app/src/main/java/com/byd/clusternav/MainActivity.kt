@@ -181,6 +181,14 @@ class MainActivity : Activity() {
             cb.setOnCheckedChangeListener { _, on -> Prefs.setMarquee(this, on) }
         }
 
+        // 1.21 Item 1 (owner): "Tự khởi động nền" — nổ máy chỉ chạy setup nền (BootSetupService qua
+        // RebindReceiver), KHÔNG bung MainActivity trên màn chính (né size-compat dudu). Mặc định BẬT; tắt →
+        // giữ hành vi cũ (tự mở Home lúc nổ máy). Chỉ đổi hành vi lúc boot/OTA — mở app bằng icon vẫn như thường.
+        findViewById<android.widget.CheckBox>(R.id.cb_headless_autostart).also { cb ->
+            cb.isChecked = Prefs.headlessAutostart(this)
+            cb.setOnCheckedChangeListener { _, on -> Prefs.setHeadlessAutostart(this, on) }
+        }
+
         // ── Nút vật lý → Trợ lý giọng nói (switch + nút + cử chỉ + đích + học phím). Owner 2026-08-14:
         // map nút mic vô-lăng (NHẤN-GIỮ = keycode 328) → Kiki (ai.zalo.kiki.car). Chỉ "nuốt" đúng tổ hợp,
         // KHÔNG đổi chức năng gốc của nút. Service Hỗ trợ tự bật qua dadb khi bật công tắc. ──

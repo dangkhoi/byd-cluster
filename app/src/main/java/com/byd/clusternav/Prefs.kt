@@ -92,6 +92,13 @@ object Prefs {
     fun animOpt(ctx: Context): Boolean = sp(ctx).getBoolean("anim_opt", true)
     fun setAnimOpt(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("anim_opt", v).apply()
 
+    // ★ 1.21 Item 1 (owner): "Tự khởi động nền" — nổ máy → app tự làm việc (nav lên cụm · voice-key · auto-cast)
+    // mà KHÔNG bung MainActivity trên màn chính (bonus: né size-compat của dudu). MẶC ĐỊNH BẬT. Khi TẮT → giữ
+    // hành vi 1.14 I5 (tự mở Home lúc nổ máy). RebindReceiver đọc cờ này lúc boot/OTA: BẬT → BootSetupService
+    // (chạy nền, dời accessibility grant + re-assert làn cụm), TẮT → launchHome. KHÔNG đụng auto-cast (castBootWork).
+    fun headlessAutostart(ctx: Context): Boolean = sp(ctx).getBoolean("headless_autostart", true)
+    fun setHeadlessAutostart(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("headless_autostart", v).apply()
+
     // ─── T3 (1.13): Nút vật lý → Trợ lý giọng nói ───────────────────────────────────────────────
     // 1.19: KHÔNG thay chức năng gốc — onKeyEvent chỉ "nuốt" đúng keycode đã cấu hình, còn lại pass-through.
     // Bỏ cử chỉ (Nhấn/Nhấn-giữ) vì nút short/long ra keycode khác nhau. Đích lưu STRING (package/sentinel);
