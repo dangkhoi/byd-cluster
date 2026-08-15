@@ -89,11 +89,12 @@ enum class Maneuver {
         SHARP_RIGHT -> 8
         UTURN -> 9          // AMAP gộp T/P → mặc định trái (9), chuẩn RHT (VN)
         STRAIGHT -> 11
-        // TODO(track-A on-car): parity — doc §5/§7.5 đề xuất 13 (CAN enter-roundabout) để khớp làn cụm;
-        //   GIỮ 15 chờ đo trên xe (write GUIDE_INFO_SIMPLE=13 vs 15). re-maneuver-icon-tables-2026-08-14.md
-        ROUNDABOUT -> 15    // glyph vòng xuyến chung
-        // TODO(track-A on-car): parity — doc §5/§7.5 đề xuất 12 (顺行) để khớp làn cụm; GIỮ 11 chờ đo trên xe.
-        CONTINUE -> 11      // tiếp tục ≈ đi thẳng
+        // Parity làn cụm — chốt bằng ảnh owner on-car 2026-08-15: CAN 13 = 进入环岛 (enter-roundabout,
+        //   = TurnIdMapToCAN[11]). 15 = 绕环岛左转 (đi trong vòng xuyến rồi rẽ trái) → HUD kính vẽ SAI (mũi tên
+        //   chếch), đúng cái bug owner chụp. re-maneuver-icon-tables §5/§7.5 · gmaps-maneuver-mapping-master §1.6.
+        ROUNDABOUT -> 13    // 进入环岛 enter-roundabout (khớp làn cụm; hết bug HUD 2026-08-15)
+        // Parity làn cụm: CAN 12 = 顺行 continue (= TurnIdMapToCAN[20]); trước 11 (đi thẳng) lệch với làn cụm.
+        CONTINUE -> 12      // 顺行 continue/follow (khớp làn cụm)
         DESTINATION -> 48
         // Track B — bất biến toHudIcon == TurnIdMapToCAN[toAmapIcon]:
         MERGE -> 11         // TurnIdMapToCAN[9]

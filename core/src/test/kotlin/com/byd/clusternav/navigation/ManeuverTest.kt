@@ -49,9 +49,9 @@ class ManeuverTest {
         assertEquals(8, Maneuver.SHARP_RIGHT.toHudIcon())
         assertEquals(9, Maneuver.UTURN.toHudIcon())
         assertEquals(11, Maneuver.STRAIGHT.toHudIcon())
-        assertEquals(15, Maneuver.ROUNDABOUT.toHudIcon())
+        assertEquals(13, Maneuver.ROUNDABOUT.toHudIcon())   // 进入环岛 (parity làn cụm; fix on-car 2026-08-15)
         assertEquals(48, Maneuver.DESTINATION.toHudIcon())
-        assertEquals(11, Maneuver.CONTINUE.toHudIcon())
+        assertEquals(12, Maneuver.CONTINUE.toHudIcon())      // 顺行 (parity làn cụm)
         // Track B — CAN id = TurnIdMapToCAN[toAmapIcon] cho từng giá trị mới (bất biến hai-đầu-ra).
         assertEquals(11, Maneuver.MERGE.toHudIcon())
         assertEquals(3, Maneuver.RAMP_LEFT.toHudIcon())
@@ -66,6 +66,26 @@ class ManeuverTest {
         assertEquals(46, Maneuver.SERVICE_AREA.toHudIcon())
         assertEquals(47, Maneuver.TOLL.toHudIcon())
         assertEquals(45, Maneuver.WAYPOINT.toHudIcon())
+    }
+
+    /**
+     * Bất biến hai-đầu-ra (chống lệch cụm↔HUD): với MỌI Maneuver, HUD CAN = TurnIdMapToCAN[cụm AMAP].
+     * Khoá lại sau fix 2026-08-15 (ROUNDABOUT 15→13, CONTINUE 11→12) — trước đó 2 giá trị này lệch làn cụm
+     * (owner báo mũi tên vòng xuyến sai trên HUD kính). Bảng = AmapService.TurnIdMapToCAN đã decompile
+     * (re-maneuver-icon-tables-2026-08-14.md §1). Regress đổi toHudIcon/toAmapIcon lệch nhau → test này gãy.
+     */
+    @Test fun `bất biến toHudIcon bằng TurnIdMapToCAN của toAmapIcon cho MỌI Maneuver`() {
+        val turnIdMapToCan = intArrayOf(
+            0, 0, 1, 2, 3, 5, 7, 8, 9, 11, 45, 13, 24, 46, 47, 48, 49,
+            14, 23, 10, 12, 15, 18, 20, 22, 16, 17, 19, 21,
+        )
+        for (m in Maneuver.values()) {
+            val amap = m.toAmapIcon()
+            assertEquals(
+                turnIdMapToCan[amap], m.toHudIcon(),
+                "$m: HUD (${m.toHudIcon()}) phải == TurnIdMapToCAN[cụm $amap] (${turnIdMapToCan[amap]})",
+            )
+        }
     }
 
     @Test fun `fromAmapIcon khứ hồi CHÍNH XÁC với từ vựng pipeline phát ra (làn cụm bất biến)`() {
@@ -115,7 +135,7 @@ class ManeuverTest {
         // Bug cũ: "15" vừa là roundabout (Waze) vừa là destination (AMAP). Enum cho mỗi Maneuver đúng
         // MỘT cặp mã (amap, can) — không thể lẫn.
         assertEquals(11, Maneuver.ROUNDABOUT.toAmapIcon())
-        assertEquals(15, Maneuver.ROUNDABOUT.toHudIcon())
+        assertEquals(13, Maneuver.ROUNDABOUT.toHudIcon())
         assertEquals(15, Maneuver.DESTINATION.toAmapIcon())
         assertEquals(48, Maneuver.DESTINATION.toHudIcon())
         assertFalse(Maneuver.ROUNDABOUT.toHudIcon() == Maneuver.DESTINATION.toHudIcon())
