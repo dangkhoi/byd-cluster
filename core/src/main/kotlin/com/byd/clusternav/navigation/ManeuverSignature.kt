@@ -215,7 +215,13 @@ object ManeuverSignature {
 
     /** Tên maneuver (app gốc) -> mã AMAP NEW_ICON của ta (đặc thù trước, generic sau). */
     private fun nameToAmap(name: String): Int = when {
+        // Track B: RA KHỎI vòng xuyến (chữ ký "..._exit_ccw/_cw" THUẦN, KHÔNG "enter_and_exit") → NEW_ICON 12
+        //   (驶出环岛 → CAN 24), KHÔNG phải "vào" (11 → CAN 13). Guard !enter loại 16 tên "enter_and_exit"
+        //   (glyph vòng-xuyến chính vẫn = 11). Sửa defect §4 #37/#38 "exit hiện thành enter" + hết dead-enum
+        //   ROUNDABOUT_EXIT. On-car verify: GMaps có phát icon thoát-vòng-xuyến riêng không (cùng caveat nguồn như hầm).
+        name.contains("roundabout") && name.contains("exit") && !name.contains("enter") -> 12
         name.contains("roundabout") -> 11    // Q1: xét TRƯỚC u_turn — tên "roundabout..._u_turn" phải ra vòng-xuyến, không phải quay-đầu
+        name.contains("u_turn") && name.contains("right") -> 19   // Track B: quay đầu PHẢI (NEW_ICON 19→CAN10); TRƯỚC nhánh u_turn chung (giữ 8=trái)
         name.contains("u_turn") -> 8
         name.contains("destination") -> 15
         // "depart"/"start" = bước đầu GMaps ("Head/Đi về hướng...") = ĐI THẲNG ra đường, KHÔNG phải điểm-mốc.
@@ -225,9 +231,13 @@ object ManeuverSignature {
         name.contains("sharp_right") -> 7
         name.contains("slight_left") || name.contains("fork_left") -> 4
         name.contains("slight_right") || name.contains("fork_right") -> 5
+        // Track B: off/on-ramp = tách làn NHẸ ≈ chếch (4/5), KHÔNG phải cua 90°. TRƯỚC normal_left/right vì tên
+        //   "off_ramp_normal_left" chứa cả "ramp" LẪN "normal_left" → phải bắt ramp trước (sửa mismap hard-turn).
+        name.contains("ramp") && name.contains("left") -> 4
+        name.contains("ramp") && name.contains("right") -> 5
         name.contains("normal_left") || name.contains("turn_left") -> 2
         name.contains("normal_right") || name.contains("turn_right") -> 3
-        name.contains("merge") -> 5
+        name.contains("merge") -> 9    // Track B: merge/nhập làn → ĐI THẲNG (0..28 KHÔNG có glyph merge; sửa bug owner "merge hiện rẽ phải"). Trước: 5=chếch phải.
         name.contains("straight") -> 9
         name.endsWith("_left") -> 2
         name.endsWith("_right") -> 3
@@ -236,6 +246,9 @@ object ManeuverSignature {
 
     /** Tên maneuver -> mã icon HAL gốc (enum HudController TURN_ICON_*, port w40.a). Vòng xuyến gộp ~đúng. */
     private fun nameToHal(name: String): Int = when {
+        // Track B: RA KHỎI vòng xuyến (chữ ký "..._exit" THUẦN) → CAN 24 (= TurnIdMapToCAN[12]), khớp làn cụm
+        //   (12 → 24). Guard !enter loại "enter_and_exit". Giữ hai đầu ra KHÔNG lệch cho ROUNDABOUT_EXIT.
+        name.contains("roundabout") && name.contains("exit") && !name.contains("enter") -> 24
         name.contains("roundabout") -> 20          // Q1: xét TRƯỚC u_turn (tên roundabout..._u_turn = vòng-xuyến); chi tiết 15-22 để sau
         name.contains("u_turn_left") -> 9
         name.contains("u_turn_right") -> 10
@@ -246,9 +259,12 @@ object ManeuverSignature {
         name.contains("sharp_right") -> 8
         name.contains("slight_left") || name.contains("fork_left") -> 3
         name.contains("slight_right") || name.contains("fork_right") -> 5
+        // Track B: ramp = tách làn NHẸ ≈ chếch (CAN 3/5), KHÔNG phải cua thường (1/2). TRƯỚC normal_left/right.
+        name.contains("ramp") && name.contains("left") -> 3
+        name.contains("ramp") && name.contains("right") -> 5
         name.contains("normal_left") || name.contains("turn_left") -> 1
         name.contains("normal_right") || name.contains("turn_right") -> 2
-        name.contains("merge") -> 11
+        name.contains("merge") -> 11    // đã đúng: merge = đi thẳng (CAN 11). Track B giữ nguyên (chỉ làn cụm/AMAP sai trước đây).
         name.contains("straight") -> 11
         name.endsWith("_left") -> 1
         name.endsWith("_right") -> 2

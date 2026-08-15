@@ -132,15 +132,26 @@ class NavCastUiWiringContractTest {
         // had NO path to re-grant it — grantAccessibility was orphaned when the voice-key UI was removed —
         // so two consecutive drives came back with an empty screenRead_m column (interp tuning blocked).
         // Lock the wiring: turning Nav+HUD on, AND opening the app while it is already on, must self-grant
-        // the accessibility service over dadb when the grant is missing (mirrors the notification selfGrant).
+        // the accessibility service over dadb when the grant is missing.
+        //
+        // 2026-08-14 PM (§8): reboot also leaves the service ENABLED-but-NOT-BOUND (present in the setting,
+        // absent from dumpsys "Bound services") → accessibilityBoosterGranted() (setting-only) can't see it.
+        // The guard now ALSO escalates on the in-process connected flag being false, so the force-rebind in
+        // NavConnect actually fires on boot / Nav+HUD-on. grantAccessibility confirms bound via dumpsys
+        // before toggling, so an already-bound service is a no-op (no flicker, no redundant work).
         assertTrue(mainActivity.contains("NavConnect.grantAccessibility("), "MainActivity self-grants the accessibility booster")
         assertTrue(
             mainActivity.contains("private fun accessibilityBoosterGranted()"),
             "a local (no-dadb) grant check exists so we only escalate to dadb when actually missing",
         )
         assertTrue(
-            mainActivity.contains("if (!accessibilityBoosterGranted()) NavConnect.grantAccessibility("),
-            "the dadb grant is gated on the local check (no redundant session when already granted)",
+            mainActivity.contains(
+                "if (!accessibilityBoosterGranted() || " +
+                    "!com.byd.clusternav.modules.navaccess.NavAccessibilitySource.connected) " +
+                    "NavConnect.grantAccessibility(",
+            ),
+            "the dadb grant escalates when the setting is missing OR the service is enabled-but-not-bound " +
+                "(post-reboot); grantAccessibility verifies dumpsys before toggling so already-bound is a no-op",
         )
     }
 

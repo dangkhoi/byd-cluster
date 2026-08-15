@@ -86,11 +86,11 @@ class MainActivity : Activity() {
                 }
                 // Bộ đọc màn GMaps (screenRead ground-truth cho tinh chỉnh nội suy) + nút vật lý → trợ lý
                 // cần accessibility service. Đây là quyền ADB (settings secure enabled_accessibility_services)
-                // → tự cấp qua dadb như notification, CHỈ khi chưa có (tránh phiên dadb thừa). Trước đây chỉ
-                // UI voice-key cấp; voice-key gỡ đi → grantAccessibility mồ côi → 2 chuyến screenRead RỖNG
-                // (đo 2026-08-14: enabled_accessibility_services mất service sau reboot). Wire vào công tắc
-                // Nav+HUD để tự lành sau mỗi state-reset.
-                if (!accessibilityBoosterGranted()) NavConnect.grantAccessibility(applicationContext)
+                // → tự cấp qua dadb như notification. Escalate khi THIẾU setting HOẶC enabled-nhưng-chưa-bound
+                // (sau reboot: connected=false dù setting còn) — grantAccessibility verify dumpsys trước khi
+                // toggle nên không flicker nếu đã bound. Trước đây chỉ UI voice-key cấp; voice-key gỡ đi →
+                // grantAccessibility mồ côi → 2 chuyến screenRead RỖNG. Wire vào công tắc Nav+HUD để tự lành.
+                if (!accessibilityBoosterGranted() || !com.byd.clusternav.modules.navaccess.NavAccessibilitySource.connected) NavConnect.grantAccessibility(applicationContext)
             } else {
                 NavRepository.stop(this)
             }
@@ -226,9 +226,13 @@ class MainActivity : Activity() {
         // (tránh đua nhiều client dadb + popup Allow khi user chưa cần nav). Bật công tắc mới grant+connect.
         if (Prefs.enabled(this)) {
             NavConnect.ensureConnected(applicationContext)
-            // Reboot / state-reset xoá enabled_accessibility_services (đo 2026-08-14) → mở app khi Nav+HUD
-            // đã BẬT thì tự cấp lại (chỉ khi thiếu) để screenRead booster sống lại, không cần thao tác tay.
-            if (!accessibilityBoosterGranted()) NavConnect.grantAccessibility(applicationContext)
+            // Reboot leaves the accessibility service ENABLED in the setting but NOT BOUND (measured
+            // 2026-08-14, docs/diagnostics/oncar-handoff-voicekey-2026-08-14.md §8) → onKeyEvent + screenRead
+            // dead. accessibilityBoosterGranted() only reads the ENABLED setting, so it can't see that; the
+            // in-process connected flag can. Escalate to the dadb grant when the setting is missing OR the
+            // service is enabled-but-not-bound — grantAccessibility confirms via dumpsys before toggling
+            // (no flicker if already bound), so a stale connected flag at cold start is harmless.
+            if (!accessibilityBoosterGranted() || !com.byd.clusternav.modules.navaccess.NavAccessibilitySource.connected) NavConnect.grantAccessibility(applicationContext)
         }
         runCatching { RebindReceiver.scheduleWatchdog(applicationContext) }
         // Nút nổi + chiếu cụm chỉ khởi động khi master switch "Cluster Cast" đang BẬT (MẶC ĐỊNH TẮT —
