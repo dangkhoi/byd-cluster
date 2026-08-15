@@ -1,7 +1,6 @@
 package com.byd.clusternav
 
 import android.content.Context
-import com.byd.clusternav.contracts.SpeedLimitSource
 
 /** Lưu lựa chọn người dùng (bật/tắt đẩy cụm + chế độ chọn nguồn). Đọc trực tiếp trong listener. */
 object Prefs {
@@ -9,13 +8,10 @@ object Prefs {
     // con số. Giữ alias ở đây nên caller cũ không đổi và dữ liệu đã lưu vẫn đọc đúng.
     const val AUTO = com.byd.clusternav.navigation.NavSourceMode.AUTO
     const val PREFER_GMAPS = com.byd.clusternav.navigation.NavSourceMode.PREFER_GMAPS
-    const val PREFER_WAZE = com.byd.clusternav.navigation.NavSourceMode.PREFER_WAZE
-    const val PREFER_VIETMAP = com.byd.clusternav.navigation.NavSourceMode.PREFER_VIETMAP
 
     private const val FILE = "clusternav_prefs"
     private const val K_ENABLED = "enabled"
     private const val K_SOURCE = "source_mode"
-    private const val K_SPEED_SOURCE = "speed_source"
     private const val K_MARQUEE = "marquee"
 
     private fun sp(ctx: Context) =
@@ -30,13 +26,6 @@ object Prefs {
 
     fun sourceMode(ctx: Context): Int = sp(ctx).getInt(K_SOURCE, AUTO)
     fun setSourceMode(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_SOURCE, v).apply()
-
-    fun speedSource(ctx: Context): Int = sp(ctx).getInt(K_SPEED_SOURCE, com.byd.clusternav.navigation.NavSourceMode.SPEED_VIETMAP)
-    fun setSpeedSource(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_SPEED_SOURCE, v).apply()
-    fun speedLimitSource(ctx: Context): SpeedLimitSource = when (speedSource(ctx)) {
-        com.byd.clusternav.navigation.NavSourceMode.SPEED_WAZE -> SpeedLimitSource.WAZE
-        else -> SpeedLimitSource.VIETMAP
-    }
 
     // Nav-on-cluster: op 39 "simple navigation" (Giữa + ETA) là chế độ DUY NHẤT (owner chốt 2026-08-12).
     // Bỏ hẳn biến thể "nhỏ/ở trên" (không dò được opcode trên xe) + nút chọn mode + nút test trên UI.

@@ -40,7 +40,6 @@ object CarExecCatalog {
         addAll(CarExecNavigationCatalog.steps)
         addAll(CarExecClusterLifecycleCatalog.steps)
         addAll(CarExecClusterDiagnosticsCatalog.profileSteps)
-        addAll(CarExecSpeedSignCatalog.steps)
         addAll(CarExecClusterDiagnosticsCatalog.preHudSteps)
         addAll(CarExecHudCatalog.steps)
         addAll(CarExecClusterDiagnosticsCatalog.postHudSteps)

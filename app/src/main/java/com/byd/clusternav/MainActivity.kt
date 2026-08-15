@@ -1,7 +1,6 @@
 package com.byd.clusternav
 
 import com.byd.clusternav.modules.clustercast.MainActivityCastController
-import com.byd.clusternav.vietmapwidget.VietMapWidgetDiagActivity
 import com.byd.clusternav.navigation.NavigationOutputFailureReason
 import com.byd.clusternav.navigation.NavigationSourceReason
 import android.app.Activity
@@ -21,7 +20,6 @@ import com.byd.clusternav.navigation.NavigationFreshness
 import com.byd.clusternav.navigation.NavigationOutputStatus
 import com.byd.clusternav.navigation.NavigationOutputTarget
 import com.byd.clusternav.navigation.NavigationPermission
-import com.byd.clusternav.navigation.SpeedSignOutput
 
 /**
  * Home — MÀN HÌNH DUY NHẤT của app (docs/specs/cast-simplified-active-app-toggle.html): trái là
@@ -37,7 +35,6 @@ class MainActivity : Activity() {
     private lateinit var hudStatus: TextView
     private val cast = MainActivityCastController(this)
     private val navClusterStatus = com.byd.clusternav.modules.clustercast.NavClusterOp39Status(this)
-    private val speedSign by lazy { NavigationSpeedSignOwner.get(applicationContext) }
 
     private val ui = Handler(Looper.getMainLooper())
     private val refresher = object : Runnable {
@@ -62,17 +59,14 @@ class MainActivity : Activity() {
         // (migrates anyone who had unchecked the old lane box).
         Prefs.setLane(this, true)
         cast.onCreate()
-        speedSign.syncFromPrefs()
 
         navEnabled.isChecked = Prefs.enabled(this)
         navEnabled.setOnCheckedChangeListener { _, enabled ->
             Prefs.setEnabled(this, enabled)
-            speedSign.onMasterEnabled(enabled)
             if (enabled) {
                 // Lane always on when Navigation+HUD is on (no separate lane toggle anymore).
                 Prefs.setLane(this, true)
                 NavRepository.setOutputEnabled(this, NavigationOutputTarget.CLUSTER_LANE, true)
-                speedSign.onOutputEnabled(SpeedSignOutput.CLUSTER, true)
                 // Option B (1.13): user chủ động bật → GIỜ mới đụng adb. Thiếu quyền → tự cấp qua dadb;
                 // đã có → chỉ ensure bind. (Mặc định TẮT nên onCreate không tự chạy nhánh này.)
                 if (notificationAccessGranted()) {
@@ -105,7 +99,6 @@ class MainActivity : Activity() {
         // creation) and GMaps/VietMap nav would never reach the cluster. Re-assert it here (idempotent).
         if (Prefs.enabled(this)) {
             NavRepository.setOutputEnabled(this, NavigationOutputTarget.CLUSTER_LANE, true)
-            speedSign.onOutputEnabled(SpeedSignOutput.CLUSTER, true)
         }
         // #6 (R1 · docs/specs/cast-nav-ux-release-v104.html): the independent nav→HUD output is
         // hidden from the UI (cb_hud/txt_hud_status = gone) and force-disabled here exactly once.
@@ -114,7 +107,6 @@ class MainActivity : Activity() {
         // it is only kept OFF, not removed.
         Prefs.setHud(this, false)
         NavRepository.setOutputEnabled(this, NavigationOutputTarget.HUD, false)
-        speedSign.onOutputEnabled(SpeedSignOutput.HUD, false)
 
         // ★ 2026-08-12 (owner "1B"): BẬT lại "tự bù theo tốc độ" cho mượt. MỘT cơ chế 2 nửa:
         //   (1) nội suy trừ dần cự ly theo TỐC ĐỘ XE thật giữa 2 notification (TurnDistanceInterpolator + SpeedProvider),
@@ -125,37 +117,9 @@ class MainActivity : Activity() {
         Prefs.setInterpolate(this, true)
         Prefs.setAccBooster(this, true)
 
-        // Navigation source selector (turn-by-turn direction)
-        val navSourceSpinner = findViewById<android.widget.Spinner>(R.id.spinner_nav_source)
-        val navSources = arrayOf("Tự động (app dẫn trước)", "Google Maps", "Waze Mod")
-        val navSourceModes = intArrayOf(Prefs.AUTO, Prefs.PREFER_GMAPS, Prefs.PREFER_WAZE)
-        navSourceSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, navSources)
-        val currentNavMode = Prefs.sourceMode(this)
-        navSourceSpinner.setSelection(navSourceModes.indexOf(currentNavMode).coerceAtLeast(0))
-        navSourceSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
-                Prefs.setSourceMode(this@MainActivity, navSourceModes[pos])
-            }
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        }
-
-        // Speed + Alert source selector
-        val speedSourceSpinner = findViewById<android.widget.Spinner>(R.id.spinner_speed_source)
-        val speedSources = arrayOf("VietMap (widget)", "Waze Mod (HLP)")
-        val speedSourceModes = intArrayOf(
-            com.byd.clusternav.navigation.NavSourceMode.SPEED_VIETMAP,
-            com.byd.clusternav.navigation.NavSourceMode.SPEED_WAZE,
-        )
-        speedSourceSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, speedSources)
-        val currentSpeedMode = Prefs.speedSource(this)
-        speedSourceSpinner.setSelection(speedSourceModes.indexOf(currentSpeedMode).coerceAtLeast(0))
-        speedSourceSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
-                Prefs.setSpeedSource(this@MainActivity, speedSourceModes[pos])
-                speedSign.onSourceSelected(Prefs.speedLimitSource(this@MainActivity))
-            }
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        }
+        // Nguồn dẫn đường: GMaps-only (owner 2026-08-15). Waze-Mod nav-source + VietMap/Waze speed-limit
+        // signal đã gỡ (không hoạt động; xem docs/diagnostics/removal-manifest-waze-vietmap-1.22.md). Không
+        // còn selector — chỉ Google Maps / ReVanced feeds cụm; Prefs.sourceMode giữ AUTO mặc định.
 
         // Chế độ hiển thị nav trên CỤM — ghi SET_NAVI_SCREEN_STATUS_SET (0x4C10E015) qua NavigationHudOwner
         // (đọc pref mỗi frame → áp dụng LIVE khi đang dẫn). ⚠️ value↔menu OEM chưa map chắc: dò trên xe rồi chốt.
@@ -221,9 +185,6 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.btn_nav_stop).setOnClickListener {
             NavRepository.stop(applicationContext)
             refresh()
-        }
-        findViewById<Button>(R.id.btn_vietmap_widget_diag).setOnClickListener {
-            startActivity(Intent(this, VietMapWidgetDiagActivity::class.java))
         }
         findViewById<Button?>(R.id.btn_check_update)?.setOnClickListener {
             val btn = it as Button

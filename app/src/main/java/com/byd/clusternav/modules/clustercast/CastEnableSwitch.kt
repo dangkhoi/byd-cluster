@@ -25,9 +25,9 @@ import com.byd.clusternav.modules.clustercast.simplified.SimpleCastIntent
  * pipeline (`ClusterBroadcaster`) and HUD is a separate output; neither uses the Cast projection.
  * This switch ONLY gates the Cast track (projection + bubble + cast-autostart).
  *
- * **Why the coordinator singleton is left alive** (only the projection is closed): `WazeHudSource`
- * reads logcat through `coordinator.executeShell`, so the privileged shell gateway must survive a
- * Cast-off or the HUD/speed-limit source would break.
+ * **Why the coordinator singleton is left alive** (only the projection is closed): the coordinator
+ * owns the shared privileged shell gateway (`coordinator.executeShell`), so it must survive a
+ * Cast-off rather than be torn down with the projection.
  */
 internal class CastEnableSwitch(
     private val activity: Activity,

@@ -340,41 +340,9 @@ object CarExecScenarios {
                 h("teardown", "dừng Cast", "CỤM về đồng hồ, nav vẫn phát bình thường"),
             ),
         ),
-        // ── Biển báo giới hạn tốc độ ─────────────────────────────────────────────────────────────────
-        //
-        // Ba kịch bản theo đúng thứ tự phải biết, và hai kịch bản đầu CHỈ ĐỌC nên chạy được trong lúc lái.
-        // Không gộp thành một: nếu chưa biết ai vẽ biển thì gửi lệnh vào cũng không đọc được kết quả.
-        CarScenario(
-            id = "sign.discover-chain",
-            feature = CarFeature.SPEED_SIGN,
-            purpose = "Tìm ba mắt xích: ai sinh giá trị, đi đường nào, ai vẽ",
-            coveredCases = emptyList(),
-            actions = listOf(
-                m("sign-inventory", "liệt kê package/service/tiến trình ứng viên", "có danh sách để nhắm"),
-                h("sign-watch-live", "chạy qua ít nhất hai biển khác số rồi soi log", "thấy giá trị đổi đúng theo biển"),
-                m("sign-consumer", "soi receiver/dump/descriptor của ứng viên", "tìm ra đích ghi vào"),
-            ),
-        ),
-        CarScenario(
-            id = "sign.source-from-vietmap",
-            feature = CarFeature.SPEED_SIGN,
-            purpose = "Lấy giới hạn tốc độ ra khỏi VietMap mà không phải đọc ảnh",
-            coveredCases = emptyList(),
-            actions = listOf(
-                m("sign-source-vietmap", "thử notification trước, rồi bề mặt exported, rồi log", "đọc được số mà không OCR"),
-            ),
-        ),
-        CarScenario(
-            id = "sign.inject-and-guard",
-            feature = CarFeature.SPEED_SIGN,
-            purpose = "Tắt nguồn camera, ghi nguồn của mình, rồi kiểm giá trị cũ có dính lại",
-            coveredCases = emptyList(),
-            actions = listOf(
-                h("sign-mute-camera", "tắt đường đọc camera", "cụm ngừng hiện biển do camera, bật lại được"),
-                h("sign-inject", "ghi giá trị của mình vào đích đã tìm", "cụm/HUD hiện đúng số vừa gửi"),
-                h("sign-stale-guard", "ngừng gửi rồi chờ", "biết số cũ tự mất hay dính lại"),
-            ),
-        ),
+        // ── Biển báo giới hạn tốc độ ────────────────────────────────────────────────────────────────
+        // Đã GỠ (owner 2026-08-15): Waze-Mod nav-source + VietMap/Waze speed-limit signal không hoạt động.
+        // Xem docs/diagnostics/removal-manifest-waze-vietmap-1.22.md. Ba kịch bản sign.* + step sign-* đã xoá.
         CarScenario(
             id = "cast.reissue-policy",
             feature = CarFeature.CLUSTER_CAST,

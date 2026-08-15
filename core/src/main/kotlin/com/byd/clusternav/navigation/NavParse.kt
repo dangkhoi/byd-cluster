@@ -25,7 +25,7 @@ object NavParse {
         // Google làm tròn về bậc gần nhất → round khử bias-xuống của floor. (Bias nội suy proj−raw≈−16m còn
         // lại chờ ground-truth screenRead lần lái sau để chỉnh FACTOR.)
         m >= 1000 -> ((m + 50) / 100) * 100   // >1km: bậc 100m (0.1km)
-        m >= 300 -> ((m + 12) / 25) * 25       // 300m-1km: bậc 25m
+        m >= 300 -> ((m + 25) / 50) * 50       // 300m-1km: bậc 50m (owner 2026-08-15: 25m→50m cho số tròn; các dải khác giữ)
         m >= 100 -> ((m + 5) / 10) * 10        // 100-300m: bậc 10m
         else -> ((m + 5) / 10) * 10            // <100m: bậc 10m
     }

@@ -18,6 +18,15 @@ export VEH=<vehicle-ip>:5555; ADB="$HOME/Library/Android/sdk/platform-tools/adb"
 
 ---
 
+## S0.5 — HEADLESS auto-start verify (1.21) ⭐ MỚI
+- Đảm bảo toggle **"Tự khởi động nền"** = ON (mặc định) · **Nav+HUD** ON · (nếu dùng) **Cast** ON + app auto-cast đã set.
+- **Power-cycle (nút nguồn, reboot thật)** → **KHÔNG mở app**, quan sát:
+  - [ ] Cụm tự lên **nav** không? (pipeline headless qua listener)
+  - [ ] Giữ **mic → ra Kiki** không? (accessibility force-bind headless — **điểm rủi ro chính**)
+  - [ ] App **auto-cast lên cụm** không? (FloatingBubbleService headless)
+  - [ ] MainActivity **KHÔNG tự bung** lên màn chính? (đúng mục tiêu headless)
+- Nếu voice-key/nav KHÔNG lên headless → `adb logcat -s BootSetup NavAccess NavRebind` xem BootSetupService có chạy + grant không; thử **toggle OFF** (về launchHome cũ) để so sánh.
+
 ## S1 — VERIFY Track B icons (tính năng chính của 1.20) ⭐
 Cách đọc ground-truth: `NavArrowLog` CSV — cột `small_amap,sig_name,sig_amap,verb_amap,heuristic_amap,final_icon`.
 ```bash

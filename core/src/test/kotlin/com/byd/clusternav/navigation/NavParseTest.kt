@@ -22,7 +22,9 @@ class NavParseTest {
 
     @Test fun `quantizeDisplay bước theo độ xa`() {
         assertEquals(1200, NavParse.quantizeDisplay(1234))   // >=1km: round 100 (1234→1200)
-        assertEquals(350, NavParse.quantizeDisplay(347))     // 300..999: round 25 (347→350)
+        assertEquals(350, NavParse.quantizeDisplay(347))     // 300..999: round 50 (347→350)
+        assertEquals(550, NavParse.quantizeDisplay(525))     // 300..999: round 50 (525→550; bậc 25m cũ giữ 525)
+        assertEquals(500, NavParse.quantizeDisplay(475))     // 300..999: round 50 (475→500)
         assertEquals(160, NavParse.quantizeDisplay(156))     // 100..299: round 10 (156→160)
         assertEquals(50, NavParse.quantizeDisplay(47))       // <100: round 10 (J2 1.16 floor→round)
         assertEquals(-1, NavParse.quantizeDisplay(-1))       // âm giữ nguyên

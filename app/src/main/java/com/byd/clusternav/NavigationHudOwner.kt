@@ -90,7 +90,16 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
                     synchronized(dedupLock) {
                         appliedIcon = icon; appliedSeg = seg; appliedRoad = road
                     }
-                    keepAlive.onFrameWritten(SystemClock.elapsedRealtime())
+                    // Lỗ 1 (handoff 2026-08-15): CHỈ real push (nguồn đẩy frame mới; session != KEEPALIVE_SESSION)
+                    // mới làm tươi TRẦN TUỔI. Keep-alive re-assert đi qua đúng đường này nhưng chỉ được nhịp lại
+                    // lastWrite (realPush=false) — nếu không, nhịp tim tự làm tươi trần tuổi của chính nó và frame
+                    // chết bị ghim vô hạn.
+                    val realPush = frame.sessionId != KEEPALIVE_SESSION
+                    keepAlive.onFrameWritten(SystemClock.elapsedRealtime(), realPush = realPush)
+                    // Lỗ 3 (handoff 2026-08-15): stop() huỷ nhịp tim theo TỪNG tuyến ⇒ tuyến 2 mất heartbeat (bug
+                    // chớp ~1s của 1.15 quay lại). Real push của tuyến mới RE-ARM lại nhịp tim từ ĐƯỜNG DELIVERY.
+                    // armKeepAlive() idempotent nhờ guard keepAliveTask == null nên gọi lại an toàn.
+                    if (realPush) armKeepAlive()
                 }
             }
         },
@@ -103,6 +112,14 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
 
     fun start() {
         worker.setEnabled(true)
+        armKeepAlive()
+    }
+
+    /**
+     * Bật nhịp keep-alive nếu chưa chạy. Idempotent (guard `keepAliveTask == null`) → gọi lại an toàn cả từ
+     * [start] lẫn đường DELIVERY (Lỗ 3: re-arm sau khi stop() theo-tuyến huỷ nhịp tim).
+     */
+    private fun armKeepAlive() {
         synchronized(keepAliveLock) {
             if (keepAliveTask == null) {
                 val interval = keepAlive.intervalMs()
@@ -113,11 +130,29 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
         }
     }
 
-    /** Nhịp keep-alive: nếu đang hiện 1 frame và đã stale ≥ interval → re-assert (bypass dedup) để OEM không blank. */
+    /** Nhịp keep-alive: quá TRẦN TUỔI → nhả frame cũ (clear); còn hạn mà stale ≥ interval → re-assert (bypass dedup). */
     private fun keepAliveTick() {
         runCatching {
-            if (keepAlive.shouldReassert(SystemClock.elapsedRealtime())) resubmitApplied()
+            val now = SystemClock.elapsedRealtime()
+            when {
+                keepAlive.shouldClear(now) -> clearStaleFrame()
+                keepAlive.shouldReassert(now) -> resubmitApplied()
+            }
         }.onFailure { Log.w(TAG, "keep-alive tick failed", it) }
+    }
+
+    /**
+     * TRẦN TUỔI (handoff §1.2): nguồn im > maxAge (180s) → nhả frame cũ để cụm KHÔNG ghim mũi tên chết.
+     * CLEAR đúng MỘT lần: submit qua worker (DÙNG LẠI nhánh `isClear` của delivery lambda — reset dedup +
+     * `keepAlive.onCleared()` chạy trên luồng delivery, KHÔNG gọi thẳng [BydHal] từ thread tick). Gọi
+     * `onCleared()` LUÔN ở đây (đồng bộ) để flip `hasFrame=false` NGAY ⇒ tick kế KHÔNG submit clear lần 2 khi
+     * worker chưa kịp chạy (delivery lambda gọi lại `onCleared()` là idempotent). Đã trống dedup thì bỏ qua.
+     */
+    private fun clearStaleFrame() {
+        val hasApplied = synchronized(dedupLock) { appliedIcon != Int.MIN_VALUE }
+        if (!hasApplied) return
+        worker.submit(clearFrame())
+        keepAlive.onCleared()
     }
 
     /** Gửi lại frame đã-applied gần nhất THẲNG xuống worker (KHÔNG qua push() — dedup sẽ nuốt). No-op nếu chưa hiện gì. */
@@ -131,7 +166,7 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
             seg = appliedSeg
             road = appliedRoad
         }
-        worker.submit(guidanceFrame(icon, if (seg < 0) -1 else seg, road))
+        worker.submit(guidanceFrame(icon, if (seg < 0) -1 else seg, road, KEEPALIVE_SESSION))
     }
 
     fun stop() {
@@ -164,8 +199,8 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
         return worker.submit(guidanceFrame(icon, segMeters, hudRoad))
     }
 
-    private fun guidanceFrame(icon: Int, segMeters: Int, hudRoad: String): NavigationFrame = NavigationFrame(
-        sessionId = "hud-direct",
+    private fun guidanceFrame(icon: Int, segMeters: Int, hudRoad: String, sessionId: String = REAL_PUSH_SESSION): NavigationFrame = NavigationFrame(
+        sessionId = sessionId,
         source = OWNER_SOURCE,
         sequence = sequenceGen.getAndIncrement(),
         receivedAtEpochMs = System.currentTimeMillis(),
@@ -204,7 +239,7 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
     }
 
     private fun clearFrame(): NavigationFrame = NavigationFrame(
-        sessionId = "hud-direct",
+        sessionId = REAL_PUSH_SESSION,
         source = OWNER_SOURCE,
         sequence = sequenceGen.getAndIncrement(),
         receivedAtEpochMs = System.currentTimeMillis(),
@@ -229,5 +264,10 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
     companion object {
         private const val TAG = "NavigationHudOwner"
         private val OWNER_SOURCE = NavigationSourceIdentity("com.byd.clusternav", "HUD Owner")
+        // Nhãn session phân biệt origin của frame tại delivery lambda (Lỗ 1): REAL push (nguồn / UI đẩy) làm tươi
+        // trần tuổi + re-arm nhịp tim; KEEP-ALIVE re-assert thì KHÔNG (chỉ nhịp lastWrite). Nhãn KHÔNG dùng cho
+        // dedup (dedup theo icon/seg/road) nên đổi session an toàn.
+        private const val REAL_PUSH_SESSION = "hud-direct"
+        private const val KEEPALIVE_SESSION = "hud-keepalive"
     }
 }

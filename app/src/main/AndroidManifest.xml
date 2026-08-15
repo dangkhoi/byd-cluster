@@ -4,8 +4,6 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- READ_LOGS: required to read WazeMod HLP/1 data from logcat tag WazeHUD -->
-    <uses-permission android:name="android.permission.READ_LOGS" />
     <!-- Tự rebind nav listener sau khi khởi động lại máy (RebindReceiver). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- ADB loopback (socket 127.0.0.1:5555) để rebind listener từ trong app. -->
@@ -18,10 +16,6 @@
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
-    <!-- BYD privileged deployment may grant host binding; runtime still uses user-confirmed binding. -->
-    <uses-permission
-        android:name="android.permission.BIND_APPWIDGET"
-        tools:ignore="ProtectedPermissions" />
 
     <!-- allowBackup=false: app lưu ADB private key (adb.key/adb.pub) trong filesDir — key này grant shell
          localhost:5555. Bật backup sẽ để `adb backup`/auto-backup rút key ra ngoài → tắt để không lộ. -->
@@ -39,11 +33,6 @@
             android:name=".modules.clustercast.DiagActivity"
             android:exported="false"
             android:label="Chẩn đoán ClusterNav" />
-
-        <activity
-            android:name=".vietmapwidget.VietMapWidgetDiagActivity"
-            android:exported="false"
-            android:label="Dữ liệu VietMap" />
 
         <activity
             android:name=".modules.clustercast.ClusterBlackActivity"

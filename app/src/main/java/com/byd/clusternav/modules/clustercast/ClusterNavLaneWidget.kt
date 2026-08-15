@@ -19,8 +19,8 @@ import java.util.concurrent.Executors
  * TWO-TRACK boundary: op 39 is asserted ONLY in nav-only mode (Cast master switch OFF). When Cast
  * is ON the Cast track owns the cluster surface and we must not fight it. The gate reads the
  * persisted `castEnabled` flag (a user config, not live cast-control state), keeping the tracks
- * decoupled, and reuses the same shell the nav listener already uses for WazeHUD polling
- * ([SimpleCastCoordinator.executeShell]) rather than opening a second transport.
+ * decoupled, and reuses the shared privileged shell gateway ([SimpleCastCoordinator.executeShell])
+ * rather than opening a second transport.
  *
  * DELIVERY (2026-08-12 self-diagnose · docs/specs/nav-cluster-op39-selfdiagnose.html): the command
  * is delivered over the dadb loopback to localhost:5555. If that loopback is down (e.g. ADB-over-TCP

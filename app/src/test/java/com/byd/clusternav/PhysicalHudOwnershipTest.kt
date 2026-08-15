@@ -27,12 +27,11 @@ class PhysicalHudOwnershipTest {
     fun `cluster center-nav HAL write is single-owner and wired via NavRepository two-track`() {
         val controller = SourceRoots.text("src/main/java/com/byd/clusternav/HudMirrorController.kt")
         val broadcaster = SourceRoots.text("src/main/java/com/byd/clusternav/ClusterBroadcaster.kt")
-        val speedOwner = SourceRoots.text("src/main/java/com/byd/clusternav/NavigationSpeedSignOwner.kt")
         val hal = SourceRoots.text("src/main/java/com/byd/clusternav/modules/hal/BydHal.kt")
         val navRepo = SourceRoots.text("src/main/java/com/byd/clusternav/NavRepository.kt")
 
-        // Broadcast/lane feeder, HUD-mirror controller, speed owner must NOT touch the HAL directly.
-        listOf(controller, broadcaster, speedOwner).forEach { text ->
+        // Broadcast/lane feeder and HUD-mirror controller must NOT touch the HAL directly.
+        listOf(controller, broadcaster).forEach { text ->
             assertFalse(text.contains("BydHal"))
             assertFalse(text.contains("writeNavFrame"))
             assertFalse(text.contains("writeSpeedLimit"))

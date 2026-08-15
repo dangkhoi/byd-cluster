@@ -155,7 +155,7 @@ class CastEnableToggleContractTest {
 
     @Test
     fun `switch does not tear down the coordinator singleton`() {
-        // WazeHudSource reads logcat via coordinator.executeShell — the shell gateway must survive Cast-off.
+        // The coordinator owns the shared privileged shell gateway (executeShell) — it must survive Cast-off.
         assertTrue(!switchClass.contains("shutdown()"), "must not shutdown the coordinator (HUD shell gateway)")
     }
 

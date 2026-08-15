@@ -41,10 +41,6 @@ class HudOutputHiddenContractTest {
             main.contains("NavRepository.setOutputEnabled(this, NavigationOutputTarget.HUD, false)"),
             "HUD navigation output must be force-disabled",
         )
-        assertTrue(
-            main.contains("speedSign.onOutputEnabled(SpeedSignOutput.HUD, false)"),
-            "HUD speed-sign output must be force-disabled",
-        )
         // Enum value must NOT be deleted — the isolation contract depends on it.
         assertTrue(main.contains("NavigationOutputTarget.HUD"), "NavigationOutputTarget.HUD must remain referenced")
     }

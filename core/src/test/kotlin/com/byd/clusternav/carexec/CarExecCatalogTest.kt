@@ -82,8 +82,7 @@ class CarExecCatalogTest {
             "bootstrap-cold", "probe-target", "resume-protected", "return-protected",
             "pip-guard", "animation-quiesce", "orphan-inspect", "target-process",
             "power-state", "capture-state", "probe-profile",
-            "sign-inventory", "sign-watch-live", "sign-consumer", "sign-source-vietmap",
-            "sign-mute-camera", "sign-inject", "sign-stale-guard", "reissue-policy",
+            "reissue-policy",
             "hud-probe", "cluster-overlay-toggles",
         )
         val expectedCandidateIds = listOf(
@@ -100,15 +99,7 @@ class CarExecCatalogTest {
             "animation.restore", "orphan.list", "process.force-stop", "power.sleep-wake",
             "capture.full-surface-flinger", "probe.services-and-display", "probe.autocontainer-whitelist",
             "probe.magicwindow-service", "probe.trafficmonitor-service", "probe.naviserviceapi-service",
-            "probe.vehiclesettings-installed", "sign-inventory.packages", "sign-inventory.services",
-            "sign-inventory.hal", "sign-inventory.processes", "sign-watch.logcat-keywords",
-            "sign-watch.logcat-raw-window", "sign-watch.props-diff", "sign-watch.settings-diff",
-            "sign-consumer.receivers", "sign-consumer.service-dump", "sign-consumer.descriptor",
-            "sign-source.notification", "sign-source.exported-surface", "sign-source.logcat",
-            "sign-source.screen-crop", "sign-mute.settings-key", "sign-mute.appops-camera",
-            "sign-mute.pm-disable", "sign-inject.sla-state-probe", "sign-inject.sla-state-toggle",
-            "sign-inject.broadcast", "sign-inject.service-call", "sign-inject.settings-key",
-            "sign-stale.stop-sending", "sign-stale.clear-value", "reissue.full-while-warm",
+            "probe.vehiclesettings-installed", "reissue.full-while-warm",
             "reissue.16-only-while-warm", "reissue.35-only-while-warm", "reissue.return-then-recast",
             "reissue.task-placed-projection-closed", "hud.config-read", "hud.switch-feedback-read",
             "hud.switch-on", "hud.switch-off", "hud.nav-content-toggle-on", "hud.adas-content-toggle-on",
@@ -119,14 +110,14 @@ class CarExecCatalogTest {
 
         assertEquals(expectedStepIds, CarExecCatalog.steps.map { it.id })
         assertEquals(expectedCandidateIds, actualCandidateIds)
-        assertEquals(34, CarExecCatalog.steps.size)
-        assertEquals(93, actualCandidateIds.size)
+        assertEquals(27, CarExecCatalog.steps.size)
+        assertEquals(68, actualCandidateIds.size)
 
         val bytes = (CarExecCommands.steps() + "\n").toByteArray(StandardCharsets.UTF_8)
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
             .joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        assertEquals(54_053, bytes.size)
-        assertEquals(569, bytes.count { it == '\n'.code.toByte() })
-        assertEquals("48ac1d2309a7f21cc7cd91677e9a638b4253b69cab6c3fcb102cf386e7a83500", digest)
+        assertEquals(43_182, bytes.size)
+        assertEquals(433, bytes.count { it == '\n'.code.toByte() })
+        assertEquals("aadb008d0319a70204eb643cb128cdf8f8473dd9e8795f0bd8671aeaf914247d", digest)
     }
 }

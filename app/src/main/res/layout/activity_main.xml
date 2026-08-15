@@ -51,11 +51,7 @@
             bộ đọc màn CHẠY MÀ VÔ NGHĨA, vì `refine()` bỏ qua khi chưa có mốc. -->
             <!-- Distance assist removed: firmware handles count-down animation natively.
                  App-side interpolation conflicts with firmware → jumpy numbers. -->
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginTop="12dp" android:text="Nguồn dẫn đường (hướng rẽ · khoảng cách · đường)"
-                android:textColor="@color/text_secondary" android:textSize="13sp" />
-            <Spinner android:id="@+id/spinner_nav_source" android:layout_width="match_parent"
-                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
+            <!-- Nguồn dẫn đường: GMaps-only (owner 2026-08-15) — Waze-Mod nav-source đã gỡ, không còn selector. -->
             <!-- op39 self-diagnose (docs/specs/nav-cluster-op39-selfdiagnose.html · D3): op 39 "Giữa + ETA" là
                  chế độ nav-trên-cụm DUY NHẤT (owner 2026-08-12) — bỏ nút chọn mode + nút test. Chỉ còn dòng
                  trạng thái trung thực của overlay op39. -->
@@ -72,24 +68,15 @@
             <CheckBox android:id="@+id/cb_marquee" android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min"
                 android:text="Chạy chữ tên đường dài (marquee)" android:textColor="@color/text_secondary" />
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginTop="12dp" android:text="Nguồn tốc độ + cảnh báo (biển báo · camera)"
-                android:textColor="@color/text_secondary" android:textSize="13sp" />
-            <Spinner android:id="@+id/spinner_speed_source" android:layout_width="match_parent"
-                android:layout_height="wrap_content" android:minHeight="@dimen/touch_min" />
             <Button android:id="@+id/btn_reconnect_nav" android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
                 android:text="Cấp quyền / kết nối lại" android:textAllCaps="false" android:textColor="@color/brand" />
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="horizontal" android:layout_marginTop="8dp">
-                <Button android:id="@+id/btn_nav_stop" android:layout_width="0dp" android:layout_height="wrap_content"
-                    android:layout_weight="1" android:layout_marginEnd="4dp" android:minHeight="@dimen/touch_min"
+                <Button android:id="@+id/btn_nav_stop" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_min"
                     android:background="@drawable/btn_warning_outline" android:text="Dừng toàn bộ"
                     android:textAllCaps="false" android:textColor="@color/warn_amber" />
-                <Button android:id="@+id/btn_vietmap_widget_diag" android:layout_width="0dp"
-                    android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="4dp"
-                    android:minHeight="@dimen/touch_min" android:background="@drawable/btn_outline"
-                    android:text="Dữ liệu VietMap" android:textAllCaps="false" android:textColor="@color/brand" />
             </LinearLayout>
         </LinearLayout>
 

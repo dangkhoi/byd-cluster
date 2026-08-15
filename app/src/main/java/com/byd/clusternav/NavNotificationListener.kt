@@ -10,15 +10,8 @@ import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import android.os.SystemClock
 import android.util.Log
-import com.byd.clusternav.contracts.SpeedLimitSource
 import com.byd.clusternav.navigation.NavigationPermission
-import com.byd.clusternav.vietmapwidget.VietMapWidgetBridge
-import com.byd.clusternav.vietmapwidget.VietMapWidgetFreshness
-import com.byd.clusternav.vietmapwidget.VietMapWidgetOwner
-import com.byd.clusternav.modules.wazehud.WazeHudSource
-import com.byd.clusternav.modules.wazehud.WazeHudAvailability
 import com.byd.clusternav.modules.clustercast.ClusterNavLaneWidget
 
 /**
@@ -39,17 +32,8 @@ class NavNotificationListener : NotificationListenerService() {
         val MAPS_PACKAGES = setOf(
             "com.google.android.apps.maps",
             "app.revanced.android.apps.maps",
-            // NotificationParser đã biết đọc field-đảo của VietMap (đường ở title, cự ly ở text —
-            // xem NotificationParser.kt:9) từ trước, nhưng chưa từng được NGHE vì gói không có trong
-            // tập này. Gói xác nhận qua dump thật (WmParseTest.kt: "vn.vietmap.live/.MainActivity").
-            "vn.vietmap.live",
-            // WazeMod — HUD signal source, dùng song song GMaps
-            "com.chisadin.wazemod",
-            "com.waze",
         )
     }
-
-    private val speedSignOwner by lazy { NavigationSpeedSignOwner.get(applicationContext) }
 
     /**
      * R7 (#2): per-session arrival + distance-regression guard (pure logic in :core). Reset on
@@ -60,12 +44,16 @@ class NavNotificationListener : NotificationListenerService() {
     /** Hệ thống THẢ binding (head-unit hay làm lúc chạy) → clear typed sources before teardown. */
     override fun onListenerDisconnected() {
         connected = false
-        speedSignOwner.onProviderDisconnected(SpeedLimitSource.VIETMAP)
-        speedSignOwner.onProviderDisconnected(SpeedLimitSource.WAZE)
-        stopWazeHudSource(clearFirst = false)
-        val bridge = VietMapWidgetBridge.get(applicationContext)
-        bridge.stop(VietMapWidgetOwner.NAVIGATION)
-        bridge.removeListener(speedLimitPusher)
+        // TÍN HIỆU DƯƠNG "nguồn dừng" (B1 Lỗ 2, handoff 2026-08-15): binding rớt = KHÔNG còn noti feed nữa →
+        // dừng phiên authoritative để hudOwner.stop() HUỶ nhịp keep-alive; nếu thiếu, nhịp tim + frame cũ bị
+        // ghim vô hạn tới khi mở lại app (mũi tên sai mà cụm vẫn "tự tin"). Cùng shape với nhánh
+        // onNotificationRemoved: stop() + ClusterNavLaneWidget.onNavIdle() + log, bọc runCatching như các
+        // nhánh teardown khác trong hàm này.
+        runCatching {
+            NavRepository.stop(applicationContext)
+            ClusterNavLaneWidget.onNavIdle()
+            Log.i(TAG, "binding thả -> stop authoritative session (nguồn dừng)")
+        }.onFailure { Log.e(TAG, "stop on disconnect failed", it) }
         runCatching { NavRepository.setPermission(applicationContext, NavigationPermission.UNKNOWN) }
             .onFailure { Log.e(TAG, "permission state update failed", it) }
         runCatching {
@@ -76,12 +64,6 @@ class NavNotificationListener : NotificationListenerService() {
     /** Khi (re)cấp quyền / service bind lại: clear cờ kẹt + QUÉT noti đang hiện (nav có thể đã chạy trước). */
     override fun onListenerConnected() {
         connected = true
-        speedSignOwner.syncFromPrefs()
-        val bridge = VietMapWidgetBridge.get(applicationContext)
-        bridge.start(VietMapWidgetOwner.NAVIGATION)
-        bridge.addListener(speedLimitPusher)
-        // Start WazeMod HUD logcat source (parallel to notification-based nav)
-        startWazeHudSource()
         if (!Prefs.enabled(applicationContext)) return
         SourceArbiter.clear()
         runCatching { NavRepository.setPermission(applicationContext, NavigationPermission.GRANTED) }
@@ -98,95 +80,14 @@ class NavNotificationListener : NotificationListenerService() {
 
     override fun onDestroy() {
         connected = false
-        speedSignOwner.onSourceStopped(SpeedLimitSource.VIETMAP)
-        speedSignOwner.onSourceStopped(SpeedLimitSource.WAZE)
-        stopWazeHudSource(clearFirst = false)
-        val bridge = VietMapWidgetBridge.get(applicationContext)
-        bridge.stop(VietMapWidgetOwner.NAVIGATION)
-        bridge.removeListener(speedLimitPusher)
         super.onDestroy()
-    }
-
-    private val speedLimitPusher: (com.byd.clusternav.vietmapwidget.VietMapWidgetSnapshot) -> Unit = { snapshot ->
-        speedSignOwner.onSourceSelected(Prefs.speedLimitSource(applicationContext))
-        if (snapshot.speedFreshness == VietMapWidgetFreshness.FRESH) {
-            speedSignOwner.onSpeedLimit(
-                source = SpeedLimitSource.VIETMAP,
-                valueKph = snapshot.speedLimitKph ?: 0,
-                observedAtMonotonicMs = snapshot.speedUpdatedAtElapsedMs ?: SystemClock.elapsedRealtime(),
-            )
-        } else {
-            speedSignOwner.onProviderDisconnected(SpeedLimitSource.VIETMAP)
-        }
-    }
-
-    private var wazeHudSource: WazeHudSource? = null
-
-    private fun startWazeHudSource() {
-        if (wazeHudSource != null) return
-        // Read logcat via the privileged dadb shell (uid 2000). An app-uid `logcat` cannot see
-        // WazeMod's logs without effective READ_LOGS; the shell has full log access (see WazeHudSource).
-        val source = WazeHudSource { cmd ->
-            runCatching {
-                val r = com.byd.clusternav.modules.clustercast.simplified.SimpleCastRuntime
-                    .coordinator(applicationContext).executeShell(cmd)
-                if (r.success) r.stdout else null
-            }.getOrNull()
-        }
-        source.availabilityListener = { availability ->
-            when (availability) {
-                WazeHudAvailability.AVAILABLE -> Unit
-                WazeHudAvailability.UNAVAILABLE ->
-                    speedSignOwner.onProviderDisconnected(SpeedLimitSource.WAZE)
-                WazeHudAvailability.STOPPED ->
-                    speedSignOwner.onSourceStopped(SpeedLimitSource.WAZE)
-            }
-        }
-        source.listener = listener@{ state ->
-            val ctx = applicationContext
-            val masterEnabled = Prefs.enabled(ctx)
-            speedSignOwner.onMasterEnabled(masterEnabled)
-            speedSignOwner.onSourceSelected(Prefs.speedLimitSource(ctx))
-
-            // Navigation requires an active route; speed acquisition below remains route-independent.
-            if (masterEnabled && state.navigating) {
-                val navMode = Prefs.sourceMode(ctx)
-                if ((navMode == Prefs.PREFER_WAZE || navMode == Prefs.AUTO) &&
-                    SourceArbiter.shouldFeed("com.chisadin.wazemod", navMode, System.currentTimeMillis())) {
-                    ClusterBroadcaster.selectSource("com.chisadin.wazemod")
-                    val navState = source.toNavState(state)
-                    ClusterBroadcaster.emitLane(ctx, navState)
-                    ClusterBroadcaster.emitHud(ctx, navState)
-                    ClusterNavLaneWidget.onNavActive(ctx)
-                }
-            }
-
-            // HLP lim=0/missing is a real clear event. Never gate speed on `navigating`.
-            speedSignOwner.onSpeedLimit(
-                source = SpeedLimitSource.WAZE,
-                valueKph = state.speedLimitKmh,
-                observedAtMonotonicMs = SystemClock.elapsedRealtime(),
-            )
-        }
-        source.start()
-        wazeHudSource = source
-        Log.i(TAG, "WazeHUD logcat source started (dadb-shell poll)")
-    }
-
-    private fun stopWazeHudSource(clearFirst: Boolean = true) {
-        val source = wazeHudSource ?: return
-        if (clearFirst) speedSignOwner.onSourceStopped(SpeedLimitSource.WAZE)
-        source.listener = null
-        source.availabilityListener = null
-        source.stop()
-        wazeHudSource = null
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
         if (sbn.packageName !in MAPS_PACKAGES) return
         if (!Prefs.enabled(applicationContext)) return        // công tắc tổng TẮT -> không đẩy cụm
-        // Safety net: ensure bridge is started even if onListenerConnected was not re-fired after process restart
+        // Safety net: ensure the connected flag is set even if onListenerConnected was not re-fired after process restart
         ensureBridgeStarted()
         runCatching { handle(sbn) }.onFailure { Log.e(TAG, "handle failed", it) }
     }
@@ -194,10 +95,6 @@ class NavNotificationListener : NotificationListenerService() {
     private fun ensureBridgeStarted() {
         if (connected) return
         connected = true
-        val bridge = VietMapWidgetBridge.get(applicationContext)
-        bridge.start(VietMapWidgetOwner.NAVIGATION)
-        bridge.addListener(speedLimitPusher)
-        startWazeHudSource()
         Log.i(TAG, "listener connected (safety net from onNotificationPosted)")
     }
 
