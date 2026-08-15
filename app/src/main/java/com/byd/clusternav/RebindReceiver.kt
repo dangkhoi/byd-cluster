@@ -33,10 +33,12 @@ class RebindReceiver : BroadcastReceiver() {
         when (action) {
             Intent.ACTION_BOOT_COMPLETED -> {
                 scheduleWatchdog(context)
-                // I5 (1.14, owner): mở xe = TỰ MỞ APP luôn (không chỉ nút nổi). Dùng lại đường launch của
-                // relaunch-after-update (được miễn trừ background-activity-start nhờ SYSTEM_ALERT_WINDOW). Nút
-                // nổi do castBootWork lo — chỉ start khi Cast đang BẬT.
-                launchHome(context)
+                // 1.21 Item 1 (owner): HEADLESS auto-start — do the boot setup in a background
+                // foreground-service (BootSetupService) WITHOUT foregrounding MainActivity on the main
+                // display (also dodges the dudu size-compat letterbox). Toggle defaults ON; when OFF, fall
+                // back to the 1.14 I5 behaviour (auto-open Home on start). Auto-cast (castBootWork below) is
+                // unchanged either way — the bubble/cast track is already headless and self-driven.
+                if (Prefs.headlessAutostart(context)) startBootSetup(context) else launchHome(context)
                 castBootWork(context, automation = true)
             }
             Intent.ACTION_LOCKED_BOOT_COMPLETED -> {
@@ -51,7 +53,9 @@ class RebindReceiver : BroadcastReceiver() {
                 // our process was replaced. Background-activity-start is allowed here because the app
                 // holds SYSTEM_ALERT_WINDOW (the overlay/bubble permission) — the standard A10
                 // exemption; best-effort (runCatching) if the grant is missing.
-                launchHome(context)
+                // 1.21 Item 1 (owner): same headless gate as boot — when "Tự khởi động nền" is ON, run the
+                // background setup instead of reopening Home after an OTA self-update.
+                if (Prefs.headlessAutostart(context)) startBootSetup(context) else launchHome(context)
             }
         }
     }
@@ -104,6 +108,22 @@ class RebindReceiver : BroadcastReceiver() {
                 Intent(app, com.byd.clusternav.modules.clustercast.FloatingBubbleService::class.java),
             )
         }.onFailure { Log.e(TAG, "auto-start bubble failed", it) }
+    }
+
+    /**
+     * 1.21 Item 1: start the short-lived headless [BootSetupService] instead of foregrounding
+     * MainActivity. A foreground service (not a plain [launchHome]) because the relocated accessibility
+     * grant + force-bind takes ~3–5 s over dadb — longer than a BroadcastReceiver's execution budget — so
+     * it needs the FGS to keep the process alive. Best-effort: startForegroundService can throw in some
+     * background-start-restricted states, so it is wrapped; the nav pipeline + auto-cast still self-heal via
+     * their own headless paths (listener bind, castBootWork), and MainActivity re-does the setup if opened.
+     */
+    private fun startBootSetup(context: Context) {
+        runCatching {
+            val app = context.applicationContext
+            app.startForegroundService(Intent(app, BootSetupService::class.java))
+            Log.i(TAG, "headless boot setup requested")
+        }.onFailure { Log.e(TAG, "headless boot setup start failed", it) }
     }
 
     /**

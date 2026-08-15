@@ -41,6 +41,10 @@
             <CheckBox android:id="@+id/cb_hud" android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min" android:text="Bật đầu ra HUD độc lập"
                 android:textColor="@color/text_secondary" android:visibility="gone" />
+            <!-- 1.21 Item 1: HEADLESS auto-start toggle (mặc định BẬT) — nổ máy chỉ chạy setup nền, không bung app. -->
+            <CheckBox android:id="@+id/cb_headless_autostart" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:minHeight="@dimen/touch_min"
+                android:text="Tự khởi động nền (không mở app khi nổ máy)" android:textColor="@color/text_secondary" />
                         <!-- MỘT công tắc cho một mục đích. Hai phần bên dưới là hai nửa của cùng một cơ chế: nội suy
             trừ dần cự ly theo tốc độ xe giữa hai lần notification, còn bộ đọc màn Maps kéo mốc về đúng
             số thật. Tách làm hai checkbox là bày ra cơ chế thay vì ý định — và tệ hơn: tắt nội suy thì

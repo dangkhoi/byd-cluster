@@ -56,3 +56,8 @@ Bug chỉ hiện dưới **dudu** → phải lấy ground-truth trên xe đó (k
 
 ## Trạng thái
 - Fix A applied off-car (manifest). Verify build. **Cần B để xác nhận đúng size-compat + fix có ăn không** (build + OTA lên xe anh em test, hoặc bạn ấy mở Chẩn đoán trước/sau khi cài bản mới).
+
+---
+
+## ✅ RESOLVED 2026-08-15 (owner confirm)
+Owner: **"dudu đã OK, make done."** Bản **1.20** (MainActivity `resizeableActivity=true` + `configChanges` + `screenOrientation=landscape`) **fix được** trên xe anh em cài dudu — hết dư đen/scale, app full khung. ⇒ đây là **fix thật**, không chỉ mitigation; và đúng là **regression runtime** mà fix manifest xử được (dù root runtime chính xác không cần đào thêm vì triệu chứng đã hết). Đóng vụ dudu. B/bisect không cần nữa.

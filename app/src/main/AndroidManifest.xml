@@ -104,6 +104,18 @@
                 android:value="cluster_cast_boot_automation" />
         </service>
 
+        <!-- 1.21 Item 1: HEADLESS boot setup — relocates the accessibility grant + force-bind and the
+             cluster-lane re-assert off MainActivity so boot doesn't foreground the app (né size-compat dudu).
+             Short-lived; started by RebindReceiver when "Tự khởi động nền" is ON. Never exported. -->
+        <service
+            android:name=".BootSetupService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="boot_headless_setup" />
+        </service>
+
         <!-- VietMap HUD BLE bridge: removed — same-device BLE self-loopback not viable (2026-08-04) -->
 
         <!-- Lắng nghe notification dẫn đường -->
