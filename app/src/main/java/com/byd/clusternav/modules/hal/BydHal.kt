@@ -185,6 +185,7 @@ object BydHal {
         w("INSTRUMENT_SEND_NAVI_STATUS_SET", 2)
         featureId("SET_NAVI_SCREEN_STATUS_SET")?.let { id -> setting?.let { s -> rc.append(" NAVI_SCREEN=").append(runCatching { setInt(s, id, screenMode) }.getOrElse { e -> root(e) }) } }
         w("INSTRUMENT_GUIDE_INFO_SIMPLE_SET", icon)
+        w("INSTRUMENT_GUIDE_INFO_AND_ROAD_AHEAD_DISTANCE_SET", icon)   // OpenBYD "dualIcon" (0x43F01030) — ghi icon vào cả feature này
         w("INSTRUMENT_FRONT_CROSSING_DISTANCE_SET", segMeters)
         featureId("INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_SET")?.let { id -> rc.append(" PATHNAME=").append(runCatching { setBytes(instr, id, road.toByteArray(Charsets.UTF_16LE)) }.getOrElse { e -> root(e) }) }
         // THỬ NGHIỆM (2026-08-15, insight owner): guidance có bản OVERSEA (export) song song domestic (suffix id trùng,
@@ -223,6 +224,17 @@ object BydHal {
                 wi("INSTRUMENT_EXPECTED_ARRIVE_MINUTE_SET", 0x43F09020, m, "ETA_M"); wi("INSTRUMENT_EXPECT_ARRIVAL_TIME_MINUTE_SET", 0x1F705020, m, "ETA_MO")
             }
         }
+        // 1.26 — GỌI THÊM OEM SDK method của BYDAutoInstrumentDevice (như OpenBYD CarControlImpl): ngoài ghi raw
+        // feature, gọi thẳng method native. GIẢ THUYẾT: method SDK mới là cái bật TÊN ĐƯỜNG + guidance lên HUD kính
+        // (raw feature chỉ tới cụm-centre). Reflect + invoke trên instr; null-safe (method vắng/lỗi → bỏ qua, log rc).
+        runCatching { instr.javaClass.getMethod("sendSimpleGuidanceInfo", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType).invoke(instr, icon, segMeters) }
+            .onSuccess { rc.append(" sdk.guide=$it") }.onFailure { rc.append(" sdk.guide!=").append(root(it)) }
+        if (road.isNotBlank()) runCatching { instr.javaClass.getMethod("sendNextPathName", String::class.java).invoke(instr, road) }
+            .onSuccess { rc.append(" sdk.road=$it") }.onFailure { rc.append(" sdk.road!=").append(root(it)) }
+        if (routeSeconds >= 0 && routeMeters >= 0) runCatching {
+            instr.javaClass.getMethod("sendRestRouteInfo", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Long::class.javaPrimitiveType)
+                .invoke(instr, routeSeconds / 3600, (routeSeconds % 3600) / 60, routeMeters.toLong())
+        }.onSuccess { rc.append(" sdk.rest=$it") }.onFailure { rc.append(" sdk.rest!=").append(root(it)) }
         return rc.toString().trim()
     }
 
