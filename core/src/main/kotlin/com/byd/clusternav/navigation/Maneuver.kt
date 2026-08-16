@@ -20,7 +20,18 @@ package com.byd.clusternav.navigation
  *     [fromAmapIcon] để 9/4/5 vẫn NGHỊCH về STRAIGHT/SLIGHT_LEFT/SLIGHT_RIGHT — khứ hồi CHÍNH XÁC, làn
  *     cụm bảo toàn nguyên trạng.
  *   - "mã DUY NHẤT" (10/12/13/14/16/19): có trong [fromAmapIcon] → làn cụm khứ hồi được các glyph mới.
- * Bất biến giữ nguyên: `toHudIcon(m) == TurnIdMapToCAN[toAmapIcon(m)]`.
+ *
+ * Từ 2026-08-16 (TASK 1 closeout 1.28) enum thêm HỌ VÒNG XUYẾN CÓ HƯỚNG (encode-only): ROUNDABOUT_LEFT ·
+ * ROUNDABOUT_RIGHT · ROUNDABOUT_STRAIGHT · ROUNDABOUT_UTURN + 4 biến thể _CW. GMaps large-icon phân biệt
+ * hướng ra vòng xuyến; trước đây AMAP-int (fromAmapIcon) gộp hết về generic. Cụm-strip KHÔNG có glyph vòng
+ * xuyến có hướng nên [toAmapIcon] của cả 8 = 11 (generic); HƯỚNG chỉ hiện trên HUD/centre qua [toHudIcon].
+ *
+ * Bất biến `toHudIcon(m) == TurnIdMapToCAN[toAmapIcon(m)]` giữ cho MỌI maneuver, TRỪ HỌ VÒNG XUYẾN — tức
+ * ROUNDABOUT (generic) + 8 thành viên có hướng ở trên. Nhóm này HUD ghi mã CAN TRỰC TIẾP (generic 20;
+ * có hướng 15/16/17/18/19/20/21/22 per OpenBYD `w40.a` + `HudController` TURN_ICON_ROUNDABOUT_*,
+ * cross-validate on-car 2026-08-16) chứ KHÔNG qua remap cụm `TurnIdMapToCAN[11]=13`, vì cụm-strip không có
+ * glyph vòng xuyến có hướng ([toAmapIcon] các thành viên này = 11 generic, KHÔNG vào [fromAmapIcon] để AMAP
+ * 11 vẫn nghịch về ROUNDABOUT generic cho làn cụm). Đây là cùng kiểu carve-out mà ROUNDABOUT generic đã dùng.
  */
 enum class Maneuver {
     STRAIGHT,
@@ -47,7 +58,21 @@ enum class Maneuver {
     TUNNEL,           // sắp vào hầm — NEW_ICON 16 → CAN 49
     SERVICE_AREA,     // tới trạm dừng nghỉ — NEW_ICON 13 → CAN 46
     TOLL,             // tới trạm thu phí — NEW_ICON 14 → CAN 47
-    WAYPOINT;         // tới điểm dừng trung gian — NEW_ICON 10 → CAN 45
+    WAYPOINT,         // tới điểm dừng trung gian — NEW_ICON 10 → CAN 45
+
+    // ── Vòng xuyến CÓ HƯỚNG (encode-only, 2026-08-16 — TASK 1 closeout 1.28). GMaps large-icon phân biệt
+    //   hướng ra + chiều (CCW mặc định VN / CW cho LHT). AMAP-int (fromAmapIcon) TRƯỚC ĐÂY gộp hết về generic.
+    //   toAmapIcon = 11 (cụm-strip không có glyph vòng xuyến có hướng); HƯỚNG chỉ ra trên HUD/centre qua
+    //   toHudIcon = mã CAN GHI-THẲNG (OpenBYD w40.a + HudController TURN_ICON_ROUNDABOUT_*, on-car 2026-08-16).
+    //   KHÔNG có trong fromAmapIcon → AMAP 11 vẫn nghịch về ROUNDABOUT generic cho làn cụm.
+    ROUNDABOUT_LEFT,        // CCW rẽ trái  — CAN 15 (TURN_ICON_ROUNDABOUT_3_4_LEFT)
+    ROUNDABOUT_RIGHT,       // CCW rẽ phải  — CAN 18 (TURN_ICON_ROUNDABOUT_1_4_RIGHT)
+    ROUNDABOUT_STRAIGHT,    // CCW đi thẳng — CAN 20 (TURN_ICON_ROUNDABOUT_STRAIGHT_R)
+    ROUNDABOUT_UTURN,       // CCW quay đầu — CAN 22 (TURN_ICON_ROUNDABOUT_R_TO_L)
+    ROUNDABOUT_LEFT_CW,     // CW  rẽ trái  — CAN 16 (TURN_ICON_ROUNDABOUT_1_4_LEFT)
+    ROUNDABOUT_RIGHT_CW,    // CW  rẽ phải  — CAN 17 (TURN_ICON_ROUNDABOUT_3_4_RIGHT)
+    ROUNDABOUT_STRAIGHT_CW, // CW  đi thẳng — CAN 19 (TURN_ICON_ROUNDABOUT_STRAIGHT_L)
+    ROUNDABOUT_UTURN_CW;    // CW  quay đầu — CAN 21 (TURN_ICON_ROUNDABOUT_L_TO_R)
 
     /** -> mã AMAP NEW_ICON cho làn cụm (0..28; AmapService tự remap CAN, KHÔNG remap ở đây). */
     fun toAmapIcon(): Int = when (this) {
@@ -77,6 +102,10 @@ enum class Maneuver {
         SERVICE_AREA -> 13
         TOLL -> 14
         WAYPOINT -> 10
+        // Vòng xuyến CÓ HƯỚNG: cụm-strip generic (không có glyph hướng) → 11. Encode-only, KHÔNG vào
+        //   fromAmapIcon (AMAP 11 vẫn nghịch về ROUNDABOUT generic — làn cụm bảo toàn nguyên trạng).
+        ROUNDABOUT_LEFT, ROUNDABOUT_RIGHT, ROUNDABOUT_STRAIGHT, ROUNDABOUT_UTURN,
+        ROUNDABOUT_LEFT_CW, ROUNDABOUT_RIGHT_CW, ROUNDABOUT_STRAIGHT_CW, ROUNDABOUT_UTURN_CW -> 11
     }
 
     /** -> mã icon CAN HUD (INSTRUMENT_GUIDE_INFO_SIMPLE_SET, enum HudController 1..49). */
@@ -89,10 +118,11 @@ enum class Maneuver {
         SHARP_RIGHT -> 8
         UTURN -> 9          // AMAP gộp T/P → mặc định trái (9), chuẩn RHT (VN)
         STRAIGHT -> 11
-        // Parity làn cụm — chốt bằng ảnh owner on-car 2026-08-15: CAN 13 = 进入环岛 (enter-roundabout,
-        //   = TurnIdMapToCAN[11]). 15 = 绕环岛左转 (đi trong vòng xuyến rồi rẽ trái) → HUD kính vẽ SAI (mũi tên
-        //   chếch), đúng cái bug owner chụp. re-maneuver-icon-tables §5/§7.5 · gmaps-maneuver-mapping-master §1.6.
-        ROUNDABOUT -> 13    // 进入环岛 enter-roundabout (khớp làn cụm; hết bug HUD 2026-08-15)
+        // Vòng xuyến trên HUD: 15 (≤1.22) và 13 (1.23) ĐỀU vẽ MŨI TÊN BẺ MÉO (owner báo + ảnh 2026-08-16), KHÔNG ra
+        //   glyph vòng xuyến. OpenBYD 2.3 (field-proven, defpackage/w40.a: maneuver_roundabout_enter_ccw) dùng CAN 20.
+        //   ⇒ bảng CAN GHI-THẲNG-HUD khác TurnIdMapToCAN của cụm ở RIÊNG vòng xuyến (13 là remap cụm; 20 là mã HUD thật).
+        //   Cụm (toAmapIcon=11) không đổi. Số nhánh vẫn 24+N (25..34, cũng khớp OpenBYD).
+        ROUNDABOUT -> 20    // glyph vòng xuyến (OpenBYD proven; 13/15 đều méo trên HUD)
         // Parity làn cụm: CAN 12 = 顺行 continue (= TurnIdMapToCAN[20]); trước 11 (đi thẳng) lệch với làn cụm.
         CONTINUE -> 12      // 顺行 continue/follow (khớp làn cụm)
         DESTINATION -> 48
@@ -110,6 +140,17 @@ enum class Maneuver {
         SERVICE_AREA -> 46      // TurnIdMapToCAN[13]
         TOLL -> 47              // TurnIdMapToCAN[14]
         WAYPOINT -> 45          // TurnIdMapToCAN[10]
+        // Vòng xuyến CÓ HƯỚNG — CAN GHI-THẲNG HUD (carve-out: KHÁC remap cụm TurnIdMapToCAN[11]=13; xem KDoc
+        //   class). Nguồn: OpenBYD w40.a (name→CAN) + HudController TURN_ICON_ROUNDABOUT_* (cross-validate on-car
+        //   2026-08-16): 15=RAB trái CCW, 18=RAB phải CCW, 20=generic/thẳng CCW, 22=u-turn CCW; CW=16/17/19/21.
+        ROUNDABOUT_LEFT -> 15
+        ROUNDABOUT_RIGHT -> 18
+        ROUNDABOUT_STRAIGHT -> 20
+        ROUNDABOUT_UTURN -> 22
+        ROUNDABOUT_LEFT_CW -> 16
+        ROUNDABOUT_RIGHT_CW -> 17
+        ROUNDABOUT_STRAIGHT_CW -> 19
+        ROUNDABOUT_UTURN_CW -> 21
     }
 
     companion object {

@@ -32,6 +32,13 @@ object NavConnect {
     private const val REBIND_SETTLE_MS = 1200L
     private const val REBIND_TOGGLE_PAUSE_MS = 800L
 
+    // TASK 3 (R2 · docs/specs/clusternav-closeout-1.28.html) — grant-body timeout. A HUNG dadb session (stuck
+    // socket read/write during the accessibility read-modify-write or the force-rebind toggle) must NOT pin the
+    // [grantingAcc] single-flight forever: if it did, every later grant (incl. re-toggling 'Nút vật lý') would
+    // no-op until an app RESTART. On timeout we interrupt the worker and force-release the flag. One attempt per
+    // call — NO auto-loop/backoff. Kept comfortably above the ~2 s of settle+toggle sleeps in forceRebindIfNeeded.
+    private const val GRANT_TIMEOUT_MS = 9_000L
+
     /** Reconnect NGAY qua dadb (chạy nền). An toàn gọi nhiều lần. */
     fun reconnect(ctx: Context) {
         val app = ctx.applicationContext
@@ -91,15 +98,43 @@ object NavConnect {
      * "Enabled") rồi FORCE-REBIND bằng toggle nếu enabled-nhưng-chưa-bound — chữa bug sau reboot (voice-key +
      * screen-read chết) mà không cần toggle tay. Xem [forceRebindIfNeeded].
      *
+     * @param reset khi true (toggle 'Nút vật lý' TẮT→BẬT): XÓA single-flight [grantingAcc] đang kẹt TRƯỚC khi
+     *   thử (một grant trước bị TREO không ghim được cờ mãi mãi), rồi chạy grant TƯƠI + force-rebind → voice-key
+     *   sống lại sau reboot mà KHÔNG cần restart app. reset=false (đường Nav+HUD thường) giữ single-flight bình
+     *   thường. KHÔNG auto-loop/backoff — mỗi lần gạt là một lần thử.
      * @param onResult gọi trên MAIN thread: true nếu phiên dadb chạy được (đã append + bật accessibility).
      */
-    fun grantAccessibility(ctx: Context, onResult: ((Boolean) -> Unit)? = null) {
+    fun grantAccessibility(ctx: Context, reset: Boolean = false, onResult: ((Boolean) -> Unit)? = null) {
         val app = ctx.applicationContext
         val main = Handler(Looper.getMainLooper())
         Thread {
-            val ok = doGrantAccessibility(app)
+            // RESET (toggle OFF→ON): clear a stuck single-flight left by a PRIOR HUNG grant BEFORE attempting, so
+            // a pinned grantingAcc can't turn this (and every later) call into a no-op that only an app restart
+            // could recover. The fresh grant + forceRebindIfNeeded then run inside doGrantAccessibility as usual.
+            if (reset) grantingAcc.set(false)
+            val ok = doGrantAccessibilityWithTimeout(app)
             onResult?.let { cb -> main.post { cb(ok) } }
         }.start()
+    }
+
+    /**
+     * Chạy [doGrantAccessibility] trên worker thread rồi JOIN có TIMEOUT ([GRANT_TIMEOUT_MS]): một phiên dadb
+     * TREO (đọc/ghi kẹt) KHÔNG thể ghim [grantingAcc] mãi mãi. Hết giờ → interrupt worker + ép
+     * `grantingAcc.set(false)` để lần grant sau (kể cả reset toggle) chạy được thay vì no-op tới khi restart app.
+     * MỘT lần thử / lời gọi — KHÔNG loop/backoff. doGrantAccessibility vẫn tự nhả cờ trong finally khi chạy xong.
+     */
+    private fun doGrantAccessibilityWithTimeout(app: Context): Boolean {
+        val result = java.util.concurrent.atomic.AtomicBoolean(false)
+        val worker = Thread { result.set(doGrantAccessibility(app)) }
+        worker.start()
+        worker.join(GRANT_TIMEOUT_MS)
+        if (worker.isAlive) {
+            Log.e(TAG, "grantAccessibility TIMEOUT ${GRANT_TIMEOUT_MS}ms → interrupt + nhả single-flight")
+            worker.interrupt()
+            grantingAcc.set(false)   // never let a hung dadb session pin the single-flight forever
+            return false
+        }
+        return result.get()
     }
 
     private fun doGrantAccessibility(app: Context): Boolean {

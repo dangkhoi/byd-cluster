@@ -45,9 +45,27 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // D1 (closeout 1.28): mirror the persisted verbose-log flag into the in-memory NavLog gate so per-frame
+        // hot paths read a @Volatile field (no SharedPreferences per frame). Entry point that always runs.
+        NavLog.init(this)
+
         // CLAUDE.md §9: mỗi bản đã báo cho user phải tự hiện số hiệu — không ai phải đoán xe đang chạy bản nào.
         val versionName = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull()
-        findViewById<TextView>(R.id.txt_app_title).text = "ClusterNav" + (versionName?.let { " · v$it" } ?: "")
+        val titleView = findViewById<TextView>(R.id.txt_app_title)
+        titleView.text = "ClusterNav" + (versionName?.let { " · v$it" } ?: "")
+        // D5 (closeout 1.28): HIDDEN verbose-log toggle — long-press the version label flips NavLog.verbose,
+        // persists it (Prefs), and Toasts the new state. No BuildConfig.DEBUG (OTA ships a RELEASE apk); default OFF.
+        titleView.setOnLongClickListener {
+            val on = !NavLog.verbose
+            NavLog.verbose = on
+            Prefs.setNavVerboseLog(this, on)
+            Toast.makeText(
+                this,
+                Lang.t("Nhật ký chi tiết: ", "Verbose log: ") + if (on) Lang.t("BẬT", "ON") else Lang.t("TẮT", "OFF"),
+                Toast.LENGTH_SHORT,
+            ).show()
+            true
+        }
 
         navEnabled = findViewById(R.id.switch_enabled)
         navDot = findViewById(R.id.dot_status)
@@ -124,16 +142,20 @@ class MainActivity : Activity() {
         // Chế độ hiển thị nav trên CỤM — ghi SET_NAVI_SCREEN_STATUS_SET (0x4C10E015) qua NavigationHudOwner
         // (đọc pref mỗi frame → áp dụng LIVE khi đang dẫn). ⚠️ value↔menu OEM chưa map chắc: dò trên xe rồi chốt.
         val clusterModeSpinner = findViewById<android.widget.Spinner>(R.id.spinner_cluster_mode)
-        val clusterModes = arrayOf("Đơn giản (Giữa + ETA)", "Toàn màn hình", "Màn hình nhỏ", "OFF")
-        val clusterModeValues = intArrayOf(
-            Prefs.NAV_SCREEN_SIMPLE, Prefs.NAV_SCREEN_FULL, Prefs.NAV_SCREEN_SMALL, Prefs.NAV_SCREEN_OFF,
-        )
+        // TASK 4 (R3 · docs/specs/clusternav-closeout-1.28.html): on-car only OFF ever changed anything — the 3
+        // layout modes (Đơn giản/Toàn/Nhỏ) hit the no-root wall and all render the same centre. Reduce to ON/OFF
+        // so there are no dead buttons. ON = NAV_SCREEN_SIMPLE (centre "Giữa + ETA"); OFF = NAV_SCREEN_OFF. The
+        // FULL/SMALL constants stay in Prefs (BydHal.NAV_SCREEN_MODE_ON back-compat) but are no longer selectable.
+        val clusterModes = arrayOf("Bật (Giữa + ETA)", "Tắt")
+        val clusterModeValues = intArrayOf(Prefs.NAV_SCREEN_FULL, Prefs.NAV_SCREEN_OFF)
         clusterModeSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, clusterModes)
-        clusterModeSpinner.setSelection(clusterModeValues.indexOf(Prefs.navClusterScreenMode(this)).coerceAtLeast(0))
+        // Migrate old prefs gracefully: any non-OFF stored value (incl. legacy FULL/SMALL) → index 0 (Bật);
+        // OFF → index 1 (Tắt). Prefs.navClusterScreenMode already collapses FULL/SMALL→SIMPLE on read.
+        clusterModeSpinner.setSelection(if (Prefs.navClusterScreenMode(this) == Prefs.NAV_SCREEN_OFF) 1 else 0)
         clusterModeSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
                 Prefs.setNavClusterScreenMode(this@MainActivity, clusterModeValues[pos])
-                // I4 (1.14): áp NGAY (re-assert 4→2) thay vì chờ reboot / frame kế bị dedup nuốt.
+                // I4 (1.14): áp NGAY (re-assert) thay vì chờ reboot / frame kế bị dedup nuốt.
                 NavRepository.reapplyClusterMode(applicationContext)
             }
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
@@ -215,6 +237,10 @@ class MainActivity : Activity() {
             }
         }
         refresh()
+
+        // D5 (closeout 1.28): one-time first-launch disclaimer (no warranty / not affiliated with BYD / install
+        // at your own risk). Shown once, guarded by Prefs.disclaimerShown.
+        maybeShowDisclaimer()
     }
 
     override fun onResume() {
@@ -323,6 +349,29 @@ class MainActivity : Activity() {
         NavigationOutputFailureReason.EXECUTOR_REJECTED -> Lang.t("luồng gửi đã dừng", "executor rejected")
         NavigationOutputFailureReason.DISPLAY_ACK_REJECTED -> Lang.t("cụm từ chối xác nhận", "cluster acknowledgement rejected")
         NavigationOutputFailureReason.INTERNAL_CONTRACT_ERROR -> Lang.t("sai hợp đồng nội bộ", "internal contract error")
+    }
+
+    /**
+     * D5 (closeout 1.28): one-time first-launch disclaimer — no warranty, not affiliated with BYD, install at
+     * your own risk (bilingual VI+EN, concise). Guarded by [Prefs.disclaimerShown] so it shows exactly once; the
+     * flag is set BEFORE show() so a config-change/dismiss can't re-trigger it. Reuses the AlertDialog pattern
+     * already used for [promptNotificationAccessFallback] / [showLearnNameDialog].
+     */
+    private fun maybeShowDisclaimer() {
+        if (isFinishing || Prefs.disclaimerShown(this)) return
+        Prefs.setDisclaimerShown(this, true)
+        android.app.AlertDialog.Builder(this)
+            .setTitle(Lang.t("Miễn trừ trách nhiệm", "Disclaimer"))
+            .setMessage(
+                Lang.t(
+                    "ClusterNav là thử nghiệm cá nhân, KHÔNG liên kết với BYD. Không có bảo đảm về an toàn lái xe, " +
+                        "tương thích hay độ ổn định. Cài và dùng với rủi ro của riêng bạn.",
+                    "ClusterNav is a personal experiment, NOT affiliated with BYD. It comes with no warranty of " +
+                        "driving safety, compatibility, or reliability. Install and use at your own risk.",
+                ),
+            )
+            .setPositiveButton(Lang.t("Tôi hiểu", "I understand"), null)
+            .show()
     }
 
     /**
@@ -452,10 +501,15 @@ class MainActivity : Activity() {
         vkSwitch.isChecked = Prefs.voiceKeyEnabled(this)
         vkSwitch.setOnCheckedChangeListener { _, on ->
             Prefs.setVoiceKeyEnabled(this, on)
-            // Cần service Hỗ trợ bật thì onKeyEvent mới nhận phím. Bật qua dadb (như selfGrant) nếu chưa bật.
-            if (on && !accessibilityBoosterGranted()) {
+            // TASK 3 (R2 · docs/specs/clusternav-closeout-1.28.html): toggle OFF→ON RESETS the grant state +
+            // re-requests the key bind (fresh grant + force-rebind) so the voice-key recovers after a reboot
+            // WITHOUT an app restart. Do NOT gate on accessibilityBoosterGranted(): after a reboot the service
+            // stays ENABLED-in-the-setting but NOT BOUND, so an enabled-only check would skip the heal. reset=true
+            // clears a hung single-flight (grantingAcc) before attempting; grantAccessibility still force-rebinds
+            // only when actually enabled-but-not-bound (no flicker if already bound). No auto-loop/backoff.
+            if (on) {
                 Toast.makeText(this, Lang.t("Đang bật dịch vụ Hỗ trợ…", "Enabling accessibility service…"), Toast.LENGTH_SHORT).show()
-                NavConnect.grantAccessibility(applicationContext) { ok ->
+                NavConnect.grantAccessibility(applicationContext, reset = true) { ok ->
                     if (isFinishing) return@grantAccessibility
                     Toast.makeText(
                         this,

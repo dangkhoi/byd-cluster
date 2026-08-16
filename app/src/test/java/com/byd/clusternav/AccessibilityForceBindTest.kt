@@ -23,6 +23,7 @@ class AccessibilityForceBindTest {
     }
 
     private val navConnect by lazy { app("src/main/java/com/byd/clusternav/NavConnect.kt").toFile().readText() }
+    private val mainActivity by lazy { app("src/main/java/com/byd/clusternav/MainActivity.kt").toFile().readText() }
 
     @Test
     fun `NavConnect verifies bound over dumpsys and force-rebinds via the pure logic`() {
@@ -85,6 +86,63 @@ class AccessibilityForceBindTest {
         assertTrue(
             navConnect.contains("catch (e: InterruptedException)"),
             "an interrupt mid-toggle is caught (flag restored) rather than crashing the app",
+        )
+    }
+
+    // ── TASK 3 (R2 · closeout-1.28): toggle OFF→ON RESETS a stuck grant + a timeout self-releases the flag ──
+
+    @Test
+    fun `grant has a reset entry that clears a stuck single-flight before attempting`() {
+        // Voice-key dead after reboot: a prior grant that HUNG (dadb session stuck) leaves grantingAcc pinned
+        // true, so every later compareAndSet(false,true) fails → no-op until an app restart. The reset entry
+        // (used by the 'Nút vật lý' toggle) must clear the flag BEFORE the normal single-flight acquisition.
+        assertTrue(
+            navConnect.contains("fun grantAccessibility(ctx: Context, reset: Boolean = false"),
+            "grantAccessibility exposes a reset entry (default false keeps the normal single-flight start path)",
+        )
+        assertTrue(
+            navConnect.contains("if (reset) grantingAcc.set(false)"),
+            "reset clears a stuck grantingAcc BEFORE attempting, so a hung prior flag can't block the re-grant",
+        )
+        assertTrue(
+            navConnect.contains("grantingAcc.compareAndSet(false, true)"),
+            "the normal (reset=false) start path still uses the plain single-flight (compareAndSet) guard",
+        )
+    }
+
+    @Test
+    fun `grant runs under a timeout that self-releases the single-flight on a hung session`() {
+        // A hung dadb session must not pin grantingAcc forever. The grant body runs on a worker thread joined
+        // with a bounded timeout; on timeout the worker is interrupted and the flag is force-released so a later
+        // grant (incl. the reset toggle) can proceed instead of no-op'ing until a restart. No auto-loop/backoff.
+        assertTrue(navConnect.contains("GRANT_TIMEOUT_MS"), "a bounded grant timeout constant exists")
+        assertTrue(
+            navConnect.contains("worker.join(GRANT_TIMEOUT_MS)"),
+            "the grant body runs on a worker thread joined with the timeout",
+        )
+        val start = navConnect.indexOf("if (worker.isAlive)")
+        assertTrue(start >= 0, "there is an on-timeout (worker still alive) branch")
+        val end = navConnect.indexOf("return result.get()", start)
+        val timeoutBranch = navConnect.substring(start, if (end >= 0) end else navConnect.length)
+        assertTrue(timeoutBranch.contains("worker.interrupt()"), "a hung worker is interrupted on timeout")
+        assertTrue(
+            timeoutBranch.contains("grantingAcc.set(false)"),
+            "the timeout branch force-releases the single-flight so it cannot be pinned forever",
+        )
+    }
+
+    @Test
+    fun `voice-key toggle ON resets the grant so it recovers after reboot without a restart`() {
+        // MainActivity wiring: turning 'Nút vật lý' OFF→ON must call the RESET entry (not the plain grant) so a
+        // hung single-flight is cleared and the key bind is force-re-requested — recovering the post-reboot
+        // enabled-but-not-bound state without an app restart.
+        assertTrue(
+            mainActivity.contains("NavConnect.grantAccessibility(applicationContext, reset = true)"),
+            "the voice-key switch OFF→ON calls grantAccessibility(reset = true) to reset + force-rebind",
+        )
+        assertTrue(
+            mainActivity.contains("Prefs.setVoiceKeyEnabled(this, on)"),
+            "the toggle still persists the enabled pref",
         )
     }
 }

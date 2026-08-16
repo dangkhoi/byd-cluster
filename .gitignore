@@ -95,3 +95,7 @@ scripts/vehicle/doorB_*.txt
 # owner's real commute route (location PII); the repo is public/OTA. Keep raw logs LOCAL only.
 # Aggregate analysis lives in docs/diagnostics/*.md (no route), which IS committed.
 docs/diagnostics/nav-logs/
+
+# Shelved old release/vehicle-test builds — kept locally, NOT committed (closeout 1.30).
+# apk/ keeps only the latest ClusterNav-<ver>-release.apk (OTA payload) tracked via the whitelist above.
+apk/_archive-old-builds/

@@ -47,6 +47,11 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
     private var appliedSeg = Int.MIN_VALUE
     private var appliedRoad = ""
 
+    // D4 (closeout 1.28): last-logged delivery key for log-on-change. The 250ms keep-alive re-asserts identical
+    // content (and mode=OFF re-clears every frame); only Log.i when the key changes → kills per-frame spam, keeps
+    // a low-rate signal. Touched only on the single "hud-hal-delivery" worker thread.
+    @Volatile private var lastClusterNavLogKey: String? = null
+
     // J1 keep-alive: OEM HUD/centre tự blank nếu quá lâu không có frame mới (đoạn dài không rẽ). Nhịp tim nội bộ
     // re-assert frame đã-applied (bypass dedup) — làn cụm có nhịp 400ms riêng, đường HAL này trước đây thì không.
     private val keepAlive = HudKeepAlivePolicy()
@@ -64,6 +69,7 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
             if (isClear) {
                 val rc = BydHal.clearNavFrame(appContext)
                 Log.i(TAG, "cluster-nav CLEAR → $rc")
+                lastClusterNavLogKey = null   // D4: state boundary → next guidance frame logs even if identical
                 synchronized(dedupLock) {
                     appliedIcon = Int.MIN_VALUE; appliedSeg = Int.MIN_VALUE; appliedRoad = ""
                 }
@@ -78,28 +84,44 @@ class NavigationHudOwner(private val appContext: Context) : AutoCloseable {
                     // (vô tác dụng trên xe — owner báo). Làn cụm (strip) do broadcast riêng nên không bị đụng;
                     // OFF chỉ tắt overlay "Giữa+ETA".
                     val rc = BydHal.clearNavFrame(appContext)
-                    Log.i(TAG, "cluster-nav mode=OFF → clear → $rc")
+                    // D4 (closeout 1.28): log-on-change — while mode=OFF every frame hits this branch; only log
+                    // the transition INTO OFF, not each ~4/sec re-clear.
+                    if (lastClusterNavLogKey != "mode=OFF") {
+                        lastClusterNavLogKey = "mode=OFF"
+                        Log.i(TAG, "cluster-nav mode=OFF → clear → $rc")
+                    }
                     synchronized(dedupLock) {
                         appliedIcon = Int.MIN_VALUE; appliedSeg = Int.MIN_VALUE; appliedRoad = ""
                     }
                     keepAlive.onCleared()
                 } else {
-                    val rc = BydHal.writeNavFrame(
-                        appContext, icon, seg, road, mode,
-                        routeSeconds = c.routeRemainingSeconds ?: -1,
-                        routeMeters = c.routeRemainingMeters ?: -1,
-                        arrivalClock = c.arrivalClock,
-                    )
-                    Log.i(TAG, "cluster-nav icon=$icon seg=$seg road='$road' mode=$mode → $rc")
-                    // Commit applied state only on successful delivery (no exception thrown).
-                    synchronized(dedupLock) {
-                        appliedIcon = icon; appliedSeg = seg; appliedRoad = road
-                    }
                     // Lỗ 1 (handoff 2026-08-15): CHỈ real push (nguồn đẩy frame mới; session != KEEPALIVE_SESSION)
                     // mới làm tươi TRẦN TUỔI. Keep-alive re-assert đi qua đúng đường này nhưng chỉ được nhịp lại
                     // lastWrite (realPush=false) — nếu không, nhịp tim tự làm tươi trần tuổi của chính nó và frame
                     // chết bị ghim vô hạn.
                     val realPush = frame.sessionId != KEEPALIVE_SESSION
+                    // TASK 2 (closeout 1.28): keep-alive re-assert chỉ làm tươi NỘI DUNG (guidance icon/cự ly/tên
+                    // đường + oversea + trip/eta) — KHÔNG re-fire SEND_NAVI_STATUS / SET_NAVI_SCREEN_STATUS / 3 SDK
+                    // call. status là cờ session latch (đặt 1 lần lúc real push); viết lại ~4×/s chỉ là churn vô ích.
+                    // Truyền keepAlive = !realPush xuống writeNavFrame (cùng hàm đã gộp TASK 5 rejection cache).
+                    val rc = BydHal.writeNavFrame(
+                        appContext, icon, seg, road, mode,
+                        routeSeconds = c.routeRemainingSeconds ?: -1,
+                        routeMeters = c.routeRemainingMeters ?: -1,
+                        arrivalClock = c.arrivalClock,
+                        keepAlive = !realPush,
+                    )
+                    // D4 (closeout 1.28): log-on-change — the 250ms keep-alive re-asserts identical content; only
+                    // Log.i when icon|seg|road|mode changes (rc reflects the actual write just done).
+                    val logKey = "$icon|$seg|$road|$mode"
+                    if (logKey != lastClusterNavLogKey) {
+                        lastClusterNavLogKey = logKey
+                        Log.i(TAG, "cluster-nav icon=$icon seg=$seg road='$road' mode=$mode keepAlive=${!realPush} → $rc")
+                    }
+                    // Commit applied state only on successful delivery (no exception thrown).
+                    synchronized(dedupLock) {
+                        appliedIcon = icon; appliedSeg = seg; appliedRoad = road
+                    }
                     keepAlive.onFrameWritten(SystemClock.elapsedRealtime(), realPush = realPush)
                     // Lỗ 3 (handoff 2026-08-15): stop() huỷ nhịp tim theo TỪNG tuyến ⇒ tuyến 2 mất heartbeat (bug
                     // chớp ~1s của 1.15 quay lại). Real push của tuyến mới RE-ARM lại nhịp tim từ ĐƯỜNG DELIVERY.

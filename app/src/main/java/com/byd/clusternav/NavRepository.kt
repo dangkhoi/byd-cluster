@@ -112,6 +112,17 @@ object NavRepository {
         val owner = NavigationHudOwner(appCtx).also { it.start() }
         hudOwner = owner
         val lane = ClusterLaneAdapter(NavigationFrameDelivery { frame ->
+            // TASK 6 (closeout 1.28) — naviState prime: VERIFIED NO-GAP, KHÔNG cần prime broadcast riêng.
+            // Thứ tự per-frame ĐÃ là broadcast-first + naviState=1 LATCH, chứng minh bằng code (không đoán):
+            //  • emitLane() dưới đây phát broadcast AUTONAVI (EXTRA_STATE=1) ĐỒNG BỘ ngay trên luồng delivery —
+            //    AmapEmissionArbiter.sourceFrame gọi thẳng sink→handleEmission→sendFrame→sendBroadcast; CHỈ nhịp
+            //    tim 400ms mới postDelayed qua main Handler, KHÔNG phải frame đầu lúc boot.
+            //  • lệnh push HAL bên dưới CHỈ enqueue frame vào worker đơn-luồng "hud-hal-delivery"
+            //    (ThreadPoolExecutor.execute) → HAL writeNavFrame chạy SAU trên luồng worker.
+            // ⇒ sendBroadcast(naviState=1) happens-before HAL frame được submit, MỌI frame kể cả frame đầu.
+            // naviState=1 là cờ session latch (giữ tới STOP) + heartbeat 400ms re-gửi, nên transient cross-process
+            // OEM (nếu có) tự khỏi trong 1 nhịp. KHÔNG bịa 'open' broadcast (no-assumptions: ngữ nghĩa broadcast
+            // OEM chưa đo được → không đoán). Chi tiết verify: docs/specs/clusternav-closeout-1.28.html §TASK 6.
             // IS_BYD_MAP=true (OpenBYD-style, 2026-08-16): OpenBYD gửi broadcast IS_BYD_MAP=true (nav "BYD map") + ghi
             // HAL guidance liên tục — GIẢ THUYẾT combo này là trigger để HUD kính lái mirror nav (M1 lâu nay). RE §3:
             // IS_BYD_MAP=true+TYPE=1 VẪN render cụm (không hỏng cụm strip). Probe — revert 1 dòng nếu on-car hỏng.

@@ -158,4 +158,59 @@ class ManeuverSignatureTest {
             assertEquals(20, ManeuverSignature.classifyHal(f), "$name phải giữ HAL 20 (vòng xuyến), không phải 24")
         }
     }
+
+    // ── TASK 1 (closeout 1.28): classifyManeuver map chữ ký vòng xuyến → [Maneuver] CÓ HƯỚNG (hết generic).
+    //    Bottleneck AMAP-int (classify→11→fromAmapIcon→ROUNDABOUT) vứt hướng ra; đường này giữ lại hướng cho HUD.
+
+    @Test
+    fun `TASK1 — classifyManeuver vong xuyen CCW ra dung huong`() {
+        assertEquals(
+            Maneuver.ROUNDABOUT_LEFT,
+            ManeuverSignature.classifyManeuver(registryFrame("maneuver_roundabout_enter_and_exit_ccw_normal_left")),
+        )
+        assertEquals(
+            Maneuver.ROUNDABOUT_RIGHT,
+            ManeuverSignature.classifyManeuver(registryFrame("maneuver_roundabout_enter_and_exit_ccw_normal_right")),
+        )
+        assertEquals(
+            Maneuver.ROUNDABOUT_STRAIGHT,
+            ManeuverSignature.classifyManeuver(registryFrame("maneuver_roundabout_enter_and_exit_ccw_straight")),
+        )
+        assertEquals(
+            Maneuver.ROUNDABOUT_UTURN,
+            ManeuverSignature.classifyManeuver(registryFrame("maneuver_roundabout_enter_and_exit_ccw_u_turn")),
+        )
+    }
+
+    @Test
+    fun `TASK1 — classifyManeuver vong xuyen CW giu chieu (_cw khong lan _ccw)`() {
+        assertEquals(
+            Maneuver.ROUNDABOUT_LEFT_CW,
+            ManeuverSignature.classifyManeuver(registryFrame("maneuver_roundabout_enter_and_exit_cw_normal_left")),
+        )
+    }
+
+    @Test
+    fun `TASK1 — classifyManeuver exit thuan ra ROUNDABOUT_EXIT, enter generic ra ROUNDABOUT`() {
+        assertEquals(
+            Maneuver.ROUNDABOUT_EXIT,
+            ManeuverSignature.classifyManeuver(registryFrame("maneuver_roundabout_exit_ccw")),
+        )
+        assertEquals(
+            Maneuver.ROUNDABOUT,
+            ManeuverSignature.classifyManeuver(registryFrame("maneuver_roundabout_enter_ccw")),
+        )
+    }
+
+    @Test
+    fun `TASK1 — classifyManeuver KHONG phai vong xuyen ra null (caller fallback fromAmapIcon)`() {
+        // turn_left = non-roundabout → null → NavRepository giữ đường fromAmapIcon cũ, KHÔNG đổi hành vi.
+        assertNull(ManeuverSignature.classifyManeuver(registryFrame("maneuver_turn_normal_left")))
+    }
+
+    @Test
+    fun `TASK1 — classifyManeuver anh null hoac qua nho ra null (cung guard classify)`() {
+        assertNull(ManeuverSignature.classifyManeuver(null))
+        assertNull(ManeuverSignature.classifyManeuver(frame(4, 4) { _, _ -> true }))
+    }
 }

@@ -73,8 +73,21 @@ object BydHal {
         return null
     }
 
-    fun featureId(name: String): Int? =
-        runCatching { Class.forName(IDS).getField(name).getInt(null) }.getOrNull()
+    // D2 (closeout 1.28): cache name→id so writeNavFrame's ~20 featureId() lookups/frame stop hitting reflection
+    // on the ~4/sec hot path. Mirrors the getterCache pattern below. Behaviour IDENTICAL: same Int, or null when
+    // the field is absent (ConcurrentHashMap can't hold null → a separate absent-set records the misses so the
+    // reflect+catch runs once per name, not once per frame). Field values are static-final ints → stable.
+    private val featureIdCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val featureIdAbsent = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    fun featureId(name: String): Int? {
+        featureIdCache[name]?.let { return it }
+        if (name in featureIdAbsent) return null
+        val v = runCatching { Class.forName(IDS).getField(name).getInt(null) }.getOrNull()
+        if (v != null) featureIdCache[name] = v else featureIdAbsent.add(name)
+        return v
+    }
+    /** Test-only: clear the featureId cache between tests (cache is process-global in the object). */
+    internal fun resetFeatureIdCacheForTest() { featureIdCache.clear(); featureIdAbsent.clear() }
 
     /** Mọi field trong BYDAutoFeatureIds khớp 1 trong [subs] (substring, không phân biệt hoa thường) → (tên, id). */
     fun featureIdsMatching(vararg subs: String): List<Pair<String, Int>> = runCatching {
@@ -86,21 +99,38 @@ object BydHal {
 
     /** Ghi 1 feature int qua set(int[], EventValue). Trả rc; ném nếu không có method set. */
     fun setInt(dev: Any, id: Int, value: Int): Any? = setEv(dev, id) { ev ->
-        ev.javaClass.getField("intValue").setInt(ev, value)
+        evField("intValue").setInt(ev, value)
     }
 
     /** Ghi buffer (vd tên đường UTF-16LE) qua set(int[], EventValue).bufferDataValue. */
     fun setBytes(dev: Any, id: Int, bytes: ByteArray): Any? = setEv(dev, id) { ev ->
-        ev.javaClass.getField("bufferDataValue").set(ev, bytes)
+        evField("bufferDataValue").set(ev, bytes)
     }
 
-    private inline fun setEv(dev: Any, id: Int, fill: (Any) -> Unit): Any? {
-        val ev = Class.forName(EV).getDeclaredConstructor().newInstance()
-        fill(ev)
+    // D2 (closeout 1.28) reflection-handle cache: the EventValue class/ctor/fields and the device
+    // set(int[],EventValue) method are STABLE per class/process. writeNavFrame formerly resolved all of them
+    // ~15×/frame (getDeclaredConstructor + getField + a full dev.javaClass.methods scan). Cache once. Behaviour +
+    // thrown-exception semantics are identical: a device missing set(int[],EventValue) still throws
+    // NoSuchMethodException, and off-car the EV Class.forName still throws (callers already runCatching it).
+    private val evClass by lazy { Class.forName(EV) }
+    private val evCtor by lazy { evClass.getDeclaredConstructor() }
+    private val evFieldCache = java.util.concurrent.ConcurrentHashMap<String, java.lang.reflect.Field>()
+    private fun evField(name: String): java.lang.reflect.Field =
+        evFieldCache[name] ?: evClass.getField(name).also { evFieldCache[name] = it }
+    private val setMethodCache = java.util.concurrent.ConcurrentHashMap<String, java.lang.reflect.Method>()
+    private fun setMethod(dev: Any): java.lang.reflect.Method {
+        setMethodCache[dev.javaClass.name]?.let { return it }
         val set = dev.javaClass.methods.firstOrNull {
             it.name == "set" && it.parameterTypes.size == 2 && it.parameterTypes[0] == IntArray::class.java
         } ?: throw NoSuchMethodException("set(int[], EventValue)")
-        return set.invoke(dev, intArrayOf(id), ev)
+        setMethodCache[dev.javaClass.name] = set
+        return set
+    }
+
+    private inline fun setEv(dev: Any, id: Int, fill: (Any) -> Unit): Any? {
+        val ev = evCtor.newInstance()
+        fill(ev)
+        return setMethod(dev).invoke(dev, intArrayOf(id), ev)
     }
 
     /** Gọi method [name] (0/1 arg int, có thể String) → (ok, "rc=..." / lỗi). Cho probe HAL set/get/hasFeature bất kỳ. */
@@ -165,6 +195,72 @@ object BydHal {
     const val CROSSING_DIST_OVERSEA_ID = 0x1F701018     // cự ly  — INSTRUMENT_DISTANCE_TARGET_HEAD_SET (~ FRONT_CROSSING_DISTANCE)
     const val PATHNAME_OVERSEA_ID = 0x1F7A1008          // tên đường — INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_OVERASEA_SET (~ NEXT_PATHNAME)
 
+    // ── TASK 5 (closeout 1.28): per-feature-id in-process rejection cache ─────────────────────────────────
+    /**
+     * rc mà BYDAuto HAL trả khi feature-id KHÔNG được provision trên trim này = `0x800003E8`
+     * = `Int.MIN_VALUE + 1000` = **-2147482648**. Quan sát LẶP LẠI trên xe owner (Seal), KHÔNG suy đoán:
+     *   `docs/diagnostics/oncar-runbook-4mode-track-a-probes-2026-08-14.md` — "rc=-2147482648 (REJECTED)";
+     *   `docs/diagnostics/app-code-updates-2026-08-16.md` — "rc=-2147482648 + no permission device 1007";
+     *   `scripts/vehicle/hud-provisioning-compare.sh` — "-2147482648 = NOT provisioned/no-permission".
+     * ⚠ ĐÂY KHÔNG PHẢI `Int.MIN_VALUE` (-2147483648) dù vài tài liệu prose gọi nhầm là "Int.MIN_VALUE" —
+     * lệch đúng 1000 (0x3E8). Dùng đúng số đo được, nếu không cache sẽ KHÔNG BAO GIỜ khớp → vô dụng.
+     */
+    const val NOT_PROVISIONED_RC = -2147482648
+
+    // Feature-id (INT/bytes) đã bị HAL từ chối (rc == NOT_PROVISIONED_RC) → SKIP ở frame sau (hết spam
+    // 'no permission device 1007' mỗi frame). In-memory, reset khi process restart. Xe provision oversea
+    // (Sealion 6) KHÔNG bao giờ nhận sentinel → không cache → VẪN ghi (KHÔNG hard-remove code oversea).
+    private val rejectedFeatures = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+    // SDK method (sendSimpleGuidanceInfo/sendNextPathName/sendRestRouteInfo) NÉM lỗi (no-permission hoặc method
+    // absent — cả hai đều ỔN ĐỊNH theo process) → skip lần sau. Key = tên method (stable). Sealion 6 chạy OK →
+    // không ném → không cache → vẫn gọi.
+    private val rejectedSdk = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    internal fun isFeatureRejected(id: Int): Boolean = id in rejectedFeatures
+    /** Ghi nhận rc của 1 INT/bytes write; cache [id] nếu rc == [NOT_PROVISIONED_RC]. Trả true nếu vừa cache. */
+    internal fun recordFeatureRc(id: Int, rc: Any?): Boolean {
+        val rejected = (rc as? Int) == NOT_PROVISIONED_RC
+        if (rejected) rejectedFeatures.add(id)
+        return rejected
+    }
+    internal fun isSdkRejected(key: String): Boolean = key in rejectedSdk
+    internal fun recordSdkFailure(key: String) { rejectedSdk.add(key) }
+    /** Test-only: xả cache giữa các test (cache là process-global trong object). */
+    internal fun resetRejectionCacheForTest() { rejectedFeatures.clear(); rejectedSdk.clear() }
+
+    /** setInt qua cache rejection: skip nếu id đã bị từ chối; nếu không → setInt rồi cache khi rc == sentinel. */
+    private fun cachedSetInt(dev: Any, id: Int, value: Int): String {
+        if (isFeatureRejected(id)) return "skip"
+        val r = runCatching { setInt(dev, id, value) }.getOrElse { return root(it) }
+        recordFeatureRc(id, r)
+        return "$r"
+    }
+    /** setBytes qua cache rejection (chung set rejectedFeatures theo id — kill spam tên-đường oversea trên owner). */
+    private fun cachedSetBytes(dev: Any, id: Int, bytes: ByteArray): String {
+        if (isFeatureRejected(id)) return "skip"
+        val r = runCatching { setBytes(dev, id, bytes) }.getOrElse { return root(it) }
+        recordFeatureRc(id, r)
+        return "$r"
+    }
+    /** Gọi 1 SDK method qua cache rejection: skip nếu đã ném trước đó; nếu không → gọi và cache khi ném. */
+    private fun cachedSdk(key: String, rc: StringBuilder, tag: String, block: () -> Any?) {
+        if (isSdkRejected(key)) { rc.append(" $tag=skip"); return }
+        runCatching { block() }
+            .onSuccess { rc.append(" $tag=$it") }
+            .onFailure { e -> rc.append(" $tag!=").append(root(e)); recordSdkFailure(key) }
+    }
+
+    // D2 (closeout 1.28): cache the OEM SDK method handles (sendSimpleGuidanceInfo / sendNextPathName /
+    // sendRestRouteInfo) resolved via getMethod on the real-push path. Keyed by device-class#method (param types
+    // are fixed per name here). getMethod still THROWS NoSuchMethodException when the method is absent → cachedSdk's
+    // runCatching records the SDK-rejection (TASK 5) exactly as before → skipped next frame. On Sealion 6 (methods
+    // present) the handle is resolved once then reused instead of scanned every real push.
+    private val sdkMethodCache = java.util.concurrent.ConcurrentHashMap<String, java.lang.reflect.Method>()
+    private fun sdkMethod(dev: Any, name: String, vararg params: Class<*>?): java.lang.reflect.Method {
+        val key = "${dev.javaClass.name}#$name"
+        return sdkMethodCache[key] ?: dev.javaClass.getMethod(name, *params).also { sdkMethodCache[key] = it }
+    }
+
     /** Ghi 1 frame nav IN-PROCESS lên cụm (status=2 + chọn mode nav-screen + icon/khoảng-cách/tên-đường) qua
      *  bypass-context. Đây là CƠ CHẾ THẬT tạo "Giữa + ETA" (khớp navopen), KHÁC ch1000 op39 (no-op trên xe này).
      *  [screenMode] = giá trị SET_NAVI_SCREEN_STATUS_SET (xem [NAV_SCREEN_MODE_ON]). Trả tóm tắt rc.
@@ -172,34 +268,38 @@ object BydHal {
     fun writeNavFrame(
         ctx: Context, icon: Int, segMeters: Int, road: String, screenMode: Int = NAV_SCREEN_MODE_ON,
         routeSeconds: Int = -1, routeMeters: Int = -1, arrivalClock: String? = null,
+        keepAlive: Boolean = false,
     ): String {
         val sys = systemBypassContext()
         val instr = device(INSTRUMENT, sys, bypass(ctx)) ?: return "InstrumentDevice null (không ghi được)"
         val setting = device(SETTING, sys, bypass(ctx))
         val rc = StringBuilder()
-        fun w(name: String, v: Int) { featureId(name)?.let { id -> rc.append(" $name=").append(runCatching { setInt(instr, id, v) }.getOrElse { root(it) }) } }
+        // TASK 5: mọi INT write đi qua cachedSetInt (skip id đã bị HAL từ chối; cache khi gặp sentinel not-provisioned).
+        fun w(name: String, v: Int) { featureId(name)?.let { id -> rc.append(" $name=").append(cachedSetInt(instr, id, v)) } }
         // Ghi 1 feature INT theo TÊN (reflect BYDAutoFeatureIds), FALLBACK raw-id cho các tên OVERSEA vắng trong lớp reflect.
         fun wi(name: String, rawId: Int, v: Int, tag: String) {
-            (featureId(name) ?: rawId).let { id -> rc.append(" $tag=").append(runCatching { setInt(instr, id, v) }.getOrElse { root(it) }) }
+            (featureId(name) ?: rawId).let { id -> rc.append(" $tag=").append(cachedSetInt(instr, id, v)) }
         }
-        w("INSTRUMENT_SEND_NAVI_STATUS_SET", 2)
-        featureId("SET_NAVI_SCREEN_STATUS_SET")?.let { id -> setting?.let { s -> rc.append(" NAVI_SCREEN=").append(runCatching { setInt(s, id, screenMode) }.getOrElse { e -> root(e) }) } }
+        // TASK 2: status + screen-mode là cờ SESSION LATCH → CHỈ ghi lúc real push; BỎ ở keep-alive (đỡ churn ~4×/s).
+        if (!keepAlive) w("INSTRUMENT_SEND_NAVI_STATUS_SET", 2)
+        if (!keepAlive) featureId("SET_NAVI_SCREEN_STATUS_SET")?.let { id -> setting?.let { s -> rc.append(" NAVI_SCREEN=").append(cachedSetInt(s, id, screenMode)) } }
+        // CONTENT (LUÔN ghi, kể cả keep-alive): guidance icon + dualIcon + cự ly + tên đường.
         w("INSTRUMENT_GUIDE_INFO_SIMPLE_SET", icon)
         w("INSTRUMENT_GUIDE_INFO_AND_ROAD_AHEAD_DISTANCE_SET", icon)   // OpenBYD "dualIcon" (0x43F01030) — ghi icon vào cả feature này
         w("INSTRUMENT_FRONT_CROSSING_DISTANCE_SET", segMeters)
-        featureId("INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_SET")?.let { id -> rc.append(" PATHNAME=").append(runCatching { setBytes(instr, id, road.toByteArray(Charsets.UTF_16LE)) }.getOrElse { e -> root(e) }) }
+        featureId("INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_SET")?.let { id -> rc.append(" PATHNAME=").append(cachedSetBytes(instr, id, road.toByteArray(Charsets.UTF_16LE))) }
         // THỬ NGHIỆM (2026-08-15, insight owner): guidance có bản OVERSEA (export) song song domestic (suffix id trùng,
         // prefix 0x1F7 vs 0x43F). Xe export (Seal) đọc họ 0x1F7 → HUD không lên GÌ khi app chỉ ghi 0x43F. Ghi THÊM
         // bản oversea cho mũi tên + cự ly + tên đường (KHÔNG bỏ domestic). Feature hiển thị → ghi lành tính; null-safe;
         // fallback raw-id (BYDAutoFeatureIds thiếu tên oversea). Xác nhận trên xe: HUD export lên mũi tên/cự ly/tên chưa.
         (featureId("INSTRUMENT_EASY_NAVI_GUIDE_INFOR_SET") ?: EASY_NAVI_GUIDE_OVERSEA_ID).let { id ->
-            rc.append(" GUIDE_OVERSEA=").append(runCatching { setInt(instr, id, icon) }.getOrElse { e -> root(e) })
+            rc.append(" GUIDE_OVERSEA=").append(cachedSetInt(instr, id, icon))
         }
         (featureId("INSTRUMENT_DISTANCE_TARGET_HEAD_SET") ?: CROSSING_DIST_OVERSEA_ID).let { id ->
-            rc.append(" DIST_OVERSEA=").append(runCatching { setInt(instr, id, segMeters) }.getOrElse { e -> root(e) })
+            rc.append(" DIST_OVERSEA=").append(cachedSetInt(instr, id, segMeters))
         }
         (featureId("INSTRUMENT_TARGET_NEXT_PATHNAME_INFO_OVERASEA_SET") ?: PATHNAME_OVERSEA_ID).let { id ->
-            rc.append(" PATHNAME_OVERSEA=").append(runCatching { setBytes(instr, id, road.toByteArray(Charsets.UTF_16LE)) }.getOrElse { e -> root(e) })
+            rc.append(" PATHNAME_OVERSEA=").append(cachedSetBytes(instr, id, road.toByteArray(Charsets.UTF_16LE)))
         }
         // FULL DATA HUD (2026-08-15, owner "ghi hết data lên HUD, domestic + oversea"): thời-gian-còn-lại (giờ/phút/
         // giây/ngày), quãng-đường-còn-lại, giờ-tới (ETA) — CHƯA từng ghi lên HUD (trước chỉ vào CỤM qua broadcast).
@@ -227,14 +327,21 @@ object BydHal {
         // 1.26 — GỌI THÊM OEM SDK method của BYDAutoInstrumentDevice (như OpenBYD CarControlImpl): ngoài ghi raw
         // feature, gọi thẳng method native. GIẢ THUYẾT: method SDK mới là cái bật TÊN ĐƯỜNG + guidance lên HUD kính
         // (raw feature chỉ tới cụm-centre). Reflect + invoke trên instr; null-safe (method vắng/lỗi → bỏ qua, log rc).
-        runCatching { instr.javaClass.getMethod("sendSimpleGuidanceInfo", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType).invoke(instr, icon, segMeters) }
-            .onSuccess { rc.append(" sdk.guide=$it") }.onFailure { rc.append(" sdk.guide!=").append(root(it)) }
-        if (road.isNotBlank()) runCatching { instr.javaClass.getMethod("sendNextPathName", String::class.java).invoke(instr, road) }
-            .onSuccess { rc.append(" sdk.road=$it") }.onFailure { rc.append(" sdk.road!=").append(root(it)) }
-        if (routeSeconds >= 0 && routeMeters >= 0) runCatching {
-            instr.javaClass.getMethod("sendRestRouteInfo", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Long::class.javaPrimitiveType)
-                .invoke(instr, routeSeconds / 3600, (routeSeconds % 3600) / 60, routeMeters.toLong())
-        }.onSuccess { rc.append(" sdk.rest=$it") }.onFailure { rc.append(" sdk.rest!=").append(root(it)) }
+        // TASK 2: 3 SDK call BỎ ở keep-alive (chỉ real push). TASK 5: cachedSdk cache theo tên method — ném lỗi lần
+        // đầu (no-permission / method absent, cả hai ỔN ĐỊNH theo process) → skip lần sau (hết spam 'no permission
+        // device 1007'). Xe provision oversea (Sealion 6) SDK chạy OK → không ném → không cache → vẫn gọi.
+        if (!keepAlive) {
+            cachedSdk("sendSimpleGuidanceInfo", rc, "sdk.guide") {
+                sdkMethod(instr, "sendSimpleGuidanceInfo", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType).invoke(instr, icon, segMeters)
+            }
+            if (road.isNotBlank()) cachedSdk("sendNextPathName", rc, "sdk.road") {
+                sdkMethod(instr, "sendNextPathName", String::class.java).invoke(instr, road)
+            }
+            if (routeSeconds >= 0 && routeMeters >= 0) cachedSdk("sendRestRouteInfo", rc, "sdk.rest") {
+                sdkMethod(instr, "sendRestRouteInfo", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Long::class.javaPrimitiveType)
+                    .invoke(instr, routeSeconds / 3600, (routeSeconds % 3600) / 60, routeMeters.toLong())
+            }
+        }
         return rc.toString().trim()
     }
 

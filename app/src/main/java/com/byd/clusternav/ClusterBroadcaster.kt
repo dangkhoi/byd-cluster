@@ -47,6 +47,9 @@ object ClusterBroadcaster {
     private var sourceSequence = 0L
     private var lastCleanRoad = ""
     private var roadShownAtMs = 0L    // I2 (1.14): mốc thời gian đường hiện tại xuất hiện → offset marquee tính từ đây (đều, bắt đầu từ đầu tên)
+    // D4 (closeout 1.28): last-emitted icon|seg|road for log-on-change — the ~4/sec heartbeat re-emits identical
+    // frames; only Log.i when this key changes (kills per-frame spam, keeps a low-rate signal). Main-thread only.
+    private var lastEmitLaneKey: String? = null
     private val hudController = HudMirrorController()
 
     private val emissionArbiter by lazy {
@@ -163,8 +166,17 @@ object ClusterBroadcaster {
                 frameArrow = s.arrow, liveArrow = NavRepository.state.arrow,
             )
         }.onFailure { Log.w(TAG, "vết icon rẽ lỗi", it) }
-        Log.i(TAG, "emit lane icon=${frame.getIntExtra("NEW_ICON", -1)} seg=${frame.getIntExtra("SEG_REMAIN_DIS", -1)} " +
-            "raw='${s.distance}' road='${frame.getStringExtra("NEXT_ROAD_NAME")}' byd=$byd")
+        // D4 (closeout 1.28): log-on-change — the ~4/sec heartbeat re-emits identical frames; only Log.i when the
+        // emitted icon|seg|road changes. Kills per-frame spam, keeps a low-rate signal (W/E logs stay
+        // unconditional). sendFrame runs single-threaded on the main looper (Handler) → no lock needed.
+        val emitIcon = frame.getIntExtra("NEW_ICON", -1)
+        val emitSeg = frame.getIntExtra("SEG_REMAIN_DIS", -1)
+        val emitRoad = frame.getStringExtra("NEXT_ROAD_NAME")
+        val emitKey = "$emitIcon|$emitSeg|$emitRoad"
+        if (emitKey != lastEmitLaneKey) {
+            lastEmitLaneKey = emitKey
+            Log.i(TAG, "emit lane icon=$emitIcon seg=$emitSeg raw='${s.distance}' road='$emitRoad' byd=$byd")
+        }
     }
 
     /** HUD remains UNKNOWN in T7: record request/source truth and perform zero physical writes. */
@@ -207,6 +219,7 @@ object ClusterBroadcaster {
             AmapEmissionKind.SESSION_RESET -> {
                 lastCleanRoad = ""
                 roadShownAtMs = 0L
+                lastEmitLaneKey = null
                 sendResetFrames(payload.context)
             }
             AmapEmissionKind.SOURCE_FRAME -> {
@@ -229,6 +242,7 @@ object ClusterBroadcaster {
             AmapEmissionKind.STOP -> {
                 lastCleanRoad = ""
                 roadShownAtMs = 0L
+                lastEmitLaneKey = null
                 TurnDistanceInterpolator.reset()
                 SourceArbiter.clear()
                 sendResetFrames(payload.context)

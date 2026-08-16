@@ -46,6 +46,10 @@ class NavNotificationListener : NotificationListenerService() {
     // được arrow → dùng lại hướng trước thay vì rớt straight. Reset ở ranh giới phiên (đến nơi / gỡ noti).
     @Volatile private var lastManeuverIcon: Int = -1
 
+    // D4 (closeout 1.28): last-logged dist|road|eta for log-on-change on the accepted-notification log — kills
+    // per-notification spam while keeping a low-rate signal. Reset at session boundaries (like lastManeuverIcon).
+    @Volatile private var lastNavLogKey: String? = null
+
     /** Hệ thống THẢ binding (head-unit hay làm lúc chạy) → clear typed sources before teardown. */
     override fun onListenerDisconnected() {
         connected = false
@@ -57,7 +61,7 @@ class NavNotificationListener : NotificationListenerService() {
         runCatching {
             // Ranh giới phiên = "rớt binding" (KDoc ManeuverHold + NavArrivalGuard): reset state per-phiên như
             // nhánh onNotificationRemoved/arrival để tuyến MỚI sau rebind không kế thừa hướng rẽ / mốc cự ly cũ.
-            arrivalGuard.reset(); lastManeuverIcon = -1
+            arrivalGuard.reset(); lastManeuverIcon = -1; lastNavLogKey = null
             NavRepository.stop(applicationContext)
             ClusterNavLaneWidget.onNavIdle()
             Log.i(TAG, "binding thả -> stop authoritative session (nguồn dừng)")
@@ -72,6 +76,9 @@ class NavNotificationListener : NotificationListenerService() {
     /** Khi (re)cấp quyền / service bind lại: clear cờ kẹt + QUÉT noti đang hiện (nav có thể đã chạy trước). */
     override fun onListenerConnected() {
         connected = true
+        // D1 (closeout 1.28): entry point that always runs on (re)bind → refresh the in-memory verbose gate
+        // (set BEFORE the enabled early-return so the gate is correct even while Nav+HUD is OFF).
+        NavLog.init(applicationContext)
         if (!Prefs.enabled(applicationContext)) return
         SourceArbiter.clear()
         runCatching { NavRepository.setPermission(applicationContext, NavigationPermission.GRANTED) }
@@ -126,7 +133,7 @@ class NavNotificationListener : NotificationListenerService() {
         }
         // CHỈ tắt cụm nếu app vừa-gỡ chính là nguồn đang giữ khoá — gỡ noti app nền KHÔNG tắt nav app đang dẫn.
         if (SourceArbiter.release(sbn.packageName)) {
-            arrivalGuard.reset(); lastManeuverIcon = -1
+            arrivalGuard.reset(); lastManeuverIcon = -1; lastNavLogKey = null
             NavRepository.stop(applicationContext)
             ClusterNavLaneWidget.onNavIdle()
             Log.i(TAG, "nguồn ${sbn.packageName} dừng -> stop authoritative session")
@@ -148,7 +155,7 @@ class NavNotificationListener : NotificationListenerService() {
         if (NavArrivalGuard.isArrivalText(title, text, big)) {
             // R3: "đã đến" cũng phải qua trọng tài — app NỀN báo đến KHÔNG được đè cụm đang do app khác giữ.
             if (!SourceArbiter.shouldFeed(sbn.packageName, Prefs.sourceMode(applicationContext), System.currentTimeMillis())) return
-            arrivalGuard.reset(); lastManeuverIcon = -1
+            arrivalGuard.reset(); lastManeuverIcon = -1; lastNavLogKey = null
             runCatching { TurnDistanceInterpolator.reset() }
             runCatching { NavRepository.stop(applicationContext) }
                 .onFailure { Log.e(TAG, "arrival stop failed", it) }
@@ -191,12 +198,23 @@ class NavNotificationListener : NotificationListenerService() {
         val classifiedIcon = ManeuverHold.resolve(freshIcon, lastManeuverIcon)
         if (classifiedIcon in 0..28) lastManeuverIcon = classifiedIcon
 
-        val state = NotificationParser.parse(sbn.packageName, title, text, sub, big, arrow, classifiedIcon) ?: return
+        // TASK 1 (closeout 1.28): mang MANEUVER CÓ HƯỚNG cho họ vòng xuyến sang NavState.maneuver. Bottleneck cũ:
+        // classifiedIcon là AMAP-int nên MỌI vòng xuyến gộp về 11 → NavRepository.ingest fromAmapIcon(11)=ROUNDABOUT
+        // generic → HUD toHudIcon()=20 (mất hướng ra). classifyManeuver đọc CHÍNH large-icon frame này và CHỈ trả
+        // non-null cho chữ ký vòng xuyến (ROUNDABOUT_LEFT/RIGHT/STRAIGHT/UTURN ± _CW). Mọi frame KHÁC — kể cả frame
+        // lỗi đọc / bị ManeuverHold GIỮ (arrow không khớp registry) — rơi về fromAmapIcon(classifiedIcon): hành vi
+        // non-roundabout KHÔNG đổi, và vòng xuyến trên frame bị-giữ degrade về generic (chấp nhận được per handoff:
+        // generic còn hơn sai hướng). Ưu tiên SỐ-LỐI-RA (24+N) vẫn do NavRepository quyết — KHÔNG đụng ở đây.
+        val maneuver = com.byd.clusternav.navigation.ManeuverSignature.classifyManeuver(arrow?.asPixelFrame())
+            ?: com.byd.clusternav.navigation.Maneuver.fromAmapIcon(classifiedIcon)
+
+        val state = (NotificationParser.parse(sbn.packageName, title, text, sub, big, arrow, classifiedIcon) ?: return)
+            .copy(maneuver = maneuver)
 
         // R7/#2: route complete (route-remaining collapsed to ~0) → clear cụm thay vì heart-beat frame cũ.
         val routeRemainMeters = NavParse.parseEta(state.eta).first
         if (arrivalGuard.arrivedByRouteRemaining(routeRemainMeters.takeIf { it >= 0 })) {
-            arrivalGuard.reset(); lastManeuverIcon = -1
+            arrivalGuard.reset(); lastManeuverIcon = -1; lastNavLogKey = null
             runCatching { TurnDistanceInterpolator.reset() }
             runCatching { NavRepository.stop(applicationContext) }.onFailure { Log.e(TAG, "route-end stop failed", it) }
             ClusterNavLaneWidget.onNavIdle()
@@ -216,7 +234,13 @@ class NavNotificationListener : NotificationListenerService() {
         }
 
         NavRepository.ingest(applicationContext, sbn.packageName, null, state)
-        Log.i(TAG, "nav dist='${state.distance}' road='${state.road}' eta='${state.eta}'")
+        // D4 (closeout 1.28): log-on-change — only Log.i when dist|road|eta changes from the previous emission
+        // (kills per-notification spam; W/E + state-change logs above stay unconditional).
+        val navKey = "${state.distance}|${state.road}|${state.eta}"
+        if (navKey != lastNavLogKey) {
+            lastNavLogKey = navKey
+            Log.i(TAG, "nav dist='${state.distance}' road='${state.road}' eta='${state.eta}'")
+        }
     }
 
     private fun loadIconBitmap(n: Notification): Bitmap? {

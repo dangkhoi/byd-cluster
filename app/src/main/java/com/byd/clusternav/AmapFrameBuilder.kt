@@ -22,8 +22,10 @@ object AmapFrameBuilder {
 
     // Gắn logger Android vào seam của thuật toán trong :core. Thuật toán không biết Android; app quyết
     // định ghi log ở đâu.
+    // D4 (closeout 1.28): note() fires per classify (per frame on the cluster-lane worker + NavArrowLog). Gate it
+    // behind the runtime verbose flag (default OFF) so it stops spamming logcat ~4×/s; owner flips it on to tune.
     init {
-        ManeuverSignature.note = { Log.i("ManeuverSig", it) }
+        ManeuverSignature.note = { if (NavLog.verbose) Log.i("ManeuverSig", it) }
     }
 
     const val ACTION = "AUTONAVI_STANDARD_BROADCAST_SEND"

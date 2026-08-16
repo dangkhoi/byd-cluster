@@ -1,6 +1,6 @@
 # ClusterNav — Hướng dẫn sử dụng
 
-> Phiên bản: **1.13** (versionCode 113). Dự án cá nhân thử nghiệm trên BYD DiLink 3.0 (Android 10). Không liên kết với BYD.
+> Phiên bản: **1.30** (versionCode 130). Dự án cá nhân thử nghiệm trên BYD DiLink 3.0 (Android 10). Không liên kết với BYD.
 
 ClusterNav có **hai hệ thống độc lập** trên cùng một app:
 
@@ -21,11 +21,14 @@ Mặc định **cả hai đều TẮT** khi mở app lần đầu — mở app l
 > Trước 1.13, bấm "Cấp quyền" hay hiện *"Hệ thống IVI không hỗ trợ hoạt động này"* vì head-unit không mở được màn Cài đặt "Truy cập thông báo". 1.13 bỏ hẳn đường đó: quyền notification là **quyền ADB**, nên app tự cấp qua ADB nội bộ. Màn Cài đặt chỉ còn là phương án dự phòng cuối.
 
 ### Chế độ hiển thị trên cụm
-Chọn ở ô **"Chế độ hiển thị trên cụm"**:
-- **Đơn giản (Giữa + ETA)** — chỉ dẫn ở giữa cụm kèm ETA.
-- **Toàn màn hình** / **Màn hình nhỏ** / **OFF**.
+Chọn ở ô **"Chế độ hiển thị trên cụm"** — từ 1.30 chỉ còn **Bật / Tắt**:
+- **Bật (Giữa + ETA)** — chỉ dẫn hiện ở **giữa cụm** kèm ETA.
+- **Tắt** — không đẩy nav ra giữa cụm.
 
-> ⚠️ Con số nào ứng với mục nào của menu OEM còn đang dò trên xe — cứ thử từng chế độ và nhìn cụm.
+> Ba chế độ layout cũ (Toàn màn hình / Màn hình nhỏ / chỉ-OFF) đã bỏ vì không đổi được live từ Android nếu không root — nên bộ chọn rút gọn còn **Bật / Tắt**.
+
+### Vòng xuyến
+Khi đi qua **vòng xuyến**, cụm/HUD nay hiện **hướng ra** (trái / phải / thẳng / quay đầu) và **số lối ra** thay vì chỉ báo chung chung "vào vòng xuyến".
 
 ### Nút trên card
 - **Nguồn dẫn đường** — Tự động / Google Maps / Waze.
@@ -62,6 +65,8 @@ Gán một nút vật lý (vô-lăng / táp-lô) + cử chỉ để mở trợ l
 
 > Không biết chắc nút phát ra mã gì? Dùng **"Học phím…"** rồi bấm nút trên xe. Lên xe test nếu chưa ăn thì học lại / đổi cử chỉ.
 
+> **Sau khi khởi động lại xe mà nút không còn tác dụng?** Gạt **"Nút vật lý → Trợ lý giọng nói"** **TẮT rồi BẬT lại** — thao tác này cấp lại quyền Hỗ trợ (Accessibility) và gắn lại dịch vụ (kèm timeout để không bị treo), **không cần mở lại app**.
+
 ---
 
 ## Tóm tắt
@@ -70,7 +75,7 @@ Gán một nút vật lý (vô-lăng / táp-lô) + cử chỉ để mở trợ l
 |----------|---------|
 | Mở ClusterNav | Không đụng xe (mọi thứ mặc định TẮT) |
 | Bật Navigation + HUD | Tự cấp quyền notification (qua ADB) + kết nối; chỉ dẫn lên cụm |
-| Chọn "Chế độ hiển thị trên cụm" | Đổi kiểu nav trên cụm (Giữa+ETA / Toàn / Nhỏ / OFF) |
+| Chọn "Chế độ hiển thị trên cụm" | Bật/Tắt nav ở giữa cụm (Giữa + ETA) |
 | Bật Cluster Cast + chạm nút nổi | Chiếu app đang mở lên cụm; chạm lại để về |
 | Bật "Nút vật lý → Trợ lý" | Bấm nút đã gán → mở trợ lý giọng nói |
 | Tắt ClusterNav | Cụm về đồng hồ |
@@ -83,7 +88,7 @@ Gán một nút vật lý (vô-lăng / táp-lô) + cử chỉ để mở trợ l
 
 # ClusterNav — User Guide (English)
 
-> Version: **1.13** (versionCode 113). Personal hobby experiment on BYD DiLink 3.0 (Android 10). Not affiliated with BYD.
+> Version: **1.30** (versionCode 130). Personal hobby experiment on BYD DiLink 3.0 (Android 10). Not affiliated with BYD.
 
 ClusterNav has **two independent systems** in one app:
 
@@ -104,11 +109,14 @@ Both are **OFF by default** on first launch — opening the app touches nothing 
 > Before 1.13, tapping "Grant" often showed *"Hệ thống IVI không hỗ trợ hoạt động này"* because the head unit can't open the Android "Notification access" settings screen. 1.13 drops that path: the notification permission is an **ADB permission**, so the app self-grants it over local ADB. The settings screen is now only a last-resort fallback.
 
 ### Cluster display mode
-Pick in **"Cluster display mode"**:
-- **Đơn giản (Giữa + ETA)** — guidance centred with ETA.
-- **Full screen** / **Small** / **OFF**.
+Pick in **"Cluster display mode"** — since 1.30 it's just **On / Off**:
+- **Bật (Giữa + ETA)** — guidance shown in the **cluster centre** with ETA.
+- **Tắt** — don't push nav to the centre.
 
-> ⚠️ Which value maps to which OEM menu entry is still being confirmed on-car — try each and watch the cluster.
+> The three old layout modes (Full screen / Small / OFF-only) were removed because they can't switch live from Android without root — so the selector is reduced to **On / Off**.
+
+### Roundabouts
+Going through a **roundabout**, the cluster/HUD now shows the **exit direction** (left / right / straight / u-turn) and the **exit number** instead of a generic "enter roundabout".
 
 ### Card buttons
 - **Navigation source** — Auto / Google Maps / Waze.
@@ -145,6 +153,8 @@ Map a physical button (steering wheel / dashboard) + gesture to launch a voice a
 
 > Not sure which code your button emits? Use **"Learn key…"** and press it on the car. If it doesn't trigger on-car, re-learn or change the gesture.
 
+> **Button stopped working after a reboot?** Flip **"Physical button → Voice assistant"** **OFF then ON** — this re-grants the Accessibility permission and re-binds the service (with a grant timeout so it can't hang), **no app restart needed**.
+
 ---
 
 ## Summary
@@ -153,7 +163,7 @@ Map a physical button (steering wheel / dashboard) + gesture to launch a voice a
 |--------|--------|
 | Open ClusterNav | Touches nothing (everything OFF by default) |
 | Enable Navigation + HUD | Self-grants notification access (over ADB) + connects; guidance on cluster |
-| Pick "Cluster display mode" | Change cluster nav style (centre+ETA / full / small / OFF) |
+| Pick "Cluster display mode" | Turn centre nav on/off (centre + ETA) |
 | Enable Cluster Cast + tap floating button | Cast the foreground app to the cluster; tap again to return |
 | Enable "Physical button → Voice assistant" | Press the mapped button → open the voice assistant |
 | Close ClusterNav | Cluster returns to clock |

@@ -42,11 +42,21 @@ object Prefs {
     // ⚠️ value↔menu CHƯA map chắc trên xe: navopen=3 (rc=0, ứng viên "Toàn màn hình"); "Đơn giản" đoán=1 — dò trên xe.
     // Default = FULL(3) = value đã-proven rc=0 (ít nhất hiện nav ở GIỮA thay vì dải nhỏ ở đỉnh).
     const val NAV_SCREEN_OFF = 0
-    const val NAV_SCREEN_SIMPLE = 1       // "Đơn giản" (Giữa + ETA) — GUESS, verify on-car
-    const val NAV_SCREEN_SMALL = 2        // "Màn hình nhỏ" (dải ở đỉnh) — GUESS
-    const val NAV_SCREEN_FULL = 3         // "Toàn màn hình" — navopen/AmapService dùng 3 (rc=0)
+    const val NAV_SCREEN_SIMPLE = 1       // "Đơn giản" (đoán=1, CHƯA proven trên trim này); back-compat only — UI không ghi (TASK 4)
+    const val NAV_SCREEN_SMALL = 2        // back-compat only; no longer user-selectable (TASK 4)
+    const val NAV_SCREEN_FULL = 3         // PROVEN rc=0 (= BydHal.NAV_SCREEN_MODE_ON, navopen/AmapService=3 → nav ở GIỮA) — the ON value 'Bật (Giữa+ETA)' for the ON/OFF selector (TASK 4)
     private const val K_NAV_SCREEN_MODE = "nav_cluster_screen_mode"
-    fun navClusterScreenMode(ctx: Context): Int = sp(ctx).getInt(K_NAV_SCREEN_MODE, NAV_SCREEN_FULL)
+    // TASK 4 (R3 · closeout-1.28): the selector is reduced to ON/OFF — on-car only OFF ever changed anything
+    // (the 3 layout modes hit the no-root wall). The ON value is FULL(3) = the PROVEN rc=0 value (navopen /
+    // AmapService use 3; it renders nav in the CENTRE "Giữa+ETA", not the small top strip). SIMPLE(1)/SMALL(2)
+    // are unproven guesses on this trim, so the UI never writes them. Read-migration: any non-OFF stored value
+    // (incl. legacy SIMPLE/SMALL) collapses to FULL so old installs land on 'Bật' with the proven value; OFF is
+    // preserved. The SIMPLE/SMALL constants stay for back-compat — they are simply no longer written by the UI.
+    fun navClusterScreenMode(ctx: Context): Int =
+        when (sp(ctx).getInt(K_NAV_SCREEN_MODE, NAV_SCREEN_FULL)) {
+            NAV_SCREEN_OFF -> NAV_SCREEN_OFF
+            else -> NAV_SCREEN_FULL   // any non-OFF (incl. legacy SIMPLE/SMALL) → proven ON value 'Bật'
+        }
     fun setNavClusterScreenMode(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_NAV_SCREEN_MODE, v).apply()
 
     // Cluster-lane output is independently switchable while the shared Navigation session/HUD remain active.
@@ -137,6 +147,20 @@ object Prefs {
         items.forEach { arr.put(org.json.JSONObject().put("n", it.first).put("k", it.second)) }
         sp(ctx).edit().putString(K_VK_CUSTOM, arr.toString()).apply()
     }
+
+    // ─── Nhật ký chi tiết (verbose) + miễn trừ lần đầu (closeout 1.28) ──────────────────────────
+    // Verbose-log gate: OTA ships a RELEASE apk (no BuildConfig.DEBUG) and the owner debugs on-car via logcat, so
+    // this is a RUNTIME flag, MẶC ĐỊNH TẮT (tuning xong ở 1.28). Flip bằng nhấn-giữ ẨN trên nhãn phiên bản
+    // (MainActivity). NavLog phản chiếu vào bộ nhớ để hot-path đọc @Volatile field, KHÔNG chạm SharedPreferences
+    // mỗi frame (~4×/s). Bật lên = lại có CSV/PNG chẩn đoán + log ManeuverSig + 3 log per-frame đầy đủ.
+    private const val K_NAV_VERBOSE_LOG = "nav_verbose_log"
+    fun navVerboseLog(ctx: Context): Boolean = sp(ctx).getBoolean(K_NAV_VERBOSE_LOG, false)
+    fun setNavVerboseLog(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_NAV_VERBOSE_LOG, v).apply()
+
+    // Miễn trừ lần đầu (no-warranty / không liên kết BYD / tự chịu rủi ro) — hiện MỘT lần rồi ghim cờ.
+    private const val K_DISCLAIMER_SHOWN = "disclaimer_shown"
+    fun disclaimerShown(ctx: Context): Boolean = sp(ctx).getBoolean(K_DISCLAIMER_SHOWN, false)
+    fun setDisclaimerShown(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_DISCLAIMER_SHOWN, v).apply()
 
     // Toggle theo module (key namespaced "mod_" — không thể đụng các key lõi ở trên). Mặc định TẮT
     // (experiment phải bật tay). Key mồ côi sau khi xoá module = dead data vô hại, không cần dọn.

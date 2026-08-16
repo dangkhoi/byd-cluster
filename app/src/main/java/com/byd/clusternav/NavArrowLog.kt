@@ -13,6 +13,8 @@ import com.byd.clusternav.navigation.NavFormat
 import com.byd.clusternav.navigation.PixelFrame
 import java.io.BufferedWriter
 import java.io.File
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * Vết TỪNG lớp phân loại icon rẽ ra CSV + PNG mũi tên, dựng sau lỗi đo 2026-07-30: "rẽ trái mà cụm hiện
@@ -37,6 +39,15 @@ object NavArrowLog {
     private var lastHash: Long? = null
     private var failures = 0
     @Volatile var csvPath: String = ""; private set
+
+    // D3 (closeout 1.28): the heavy pixel-read + signature + PNG-compress + CSV-flush used to run on the MAIN
+    // thread (ClusterBroadcaster.sendFrame, ~4×/s). Now (a) record() early-returns unless NavLog.verbose (default
+    // OFF — tuning is done) and (b) the heavy work runs on this single-thread daemon Executor so even when verbose
+    // is ON it can never block the main thread / ANR. File format is unchanged. Lazy → the thread is not created
+    // until verbose actually turns on. Arrow bitmaps are never recycled in this app, so background access is safe.
+    private val io: ExecutorService by lazy {
+        Executors.newSingleThreadExecutor { r -> Thread(r, "navarrowlog").apply { isDaemon = true } }
+    }
 
     @Synchronized
     private fun ensure(ctx: Context) {
@@ -73,7 +84,6 @@ object NavArrowLog {
      * (Cần vì từ 0.72 đường lên cụm dựng lại NavState qua `NavigationFrameContent` — không có trường bitmap
      * — nên `s.arrow` LUÔN null tại `sendFrame`: xem NavRepository.toNavState.)
      */
-    @Synchronized
     fun record(
         ctx: Context,
         maneuverText: String,
@@ -84,6 +94,25 @@ object NavArrowLog {
         finalIcon: Int,
         frameArrow: Bitmap?,
         liveArrow: Bitmap? = null,
+    ) {
+        if (!NavLog.verbose) return
+        val atMs = System.currentTimeMillis()
+        io.execute {
+            recordLocked(ctx, atMs, maneuverText, displayRoad, rawRoad, distance, smallIconAmap, finalIcon, frameArrow, liveArrow)
+        }
+    }
+
+    private fun recordLocked(
+        ctx: Context,
+        atMs: Long,
+        maneuverText: String,
+        displayRoad: String,
+        rawRoad: String,
+        distance: String,
+        smallIconAmap: Int,
+        finalIcon: Int,
+        frameArrow: Bitmap?,
+        liveArrow: Bitmap?,
     ) {
         ensure(ctx)
         val writer = w ?: return
@@ -121,7 +150,7 @@ object NavArrowLog {
             }
 
             val entry = NavArrowTraceEntry(
-                atEpochMillis = System.currentTimeMillis(), maneuverText = maneuverText,
+                atEpochMillis = atMs, maneuverText = maneuverText,
                 displayRoad = displayRoad, rawRoad = rawRoad, distance = distance,
                 smallIconAmap = smallIconAmap, sigName = sig.name, sigAmap = sig.amap,
                 verbAmap = verbAmap, heuristicAmap = heuristicAmap, finalIcon = finalIcon,

@@ -106,8 +106,8 @@ class HudKeepAlivePolicyTest {
         assertThrows(IllegalArgumentException::class.java) { HudKeepAlivePolicy(intervalMs = 400L, maxAgeMs = 100L) }
     }
 
-    @Test fun `default interval = 400ms (khớp nhịp làn cụm)`() {
-        assertEquals(400L, HudKeepAlivePolicy().intervalMs())
+    @Test fun `default interval = 250ms (hạ từ 400 để thu hẹp cửa sổ blank OEM — TASK 2)`() {
+        assertEquals(250L, HudKeepAlivePolicy().intervalMs())
         assertEquals(HudKeepAlivePolicy.DEFAULT_INTERVAL_MS, HudKeepAlivePolicy().intervalMs())
     }
 

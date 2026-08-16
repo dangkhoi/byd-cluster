@@ -91,6 +91,24 @@ object ManeuverSignature {
         return nameToHal(name)
     }
 
+    /**
+     * -> [Maneuver] CÓ HƯỚNG cho HỌ VÒNG XUYẾN, hoặc null nếu KHÔNG phải vòng xuyến (caller fallback sang
+     * [Maneuver.fromAmapIcon] — KHÔNG đổi hành vi non-roundabout) / ảnh null/quá nhỏ / không khớp registry.
+     *
+     * VÌ SAO (TASK 1 closeout 1.28): bottleneck AMAP-int ([classify] → 11 → [Maneuver.fromAmapIcon] →
+     * ROUNDABOUT generic) VỨT hướng ra vòng xuyến mà GMaps large-icon ĐÃ phân biệt (registry có
+     * ..._ccw/_cw_{normal,slight,sharp}_{left,right} · _straight · _u_turn · _exit thuần · enter generic).
+     * Đường này giữ NGUYÊN pipeline chữ ký (signature+match/matchNCC — cùng guard null/nhỏ như [classify])
+     * nhưng map TÊN → Maneuver có hướng CHỈ cho họ vòng xuyến, để HUD/centre ra CAN đúng
+     * (15/18/20/22 CCW · 16/17/19/21 CW). Không đụng [classify]/[classifyDetailed]/[classifyHal].
+     */
+    fun classifyManeuver(bmp: PixelFrame?): Maneuver? {
+        if (bmp == null || bmp.width < 8 || bmp.height < 8) return null
+        val s = signature(bmp) ?: return null
+        val name = match(s.bits) ?: matchNCC(s.fill) ?: return null   // #3: NCC fallback (như classify/classifyHal)
+        return nameToManeuver(name)
+    }
+
     // ── chữ ký 225-bit (port wm0.c -> wm0.b với f=1.0, z=false) ──
     private fun signature(bmp: PixelFrame): Sig? {
         val w = bmp.width; val h = bmp.height
@@ -269,5 +287,32 @@ object ManeuverSignature {
         name.endsWith("_left") -> 1
         name.endsWith("_right") -> 2
         else -> 11
+    }
+
+    /**
+     * Tên maneuver -> [Maneuver] CÓ HƯỚNG cho HỌ VÒNG XUYẾN; null cho MỌI tên khác (caller giữ đường
+     * [Maneuver.fromAmapIcon] cũ → KHÔNG đổi hành vi non-roundabout). Thứ tự guard mirror [nameToAmap]/[nameToHal]:
+     *   - "_exit" THUẦN (`roundabout` & `exit` & !`enter`) → [Maneuver.ROUNDABOUT_EXIT] (member sẵn có; giữ
+     *     đúng ngữ nghĩa nameToHal 24 / nameToAmap 12 cho thoát vòng xuyến, KHÔNG rơi về hướng).
+     *   - u_turn / left / right / straight → member có hướng; hậu tố `_cw` = CW (LHT), còn lại (`_ccw` /
+     *     không ghi chiều) = CCW (mặc định VN).
+     *   - `roundabout` còn lại (enter_ccw generic / enter_and_exit không ghi hướng) → [Maneuver.ROUNDABOUT] generic.
+     *   - KHÔNG chứa `roundabout` → null (caller fallback fromAmapIcon).
+     *
+     * CW detect = `name.contains("_cw")`: chuỗi "_ccw" KHÔNG chứa "_cw" (các substring độ dài 3 của "_ccw"
+     * là "_cc" và "ccw", không có "_cw") nên tên CCW đi ĐÚNG nhánh non-CW.
+     */
+    private fun nameToManeuver(name: String): Maneuver? = when {
+        name.contains("roundabout") && name.contains("exit") && !name.contains("enter") -> Maneuver.ROUNDABOUT_EXIT
+        name.contains("roundabout") && name.contains("u_turn") ->
+            if (name.contains("_cw")) Maneuver.ROUNDABOUT_UTURN_CW else Maneuver.ROUNDABOUT_UTURN
+        name.contains("roundabout") && name.contains("left") ->
+            if (name.contains("_cw")) Maneuver.ROUNDABOUT_LEFT_CW else Maneuver.ROUNDABOUT_LEFT
+        name.contains("roundabout") && name.contains("right") ->
+            if (name.contains("_cw")) Maneuver.ROUNDABOUT_RIGHT_CW else Maneuver.ROUNDABOUT_RIGHT
+        name.contains("roundabout") && name.contains("straight") ->
+            if (name.contains("_cw")) Maneuver.ROUNDABOUT_STRAIGHT_CW else Maneuver.ROUNDABOUT_STRAIGHT
+        name.contains("roundabout") -> Maneuver.ROUNDABOUT
+        else -> null
     }
 }

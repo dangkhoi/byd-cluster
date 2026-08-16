@@ -1,5 +1,20 @@
 # ClusterNav Historical Artifact Quarantine
 
+> [!IMPORTANT]
+> **(VI) ĐÃ ĐƯỢC THAY THẾ BỞI BẢN 1.30 · SUPERSEDED BY 1.30 (2026-08-16).** Tài liệu này là **ảnh chụp lịch sử ngày 2026-07-24** và **không còn phản ánh repo hiện tại**. Trạng thái hiện hành:
+> - `README.md` + `docs/HUONG-DAN.md` **đang sống và cập nhật (1.30)** — link cài đặt/hướng dẫn **KHÔNG** bị rút; cả hai đều song ngữ VI/EN.
+> - `apk/` **chỉ giữ bản release mới nhất** (`ClusterNav-1.30-release.apk`); các bản cũ (0.59–1.27) đã được cất khỏi `apk/` (lịch sử git giữ nguyên).
+> - Handoff phiên làm việc + review lịch sử nay nằm dưới `docs/archive/`.
+> - Bảng kiểm kê APK 0.59–0.67 bên dưới là **hồ sơ lịch sử**, không phải trạng thái `apk/` hiện tại.
+>
+> **(EN) SUPERSEDED BY 1.30 (2026-08-16).** This document is a **historical snapshot dated 2026-07-24** and **no longer reflects the current repo**. Current state:
+> - `README.md` + `docs/HUONG-DAN.md` are **live and current (1.30)** — install links/guidance are **NOT** withdrawn; both are bilingual VI/EN.
+> - `apk/` **holds only the latest release** (`ClusterNav-1.30-release.apk`); older builds (0.59–1.27) were shelved out of `apk/` (git history preserved).
+> - Historical session handoffs + reviews now live under `docs/archive/`.
+> - The 0.59–0.67 APK inventory below is the **historical record**, not the current `apk/` state.
+>
+> Everything beneath this header is kept **as-is as the historical record** (2026-07-24 inventory) — read it in that light. · Phần bên dưới được giữ **nguyên trạng làm hồ sơ lịch sử**.
+
 > Owner: Đăng Khôi · `dangkhoi`  
 > Inventory date: 2026-07-24  
 > Status: **HISTORICAL / UNSUPPORTED / NOT RELEASE EVIDENCE**

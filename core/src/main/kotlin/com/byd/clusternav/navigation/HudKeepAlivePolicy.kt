@@ -16,8 +16,8 @@ package com.byd.clusternav.navigation
  *  - [lastWriteAtMs]  — cập nhật MỌI lần ghi HAL thành công (real push HOẶC keep-alive re-assert). Dùng để
  *    NHỊP re-assert: chỉ re-assert khi đã ≥ [intervalMs] kể từ lần ghi bất kỳ (đừng dồn HAL mỗi tick).
  *  - [lastRealPushAtMs] — CHỈ cập nhật khi NGUỒN đẩy frame MỚI (real push). Dùng làm TRẦN TUỔI: nguồn im
- *    quá lâu thì phải nhả frame cũ. Re-assert KHÔNG được chạm đồng hồ này — nếu không, nhịp tim 400ms sẽ
- *    TỰ LÀM TƯƠI trần tuổi của chính nó và frame chết bị ghim vô hạn (đây chính là Lỗ 1 của handoff).
+ *    quá lâu thì phải nhả frame cũ. Re-assert KHÔNG được chạm đồng hồ này — nếu không, nhịp tim keep-alive
+ *    (250ms) sẽ TỰ LÀM TƯƠI trần tuổi của chính nó và frame chết bị ghim vô hạn (đây chính là Lỗ 1 của handoff).
  *
  * TRẦN TUỔI = [DEFAULT_MAX_AGE_MS] = **180_000 ms (180 s)**, CỐ Ý khớp `ClusterBroadcaster.STALE_MS` (một hằng
  * số, một ngữ nghĩa "nguồn coi như chết"). **ĐỪNG SIẾT XUỐNG 15–20 s.** Đo log lái thật 62 phút
@@ -90,8 +90,14 @@ class HudKeepAlivePolicy(
     fun maxAgeMs(): Long = maxAgeMs
 
     companion object {
-        /** 400ms = khớp nhịp tim làn-cụm đã proven trên xe, thoải mái dưới ngưỡng blank ~1s quan sát được. */
-        const val DEFAULT_INTERVAL_MS = 400L
+        /**
+         * 250ms (giảm từ 400ms — TASK 2 closeout 1.28) = re-assert NHANH HƠN để THU HẸP cửa sổ blank của OEM
+         * trên đoạn dài không rẽ (owner báo HUD/centre "Giữa+ETA" vẫn chớp vài đoạn DÙ 1.15 đã thêm heartbeat
+         * 400ms). Vẫn thoải mái dưới ngưỡng blank ~1s quan sát được và cùng bậc nhịp tim làn-cụm đã proven trên
+         * xe. Nếu SAU khi hạ vẫn nháy → nguyên nhân là OEM render-layer (ngoài tầm app), đóng như giới hạn. Giữ
+         * [DEFAULT_MAX_AGE_MS] = 180s KHÔNG đổi (trần tuổi có số liệu thực nghiệm — xem KDoc dưới).
+         */
+        const val DEFAULT_INTERVAL_MS = 250L
 
         /**
          * 180_000ms (180s) = TRẦN TUỔI backstop, CỐ Ý khớp `ClusterBroadcaster.STALE_MS`. Đo log lái thật:

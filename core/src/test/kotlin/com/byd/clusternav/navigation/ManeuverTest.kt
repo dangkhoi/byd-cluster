@@ -11,6 +11,12 @@ import org.junit.jupiter.api.Test
  */
 class ManeuverTest {
 
+    /** 8 member vòng xuyến CÓ HƯỚNG (encode-only, TASK 1 closeout 1.28) — dùng chung cho các assertion dưới. */
+    private val directionalRoundabouts = setOf(
+        Maneuver.ROUNDABOUT_LEFT, Maneuver.ROUNDABOUT_RIGHT, Maneuver.ROUNDABOUT_STRAIGHT, Maneuver.ROUNDABOUT_UTURN,
+        Maneuver.ROUNDABOUT_LEFT_CW, Maneuver.ROUNDABOUT_RIGHT_CW, Maneuver.ROUNDABOUT_STRAIGHT_CW, Maneuver.ROUNDABOUT_UTURN_CW,
+    )
+
     @Test fun `toAmapIcon khớp từ vựng AMAP NEW_ICON của làn cụm`() {
         assertEquals(2, Maneuver.TURN_LEFT.toAmapIcon())
         assertEquals(3, Maneuver.TURN_RIGHT.toAmapIcon())
@@ -49,7 +55,7 @@ class ManeuverTest {
         assertEquals(8, Maneuver.SHARP_RIGHT.toHudIcon())
         assertEquals(9, Maneuver.UTURN.toHudIcon())
         assertEquals(11, Maneuver.STRAIGHT.toHudIcon())
-        assertEquals(13, Maneuver.ROUNDABOUT.toHudIcon())   // 进入环岛 (parity làn cụm; fix on-car 2026-08-15)
+        assertEquals(20, Maneuver.ROUNDABOUT.toHudIcon())   // glyph vòng xuyến (OpenBYD proven; 13/15 méo trên HUD)
         assertEquals(48, Maneuver.DESTINATION.toHudIcon())
         assertEquals(12, Maneuver.CONTINUE.toHudIcon())      // 顺行 (parity làn cụm)
         // Track B — CAN id = TurnIdMapToCAN[toAmapIcon] cho từng giá trị mới (bất biến hai-đầu-ra).
@@ -79,12 +85,55 @@ class ManeuverTest {
             0, 0, 1, 2, 3, 5, 7, 8, 9, 11, 45, 13, 24, 46, 47, 48, 49,
             14, 23, 10, 12, 15, 18, 20, 22, 16, 17, 19, 21,
         )
+        // Họ VÒNG XUYẾN là carve-out của bất biến: HUD ghi CAN TRỰC TIẾP (generic 20; có hướng
+        // 15/16/17/18/19/20/21/22 per OpenBYD w40.a + HudController), KHÁC remap cụm TurnIdMapToCAN[amap=11]=13.
+        // Xem KDoc Maneuver. (ROUNDABOUT_EXIT KHÔNG thuộc nhóm này — amap=12 → 24 giữ bất biến.)
+        val roundaboutFamily = setOf(
+            Maneuver.ROUNDABOUT,
+            Maneuver.ROUNDABOUT_LEFT, Maneuver.ROUNDABOUT_RIGHT,
+            Maneuver.ROUNDABOUT_STRAIGHT, Maneuver.ROUNDABOUT_UTURN,
+            Maneuver.ROUNDABOUT_LEFT_CW, Maneuver.ROUNDABOUT_RIGHT_CW,
+            Maneuver.ROUNDABOUT_STRAIGHT_CW, Maneuver.ROUNDABOUT_UTURN_CW,
+        )
         for (m in Maneuver.values()) {
+            if (m in roundaboutFamily) continue
             val amap = m.toAmapIcon()
             assertEquals(
                 turnIdMapToCan[amap], m.toHudIcon(),
                 "$m: HUD (${m.toHudIcon()}) phải == TurnIdMapToCAN[cụm $amap] (${turnIdMapToCan[amap]})",
             )
+        }
+    }
+
+    /**
+     * TASK 1 (closeout 1.28) — HỌ VÒNG XUYẾN CÓ HƯỚNG (encode-only). Khoá mã CAN HUD ghi-thẳng per OpenBYD
+     * w40.a + HudController TURN_ICON_ROUNDABOUT_* (cross-validate on-car 2026-08-16): CCW 15/18/20/22 ·
+     * CW 16/17/19/21. toAmapIcon của cả 8 = 11 (cụm-strip generic — không có glyph vòng xuyến có hướng).
+     */
+    @Test fun `vòng xuyến có hướng — toHudIcon ra CAN đúng, toAmapIcon generic 11`() {
+        assertEquals(15, Maneuver.ROUNDABOUT_LEFT.toHudIcon())
+        assertEquals(18, Maneuver.ROUNDABOUT_RIGHT.toHudIcon())
+        assertEquals(20, Maneuver.ROUNDABOUT_STRAIGHT.toHudIcon())
+        assertEquals(22, Maneuver.ROUNDABOUT_UTURN.toHudIcon())
+        assertEquals(16, Maneuver.ROUNDABOUT_LEFT_CW.toHudIcon())
+        assertEquals(17, Maneuver.ROUNDABOUT_RIGHT_CW.toHudIcon())
+        assertEquals(19, Maneuver.ROUNDABOUT_STRAIGHT_CW.toHudIcon())
+        assertEquals(21, Maneuver.ROUNDABOUT_UTURN_CW.toHudIcon())
+        for (m in directionalRoundabouts) {
+            assertEquals(11, m.toAmapIcon(), "$m: cụm-strip phải generic 11 (không có glyph vòng xuyến có hướng)")
+        }
+    }
+
+    /**
+     * Các member vòng xuyến CÓ HƯỚNG là ENCODE-ONLY: KHÔNG được lọt vào fromAmapIcon. AMAP 11 vẫn PHẢI
+     * nghịch về ROUNDABOUT generic (làn cụm khứ hồi generic; HƯỚNG chỉ sống ở đường HUD/centre).
+     */
+    @Test fun `vòng xuyến có hướng — encode-only, fromAmapIcon(11) vẫn ra ROUNDABOUT generic`() {
+        assertEquals(Maneuver.ROUNDABOUT, Maneuver.fromAmapIcon(11))
+        // Quét toàn dải mã pipeline có thể phát → KHÔNG mã nào nghịch về 1 trong 8 member có hướng.
+        for (x in -1..49) {
+            val m = Maneuver.fromAmapIcon(x) ?: continue
+            assertFalse(m in directionalRoundabouts, "fromAmapIcon($x)=$m KHÔNG được là member vòng xuyến có hướng (encode-only)")
         }
     }
 
@@ -135,7 +184,7 @@ class ManeuverTest {
         // Bug cũ: "15" vừa là roundabout (Waze) vừa là destination (AMAP). Enum cho mỗi Maneuver đúng
         // MỘT cặp mã (amap, can) — không thể lẫn.
         assertEquals(11, Maneuver.ROUNDABOUT.toAmapIcon())
-        assertEquals(13, Maneuver.ROUNDABOUT.toHudIcon())
+        assertEquals(20, Maneuver.ROUNDABOUT.toHudIcon())
         assertEquals(15, Maneuver.DESTINATION.toAmapIcon())
         assertEquals(48, Maneuver.DESTINATION.toHudIcon())
         assertFalse(Maneuver.ROUNDABOUT.toHudIcon() == Maneuver.DESTINATION.toHudIcon())

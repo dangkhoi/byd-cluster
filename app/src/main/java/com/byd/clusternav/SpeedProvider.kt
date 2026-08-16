@@ -7,7 +7,9 @@ import android.content.ContextWrapper
 import android.content.pm.PackageManager
 
 /**
- * Đọc TỐC ĐỘ XE real-time từ BYD HAL (no-root, in-process) cho dead-reckoning. TỰ CHỨA reflection — KHÔNG
+ * Đọc TỐC ĐỘ XE real-time từ BYD HAL (no-root, in-process) cho NỘI SUY cự ly tới ngã rẽ
+ * ([TurnDistanceInterpolator]) + hiển thị. Dead Reckon đã GỠ 2026-07-27, nhưng provider này VẪN SỐNG vì
+ * ClusterBroadcaster gọi [mps] mỗi nhịp để trừ dần cự ly giữa 2 notification. TỰ CHỨA reflection — KHÔNG
  * import modules/hal (giữ luật "lõi không phụ thuộc modules"). Dựng device 1 LẦN rồi cache (nhanh, không lag).
  * getCurrentSpeed() trả km/h → đổi m/s. Null/sentinel → trả last-good (degrade an toàn, không bao giờ tệ hơn).
  *
