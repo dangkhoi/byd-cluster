@@ -10,6 +10,7 @@ import com.byd.clusternav.navigation.ClusterLaneAdapter
 import com.byd.clusternav.navigation.HudAdapter
 import com.byd.clusternav.navigation.InteractionContext
 import com.byd.clusternav.navigation.Maneuver
+import com.byd.clusternav.navigation.NavFormat
 import com.byd.clusternav.navigation.NavigationFrame
 import com.byd.clusternav.navigation.NavigationFrameContent
 import com.byd.clusternav.navigation.NavigationFrameDelivery
@@ -111,23 +112,28 @@ object NavRepository {
         val owner = NavigationHudOwner(appCtx).also { it.start() }
         hudOwner = owner
         val lane = ClusterLaneAdapter(NavigationFrameDelivery { frame ->
-            ClusterBroadcaster.emitLane(context, frame.toNavState())
+            // IS_BYD_MAP=true (OpenBYD-style, 2026-08-16): OpenBYD gửi broadcast IS_BYD_MAP=true (nav "BYD map") + ghi
+            // HAL guidance liên tục — GIẢ THUYẾT combo này là trigger để HUD kính lái mirror nav (M1 lâu nay). RE §3:
+            // IS_BYD_MAP=true+TYPE=1 VẪN render cụm (không hỏng cụm strip). Probe — revert 1 dòng nếu on-car hỏng.
+            ClusterBroadcaster.emitLane(context, frame.toNavState(), byd = true)
             // Cluster CENTER "Giữa + ETA" via the proven HAL path (SET_NAVI_SCREEN_STATUS + GUIDE_INFO_SIMPLE) —
             // replaces the no-op ch1000 op39. TWO-TRACK: only in nav-only mode (Cast master OFF); when Cast is ON
             // the Cast track owns the cluster surface and we must not fight it. Broadcast heartbeat keeps content
             // fresh; this write sets/holds the OEM nav-screen MODE (Đơn giản/full) the broadcast alone cannot.
             if (navOnlyMode(appCtx)) {
+                // I1 (1.14): đường HUD (INSTRUMENT_GUIDE_INFO_SIMPLE) đọc bảng CAN (toHudIcon: trái=1, phải=2), KHÔNG
+                // phải AMAP (broadcast/cụm ở emitLane). Fallback 11 = đi thẳng.
+                // Vòng xuyến CÓ số lối ra (text "lối ra thứ N") → ÉP HUD icon = CAN 24+N (25..34 = vòng-xuyến-lối-ra-N,
+                // CCW/RHT) để HUD hiện SỐ nhánh — mirror cụm (AmapFrameBuilder ép NEW_ICON 11 + ROUNG_ABOUT_NUM). icon
+                // này chảy vào CẢ 2 họ (domestic 0x43F01010 + oversea 0x1F701010) trong writeNavFrame. Frame khác: toHudIcon.
+                val exitText = frame.content.maneuverText?.takeIf { it.isNotBlank() } ?: frame.content.roadName.orEmpty()
+                val exitN = NavFormat.roundaboutExit(exitText)
+                val hudIcon = if (exitN in 1..10) 24 + exitN else frame.content.maneuver?.toHudIcon() ?: 11
                 owner.push(
-                    // I1 (1.14): INSTRUMENT_GUIDE_INFO_SIMPLE_SET (đường HUD) đọc bảng mã CAN (Maneuver.toHudIcon:
-                    // trái=1, phải=2), KHÔNG phải mã AMAP (toAmapIcon: trái=2, phải=3 — dùng cho LÀN CỤM qua broadcast
-                    // AUTONAVI ở emitLane phía trên). Trước 1.14 bắn maneuverCode (AMAP) vào feature CAN → HUD đọc lệch
-                    // 1 nấc → lật trái↔phải (cụm vẫn đúng vì đi đường broadcast riêng). Bắn toHudIcon(); fallback
-                    // 11 = đi thẳng (CAN). ON-CAR: xác nhận cụm "Giữa+ETA" vẫn đúng sau đổi này.
-                    icon = frame.content.maneuver?.toHudIcon() ?: 11,
+                    icon = hudIcon,
                     segMeters = frame.content.distanceMeters ?: -1,
                     hudRoad = frame.content.roadName.orEmpty(),
-                    // FULL DATA HUD (2026-08-15): ETA + thời gian/quãng đường còn lại — trước chỉ vào cụm qua broadcast,
-                    // giờ đẩy xuống đường HUD (writeNavFrame ghi domestic + oversea). null/-1 khi thiếu → writeNavFrame bỏ qua.
+                    // FULL DATA HUD (2026-08-15): ETA + thời gian/quãng đường còn lại (writeNavFrame ghi domestic + oversea).
                     routeSeconds = frame.content.routeRemainingSeconds ?: -1,
                     routeMeters = frame.content.routeRemainingMeters ?: -1,
                     arrivalClock = frame.content.arrivalClock,

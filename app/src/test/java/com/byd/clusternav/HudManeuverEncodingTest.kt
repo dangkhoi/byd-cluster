@@ -31,7 +31,7 @@ class HudManeuverEncodingTest {
     @Test
     fun `HUD write encodes via CAN toHudIcon, not the AMAP maneuverCode`() {
         assertTrue(
-            navRepo.contains("icon = frame.content.maneuver?.toHudIcon()"),
+            navRepo.contains("frame.content.maneuver?.toHudIcon()"),
             "owner.push must encode the HUD icon via Maneuver.toHudIcon() (CAN turn-id table)",
         )
         assertFalse(
