@@ -36,9 +36,12 @@ object UpdateChecker {
         val error: String?,
     )
 
+    /** Sentinel khi KHÔNG đọc được version đang cài — dùng để FAIL-CLOSED (không mời update khi "mù"). */
+    const val UNKNOWN = "?"
+
     /** Phiên bản đang cài (đọc từ máy — nhất quán với phần còn lại của app). */
     fun currentVersion(ctx: Context): String =
-        runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?"
+        runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: UNKNOWN
 
     /**
      * Hỏi GitHub xem có bản mới không. CHẠY TRÊN LUỒNG NỀN (có I/O mạng) — đừng gọi trên main thread.
@@ -57,12 +60,12 @@ object UpdateChecker {
                 val name = o.optString("name")
                 val m = RE_APK.matchEntire(name) ?: continue
                 val ver = m.groupValues[1]
-                if (bestVer == null || cmp(ver, bestVer!!) > 0) {
+                if (bestVer == null || cmp(ver, bestVer) > 0) {
                     bestVer = ver; bestUrl = o.optString("download_url").takeIf { it.isNotBlank() }
                 }
             }
             if (bestVer == null) Result(cur, null, null, false, Lang.t("không thấy APK trên nhánh $BRANCH", "no APK found on branch $BRANCH"))
-            else Result(cur, bestVer, bestUrl, cmp(bestVer!!, cur) > 0, null)
+            else Result(cur, bestVer, bestUrl, shouldOffer(bestVer, cur), null)
         }.getOrElse { Result(cur, null, null, false, Lang.t("lỗi mạng: ${it.message}", "network error: ${it.message}")) }
     }
 
@@ -105,6 +108,15 @@ object UpdateChecker {
      */
     fun install(ctx: Context, apk: File): String {
         val app = ctx.applicationContext
+        // LOOP-FIX (1.31, issue #A): quyết định cài theo versionCODE THẬT của APK vs bản đang cài — KHÔNG theo
+        // tên file. check() dùng versionName (tên file) vốn có thể lệch (build lỗi / getPackageInfo="?"), và
+        // `pm install -r` của EQUAL version VẪN thành công → thiếu gác này thì tên/versionName sai gây cài lại
+        // vô hạn. getPackageArchiveInfo đọc vc file đã tải không cần cài; so với vc đang cài.
+        val instVc = installedVersionCode(app)
+        val apkVc = apkVersionCode(app, apk)
+        if (!shouldInstall(apkVc, instVc)) {
+            return Lang.t("đã là bản mới nhất (vc $instVc) — bỏ qua cài lại", "already newest (vc $instVc) — skip reinstall")
+        }
         UpdateRelaunch.schedule(app) // arm BEFORE install: a successful -r kills us mid-call.
         val ok = LocalDeviceShell.installApk(AdbKeys.ensure(app), apk, "-r")
         return if (ok) {
@@ -142,4 +154,25 @@ object UpdateChecker {
         }
         return 0
     }
+
+    /** Quyết định CÓ MỜI update không (thuần, test được). FAIL-CLOSED: không đọc được version cài (UNKNOWN)
+     *  → KHÔNG mời (tránh vòng lặp cài lại khi getPackageInfo trả rỗng). */
+    fun shouldOffer(latest: String, current: String): Boolean =
+        current != UNKNOWN && cmp(latest, current) > 0
+
+    /** Quyết định CÓ CÀI file đã tải không (thuần, test được). Chặn khi APK KHÔNG mới hơn bản đang cài theo
+     *  versionCODE (int authoritative) — đóng vòng lặp "cài lại cùng version". Đọc được cả hai và apkVc <= instVc
+     *  → false. Không đọc được (-1) → fail-OPEN (check() đã gác trước, không chặn nhầm update thật). */
+    fun shouldInstall(apkVersionCode: Long, installedVersionCode: Long): Boolean =
+        !(apkVersionCode >= 0 && installedVersionCode >= 0 && apkVersionCode <= installedVersionCode)
+
+    /** versionCode ĐANG CÀI (authoritative). -1 nếu không đọc được. minSdk 29 → longVersionCode luôn có. */
+    fun installedVersionCode(ctx: Context): Long = runCatching {
+        ctx.packageManager.getPackageInfo(ctx.packageName, 0).longVersionCode
+    }.getOrDefault(-1L)
+
+    /** versionCode của FILE apk (không cần cài) qua getPackageArchiveInfo. -1 nếu không đọc được. */
+    fun apkVersionCode(ctx: Context, apk: File): Long = runCatching {
+        ctx.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)?.longVersionCode ?: -1L
+    }.getOrDefault(-1L)
 }

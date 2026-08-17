@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  route-example.gpx — MẪU ĐỊNH DẠNG cho emulator "Load GPX/KML" (Extended Controls → Location).
+  ⚠ Đây chỉ là ví dụ định dạng. Để bắt được ĐỦ loại rẽ, ưu tiên dùng emulator "Routes" (nhập điểm đầu+đến
+  trên đường thật, emulator tự tính route) rồi đặt GMaps điều hướng cùng điểm đến — xem README.md §D.
+  Nếu muốn dùng GPX: thay các <trkpt> bên dưới bằng track THẬT dọc một tuyến có rẽ trái/phải/chếch/vòng xuyến
+  (ví dụ export từ một route đã đi), giữ thứ tự điểm theo chiều di chuyển. lat/lon dưới là placeholder.
+-->
+<gpx version="1.1" creator="ClusterNav emulator capture" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>clusternav-turn-corpus-example</name>
+    <trkseg>
+      <trkpt lat="10.776500" lon="106.700800"><ele>10</ele></trkpt>
+      <trkpt lat="10.776900" lon="106.701200"><ele>10</ele></trkpt>
+      <trkpt lat="10.777300" lon="106.701600"><ele>10</ele></trkpt>
+      <trkpt lat="10.777700" lon="106.701300"><ele>10</ele></trkpt>
+      <trkpt lat="10.778100" lon="106.701000"><ele>10</ele></trkpt>
+      <trkpt lat="10.778500" lon="106.701500"><ele>10</ele></trkpt>
+      <trkpt lat="10.778900" lon="106.702000"><ele>10</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

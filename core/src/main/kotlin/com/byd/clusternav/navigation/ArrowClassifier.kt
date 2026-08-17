@@ -39,7 +39,13 @@ object ArrowClassifier {
         val cx = (w - 1) / 2.0
         val comOff = (sumX / n - cx) / w
         val headOff = if (headN > 0) (headSumX / headN - cx) / w else comOff
-        val off = headOff * 0.65 + comOff * 0.35   // đầu mũi tên quan trọng hơn thân
+        // FIX 2026-08-17 (corpus GMaps THẬT — RealGmapsArrowCorpusTest): quyết định theo ĐẦU mũi tên, KHÔNG
+        // trộn trọng-tâm-TOÀN-ẢNH. Mũi tên rẽ GMaps có THÂN DỌC (đoạn đang đi) đối trọng với đầu → com≈±0.03
+        // triệt tiêu head≈∓0.075 ở cua THƯỜNG → blend cũ (0.65*head+0.35*com) ra ±0.039 < ngưỡng → đọc "đi
+        // thẳng". Đây chính là cơ chế "rẽ trái mà cụm đi thẳng" khi chữ ký (ManeuverSignature) trượt và rơi
+        // xuống lớp dự phòng này. head (top-35%) = HƯỚNG ĐI thật → dùng thẳng. Lớp này chỉ cần đúng HƯỚNG;
+        // độ gắt (normal vs slight) do ManeuverSignature lo (lớp chính, luôn thử trước).
+        val off = headOff
 
         val icon = when {
             off <= -THRESH_TURN -> 2

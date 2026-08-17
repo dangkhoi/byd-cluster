@@ -96,6 +96,17 @@ scripts/vehicle/doorB_*.txt
 # Aggregate analysis lives in docs/diagnostics/*.md (no route), which IS committed.
 docs/diagnostics/nav-logs/
 
+# Emulator GMaps notification-capture output — GMaps title/text/road + arrow PNGs = the owner's
+# real route/addresses (location PII); the repo is public/OTA. Capture is diagnostic; keep LOCAL only.
+scripts/emulator/gmaps-noti-capture-*/
+gmaps-noti-capture-*/
+clusternav-files/
+
+# Mapping REVIEW doc nhúng ẢNH CỤM thật (photo on-car ~1.8MB) — giữ LOCAL, không đẩy ảnh xe lên repo
+# public. Regenerate: scripts/emulator/build-mapping-doc.py (cần ../icon maps + /tmp corpus). Generator +
+# corpus arrow (test fixtures) thì VẪN commit → tái dựng được.
+docs/diagnostics/gmaps-arrow-mapping-review-*.html
+
 # Shelved old release/vehicle-test builds — kept locally, NOT committed (closeout 1.30).
 # apk/ keeps only the latest ClusterNav-<ver>-release.apk (OTA payload) tracked via the whitelist above.
 apk/_archive-old-builds/
